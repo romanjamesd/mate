@@ -51,8 +51,11 @@ impl Identity {
 
     /// Generate a new random identity
     pub fn generate() -> Result<Self> {
+        use rand::RngCore;
         let mut csprng = rand::rngs::OsRng;
-        let signing_key = SigningKey::generate(&mut csprng);
+        let mut secret_bytes = [0u8; 32];
+        csprng.fill_bytes(&mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
         let peer_id = PeerId::from_verifying_key(&signing_key.verifying_key());
         Ok(Self { signing_key, peer_id })
     }
@@ -66,7 +69,15 @@ impl Identity {
             .context("Failed to parse identity file")?;
         let secret_bytes = general_purpose::STANDARD.decode(&data.secret_key)
             .context("Invalid secret key encoding")?;
-        let signing_key = SigningKey::from_bytes(&secret_bytes);
+        
+        // Convert Vec<u8> to [u8; 32]
+        if secret_bytes.len() != 32 {
+            return Err(anyhow::anyhow!("Invalid secret key length: expected 32 bytes, got {}", secret_bytes.len()));
+        }
+        let mut secret_array = [0u8; 32];
+        secret_array.copy_from_slice(&secret_bytes);
+        
+        let signing_key = SigningKey::from_bytes(&secret_array);
         let peer_id = PeerId::from_verifying_key(&signing_key.verifying_key());
         Ok(Self { signing_key, peer_id })
     }
