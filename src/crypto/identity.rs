@@ -1,4 +1,4 @@
-use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer, Verifier};
+use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
 use serde::{Deserialize, Serialize};
 use anyhow::Result;
 use std::path::Path;
@@ -7,7 +7,7 @@ use std::path::Path;
 pub struct PeerId(String);
 
 pub struct Identity {
-    keypair: Keypair,
+    signing_key: SigningKey,
     peer_id: PeerId,
 }
 
