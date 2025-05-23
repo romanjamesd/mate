@@ -1,5 +1,4 @@
-
-use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
+use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature, Signer};
 use anyhow::{Result, Context};
 use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
@@ -9,17 +8,15 @@ use std::os::unix::fs::PermissionsExt;
 
 
 /// Unique identifier for a peer, derived from their public key
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PeerId(String);
 
-
 impl PeerId {
-    pub fn from_verifying_key(verifying_key: &VerifyingKey) -> Self {
-        let encoded = general_purpose::STANDARD.encode(verifying_key.to_bytes());
+    pub fn from_public_key(public_key: &PublicKey) -> Self {
+        let encoded = general_purpose::STANDARD.encode(public_key.as_bytes());
         Self(encoded)
     }
-
+    
     pub fn as_str(&self) -> &str {
         &self.0
     }
