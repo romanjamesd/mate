@@ -22,18 +22,19 @@ async fn main() -> Result<()> {
             warn!("The 'init' command is deprecated. Use 'mate key generate' instead.");
             info!("Initializing new identity...");
             
-            // Check if identity already exists using secure storage
-            match mate::crypto::storage::default_key_path() {
-                Ok(path) => {
-                    if path.exists() {
-                        error!("Identity already exists at {}", path.display());
-                        return Ok(());
-                    }
-                }
+            // Get the key path once and reuse it
+            let key_path = match mate::crypto::storage::default_key_path() {
+                Ok(path) => path,
                 Err(e) => {
                     error!("Failed to determine key storage path: {}", e);
                     return Ok(());
                 }
+            };
+            
+            // Check if identity already exists
+            if key_path.exists() {
+                error!("Identity already exists at {}", key_path.display());
+                return Ok(());
             }
             
             let identity = Identity::generate()?;
@@ -41,9 +42,7 @@ async fn main() -> Result<()> {
             
             info!("Identity created successfully!");
             info!("Peer ID: {}", identity.peer_id());
-            if let Ok(path) = &key_path {
-                info!("Saved to: {}", path.display());
-            }
+            info!("Saved to: {}", key_path.display());
         }
         Commands::Info => {
             warn!("The 'info' command is deprecated. Use 'mate key info' instead.");
@@ -85,18 +84,19 @@ async fn main() -> Result<()> {
                 KeyCommand::Generate => {
                     info!("Generating new identity...");
                     
-                    // Check if identity already exists
-                    match mate::crypto::storage::default_key_path() {
-                        Ok(path) => {
-                            if path.exists() {
-                                warn!("An identity already exists at: {}", path.display());
-                                warn!("This will overwrite the existing identity!");
-                            }
-                        }
+                    // Get the key path once and reuse it
+                    let key_path = match mate::crypto::storage::default_key_path() {
+                        Ok(path) => path,
                         Err(e) => {
                             error!("Failed to determine key storage path: {}", e);
                             return Ok(());
                         }
+                    };
+                    
+                    // Check if identity already exists
+                    if key_path.exists() {
+                        warn!("An identity already exists at: {}", key_path.display());
+                        warn!("This will overwrite the existing identity!");
                     }
                     
                     let identity = Identity::generate()?;
@@ -105,10 +105,7 @@ async fn main() -> Result<()> {
                     info!("Identity generated successfully!");
                     info!("Peer ID: {}", identity.peer_id());
                     info!("Public Key: {}", general_purpose::STANDARD.encode(identity.verifying_key().to_bytes()));
-                    
-                    if let Ok(path) = mate::crypto::storage::default_key_path() {
-                        info!("Saved to: {}", path.display());
-                    }
+                    info!("Saved to: {}", key_path.display());
                 }
                 KeyCommand::Info => {
                     info!("Showing identity information...");
