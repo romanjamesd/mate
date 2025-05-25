@@ -71,3 +71,56 @@ impl SignedEnvelope {
         todo!()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_ping() {
+        let msg = Message::new_ping(12345, "test payload".to_string());
+        assert!(msg.is_ping());
+        assert!(!msg.is_pong());
+        assert_eq!(msg.get_nonce(), 12345);
+        assert_eq!(msg.get_payload(), "test payload");
+        assert_eq!(msg.message_type(), "Ping");
+    }
+
+    #[test]
+    fn test_new_pong() {
+        let msg = Message::new_pong(67890, "response payload".to_string());
+        assert!(msg.is_pong());
+        assert!(!msg.is_ping());
+        assert_eq!(msg.get_nonce(), 67890);
+        assert_eq!(msg.get_payload(), "response payload");
+        assert_eq!(msg.message_type(), "Pong");
+    }
+
+    #[test]
+    fn test_message_accessors() {
+        let ping = Message::Ping {
+            nonce: 111,
+            payload: "ping data".to_string(),
+        };
+        let pong = Message::Pong {
+            nonce: 222,
+            payload: "pong data".to_string(),
+        };
+
+        assert_eq!(ping.get_nonce(), 111);
+        assert_eq!(ping.get_payload(), "ping data");
+        assert_eq!(pong.get_nonce(), 222);
+        assert_eq!(pong.get_payload(), "pong data");
+    }
+
+    #[test]
+    fn test_message_type_detection() {
+        let ping = Message::new_ping(1, "test".to_string());
+        let pong = Message::new_pong(2, "test".to_string());
+
+        assert!(ping.is_ping());
+        assert!(!ping.is_pong());
+        assert!(!pong.is_ping());
+        assert!(pong.is_pong());
+    }
+}
