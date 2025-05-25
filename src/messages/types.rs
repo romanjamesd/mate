@@ -50,6 +50,46 @@ impl Message {
             Message::Pong { .. } => "Pong",
         }
     }
+
+    /// Serialize the message to binary format using bincode
+    /// 
+    /// # Returns
+    /// - `Ok(Vec<u8>)` - Successfully serialized message bytes
+    /// - `Err(bincode::Error)` - Serialization failed
+    /// 
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    /// 
+    /// let msg = Message::new_ping(42, "hello".to_string());
+    /// let bytes = msg.serialize().expect("Failed to serialize");
+    /// assert!(!bytes.is_empty());
+    /// ```
+    pub fn serialize(&self) -> Result<Vec<u8>, bincode::Error> {
+        bincode::serialize(self)
+    }
+
+    /// Deserialize binary data back into a Message using bincode
+    /// 
+    /// # Arguments
+    /// * `data` - Binary data to deserialize
+    /// 
+    /// # Returns
+    /// - `Ok(Message)` - Successfully deserialized message
+    /// - `Err(bincode::Error)` - Deserialization failed (invalid format, corrupted data, etc.)
+    /// 
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    /// 
+    /// let original = Message::new_pong(123, "world".to_string());
+    /// let bytes = original.serialize().unwrap();
+    /// let restored = Message::deserialize(&bytes).expect("Failed to deserialize");
+    /// assert_eq!(original.get_nonce(), restored.get_nonce());
+    /// ```
+    pub fn deserialize(data: &[u8]) -> Result<Message, bincode::Error> {
+        bincode::deserialize(data)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
