@@ -2,9 +2,6 @@ use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
 use anyhow::{Result, Context};
 use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::Path;
-use std::os::unix::fs::PermissionsExt;
 
 
 /// Unique identifier for a peer, derived from their public key
@@ -57,12 +54,19 @@ impl Identity {
         Ok(Self { signing_key, peer_id })
     }
 
-
-    /// Load identity from file
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let content = fs::read_to_string(path.as_ref())
-            .context("Failed to read identity file")?;
-        let data: IdentityData = serde_json::from_str(&content)
+    /// Load identity from default storage location  
+    pub fn from_default_storage() -> Result<Self> {
+        let path = crate::crypto::storage::default_key_path()
+            .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
+        
+        // Load using secure storage
+        let content = crate::crypto::storage::load_key_secure(&path)
+            .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
+        
+        let content_str = String::from_utf8(content)
+            .context("Invalid UTF-8 in identity file")?;
+        
+        let data: IdentityData = serde_json::from_str(&content_str)
             .context("Failed to parse identity file")?;
         let secret_bytes = general_purpose::STANDARD.decode(&data.secret_key)
             .context("Invalid secret key encoding")?;
@@ -79,24 +83,43 @@ impl Identity {
         Ok(Self { signing_key, peer_id })
     }
 
-
-    /// Save identity to file with secure permissions (0600)
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    /// Save identity to default storage location
+    pub fn save_to_default_storage(&self) -> Result<()> {
+        let path = crate::crypto::storage::default_key_path()
+            .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
+        
+        // Ensure directory exists
+        crate::crypto::storage::ensure_directory_exists(&path)
+            .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
+        
+        // Serialize identity data
         let data = IdentityData {
             secret_key: general_purpose::STANDARD.encode(self.signing_key.to_bytes()),
             public_key: general_purpose::STANDARD.encode(self.signing_key.verifying_key().to_bytes()),
         };
         let json = serde_json::to_string_pretty(&data)
             .context("Failed to serialize identity")?;
-        fs::write(path.as_ref(), json)
-            .context("Failed to write identity file")?;
-        // Set secure permissions (owner read/write only)
-        let mut perms = fs::metadata(path.as_ref())?.permissions();
-        perms.set_mode(0o600);
-        fs::set_permissions(path.as_ref(), perms)
-            .context("Failed to set file permissions")?;
+        
+        // Save using secure storage
+        crate::crypto::storage::save_key_secure(&path, json.as_bytes())
+            .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
+        
         Ok(())
     }
+
+    /// Load or generate identity using secure storage
+    pub fn load_or_generate() -> Result<Self> {
+        match Self::from_default_storage() {
+            Ok(identity) => Ok(identity),
+            Err(_) => {
+                let identity = Self::generate()?;
+                identity.save_to_default_storage()?;
+                Ok(identity)
+            }
+        }
+    }
+
+
 
     /// Get the peer ID for this identity
     pub fn peer_id(&self) -> &PeerId {
