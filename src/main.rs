@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
             
             info!("Identity created successfully!");
             info!("Peer ID: {}", identity.peer_id());
-            if let Ok(path) = mate::crypto::storage::default_key_path() {
+            if let Ok(path) = &key_path {
                 info!("Saved to: {}", path.display());
             }
         }
