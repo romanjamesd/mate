@@ -14,8 +14,32 @@ impl PeerId {
         Self(encoded)
     }
     
+    /// Create a PeerId from a string (for validation and reconstruction)
+    pub fn from_string(s: String) -> Self {
+        Self(s)
+    }
+    
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+    
+    /// Convert PeerId back to VerifyingKey for signature verification
+    pub fn to_verifying_key(&self) -> Result<VerifyingKey> {
+        let decoded_bytes = general_purpose::STANDARD.decode(&self.0)
+            .context("Failed to decode PeerId base64")?;
+        
+        if decoded_bytes.len() != 32 {
+            return Err(anyhow::anyhow!(
+                "Invalid PeerId key length: expected 32 bytes, got {}", 
+                decoded_bytes.len()
+            ));
+        }
+        
+        let mut key_bytes = [0u8; 32];
+        key_bytes.copy_from_slice(&decoded_bytes);
+        
+        VerifyingKey::from_bytes(&key_bytes)
+            .map_err(|e| anyhow::anyhow!("Invalid verifying key: {}", e))
     }
 }
 
