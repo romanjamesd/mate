@@ -153,4 +153,277 @@ async fn test_read_timeout_enforcement() {
     println!("   - Custom timeout: {:?}", read_timeout);
     println!("   - Actual timeout timing: {:?}", elapsed);
     println!("   - Error: {}", result.unwrap_err());
+}
+
+/// Test helper: A mock stream that provides a specific amount of data then stops
+/// This simulates partial reads where some data is available but then the stream
+/// becomes unavailable, triggering a timeout during the read operation
+struct PartialDataStream {
+    data: Vec<u8>,       // The data to provide
+    position: usize,     // Current read position
+    max_bytes: usize,    // Maximum bytes to provide before stopping
+}
+
+impl PartialDataStream {
+    /// Create a new PartialDataStream that will provide `max_bytes` of data from `data`
+    fn new(data: Vec<u8>, max_bytes: usize) -> Self {
+        Self {
+            data,
+            position: 0,
+            max_bytes,
+        }
+    }
+}
+
+impl AsyncRead for PartialDataStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        // Check if we've already provided the maximum allowed bytes
+        if self.position >= self.max_bytes {
+            // Stop providing data - return Pending to simulate timeout condition
+            return Poll::Pending;
+        }
+        
+        // Calculate how many bytes we can still provide
+        let remaining_allowed = self.max_bytes - self.position;
+        let available_data = self.data.len() - self.position;
+        let bytes_to_provide = std::cmp::min(
+            std::cmp::min(remaining_allowed, available_data),
+            buf.remaining()
+        );
+        
+        if bytes_to_provide > 0 {
+            // Provide the data
+            let end_pos = self.position + bytes_to_provide;
+            buf.put_slice(&self.data[self.position..end_pos]);
+            self.position = end_pos;
+            Poll::Ready(Ok(()))
+        } else {
+            // No more data to provide or reached max_bytes limit
+            Poll::Pending
+        }
+    }
+}
+
+impl AsyncWrite for PartialDataStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        // Accept writes normally for consistency
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), io::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), io::Error>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+/// Helper function to create a complete message with known length prefix
+async fn create_test_message_data() -> Vec<u8> {
+    use mate::crypto::Identity;
+    use mate::messages::{Message, SignedEnvelope};
+    use std::io::Cursor;
+    
+    // Create a test message
+    let identity = Identity::generate().expect("Failed to generate identity");
+    let message = Message::new_ping(42, "test_payload_for_timeout_test".to_string());
+    let envelope = SignedEnvelope::create(&message, &identity, Some(1234567890))
+        .expect("Failed to create signed envelope");
+    
+    // Serialize the message using FramedMessage to get the wire format
+    let framed_message = FramedMessage::default();
+    let mut buffer = Vec::new();
+    let mut cursor = Cursor::new(&mut buffer);
+    
+    framed_message.write_message(&mut cursor, &envelope)
+        .await
+        .expect("Failed to write test message");
+    
+    buffer
+}
+
+/// Test read timeout during partial operation
+///
+/// From essential-tests.md:
+/// 18. **`test_read_timeout_during_partial_operation()`**
+///    - Start receiving message, then stop sending data mid-transmission
+///    - Verify timeout occurs during partial read
+///    - Test timeout during length prefix read vs. message body read
+#[tokio::test]
+async fn test_read_timeout_during_partial_operation() {
+    // Configure a short read timeout for testing
+    let read_timeout = Duration::from_millis(100); // 100ms timeout
+    let write_timeout = Duration::from_secs(30); // Normal write timeout
+    
+    let wire_config = WireConfig::new(1024 * 1024, read_timeout, write_timeout);
+    let framed_message = FramedMessage::new(wire_config);
+    
+    // Create test message data to understand the structure
+    let complete_message_data = create_test_message_data().await;
+    let message_body_size = complete_message_data.len() - 4; // Subtract 4-byte length prefix
+    
+    println!("Test message structure:");
+    println!("  - Total size: {} bytes", complete_message_data.len());
+    println!("  - Length prefix: 4 bytes");
+    println!("  - Message body: {} bytes", message_body_size);
+    
+    // Test 1: Timeout during length prefix read
+    println!("\nTest 1: Testing timeout during length prefix read");
+    
+    let partial_prefix_test_cases = vec![
+        (0, "no data at all"),
+        (1, "1 byte of length prefix"),
+        (2, "2 bytes of length prefix"),
+        (3, "3 bytes of length prefix"),
+    ];
+    
+    for (partial_bytes, description) in partial_prefix_test_cases {
+        println!("  Testing with {}", description);
+        
+        let mut partial_stream = PartialDataStream::new(
+            complete_message_data.clone(),
+            partial_bytes
+        );
+        
+        let start_time = std::time::Instant::now();
+        
+        let result = framed_message.read_message_with_timeout(
+            &mut partial_stream,
+            read_timeout
+        ).await;
+        
+        let elapsed = start_time.elapsed();
+        
+        // Verify the operation timed out
+        assert!(result.is_err(), "Read operation should have timed out with {}", description);
+        
+        // Verify timing: should have timed out approximately at the configured timeout
+        let min_expected = read_timeout.saturating_sub(Duration::from_millis(50));
+        let max_expected = read_timeout + Duration::from_millis(50);
+        
+        assert!(
+            elapsed >= min_expected && elapsed <= max_expected,
+            "Timeout timing with {} should be within expected range: {:?} not in [{:?}, {:?}]",
+            description, elapsed, min_expected, max_expected
+        );
+        
+        // Verify the error indicates a timeout
+        let error = result.unwrap_err();
+        let error_string = error.to_string();
+        let is_timeout_error = error_string.contains("timeout") || 
+                              error_string.contains("timed out") ||
+                              error_string.contains("deadline has elapsed") ||
+                              error_string.contains("Timeout error");
+        assert!(is_timeout_error, 
+               "Error should indicate timeout with {}: {}", description, error_string);
+        
+        println!("    ✓ {} - timed out in {:?}", description, elapsed);
+    }
+    
+    // Test 2: Timeout during message body read
+    println!("\nTest 2: Testing timeout during message body read");
+    
+    let partial_body_test_cases = vec![
+        (4, "length prefix only, no message body"),
+        (4 + message_body_size / 4, "length prefix + 25% of message body"),
+        (4 + message_body_size / 2, "length prefix + 50% of message body"),
+        (4 + (message_body_size * 3) / 4, "length prefix + 75% of message body"),
+        (complete_message_data.len() - 1, "all but last byte of message"),
+    ];
+    
+    for (partial_bytes, description) in partial_body_test_cases {
+        println!("  Testing with {}", description);
+        
+        let mut partial_stream = PartialDataStream::new(
+            complete_message_data.clone(),
+            partial_bytes
+        );
+        
+        let start_time = std::time::Instant::now();
+        
+        let result = framed_message.read_message_with_timeout(
+            &mut partial_stream,
+            read_timeout
+        ).await;
+        
+        let elapsed = start_time.elapsed();
+        
+        // Verify the operation timed out
+        assert!(result.is_err(), "Read operation should have timed out with {}", description);
+        
+        // Verify timing: should have timed out approximately at the configured timeout
+        let min_expected = read_timeout.saturating_sub(Duration::from_millis(50));
+        let max_expected = read_timeout + Duration::from_millis(50);
+        
+        assert!(
+            elapsed >= min_expected && elapsed <= max_expected,
+            "Timeout timing with {} should be within expected range: {:?} not in [{:?}, {:?}]",
+            description, elapsed, min_expected, max_expected
+        );
+        
+        // Verify the error indicates a timeout
+        let error = result.unwrap_err();
+        let error_string = error.to_string();
+        let is_timeout_error = error_string.contains("timeout") || 
+                              error_string.contains("timed out") ||
+                              error_string.contains("deadline has elapsed") ||
+                              error_string.contains("Timeout error");
+        assert!(is_timeout_error, 
+               "Error should indicate timeout with {}: {}", description, error_string);
+        
+        println!("    ✓ {} - timed out in {:?}", description, elapsed);
+    }
+    
+    // Test 3: Verify that complete message would not timeout (control case)
+    println!("\nTest 3: Control test - complete message should not timeout");
+    
+    let mut complete_stream = PartialDataStream::new(
+        complete_message_data.clone(),
+        complete_message_data.len() // Allow all data to be read
+    );
+    
+    let start_time = std::time::Instant::now();
+    
+    let result = framed_message.read_message_with_timeout(
+        &mut complete_stream,
+        read_timeout
+    ).await;
+    
+    let elapsed = start_time.elapsed();
+    
+    // This should succeed (not timeout)
+    assert!(result.is_ok(), "Complete message should not timeout, but got error: {:?}", 
+           result.err());
+    
+    // Should complete much faster than the timeout
+    assert!(elapsed < read_timeout.saturating_sub(Duration::from_millis(20)),
+           "Complete message should read quickly, but took {:?}", elapsed);
+    
+    // Verify the message is valid
+    let received_envelope = result.unwrap();
+    assert!(received_envelope.verify_signature(), 
+           "Received message should have valid signature");
+    
+    println!("    ✓ Complete message read successfully in {:?}", elapsed);
+    
+    println!("✅ Read timeout during partial operation test passed");
+    println!("   - Tested timeout during length prefix read (0, 1, 2, 3 bytes)");
+    println!("   - Tested timeout during message body read (25%, 50%, 75%, 99%)");
+    println!("   - Verified complete messages don't timeout");
+    println!("   - All timeouts occurred within expected timeframe ({:?})", read_timeout);
 } 
