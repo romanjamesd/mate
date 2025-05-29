@@ -97,6 +97,91 @@ async fn write_multiple_messages_to_buffer(messages: &[(SignedEnvelope, Message)
     stream.get_written_data().to_vec()
 }
 
+/// A controllable mock stream that returns predetermined read sizes to test partial I/O
+struct ControlledMockStream {
+    data: Vec<u8>,
+    position: usize,
+    read_sizes: Vec<usize>,  // Predetermined sizes for each read operation
+    read_count: usize,       // Track how many read operations have been performed
+}
+
+impl ControlledMockStream {
+    /// Create a new ControlledMockStream with data and predetermined read sizes
+    fn new(data: Vec<u8>, read_sizes: Vec<usize>) -> Self {
+        Self {
+            data,
+            position: 0,
+            read_sizes,
+            read_count: 0,
+        }
+    }
+    
+    /// Check if all data has been read
+    fn is_finished(&self) -> bool {
+        self.position >= self.data.len()
+    }
+}
+
+impl AsyncRead for ControlledMockStream {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        // If we've read all data, return 0 (EOF)
+        if self.position >= self.data.len() {
+            return std::task::Poll::Ready(Ok(()));
+        }
+        
+        // Determine how many bytes to read this time
+        let read_size = if self.read_count < self.read_sizes.len() {
+            self.read_sizes[self.read_count]
+        } else {
+            // If we've exhausted predetermined sizes, read remaining data
+            self.data.len() - self.position
+        };
+        
+        // Calculate actual bytes to read (limited by available space and remaining data)
+        let remaining_data = self.data.len() - self.position;
+        let bytes_to_read = std::cmp::min(read_size, std::cmp::min(buf.remaining(), remaining_data));
+        
+        if bytes_to_read > 0 {
+            // Copy data to the buffer
+            let end_pos = self.position + bytes_to_read;
+            buf.put_slice(&self.data[self.position..end_pos]);
+            self.position = end_pos;
+        }
+        
+        self.read_count += 1;
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for ControlledMockStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        _buf: &[u8],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        // Not used for read testing
+        std::task::Poll::Ready(Ok(0))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
 #[tokio::test]
 async fn test_successful_message_roundtrip() {
     // Test cases with various message sizes as specified in essential-tests.md
@@ -771,4 +856,192 @@ async fn test_empty_and_minimal_messages() {
     println!("  - Minimum message size requirements are met");
     println!("  - Edge cases with extreme nonce values work correctly");
     println!("  - Protocol handles smallest possible SignedEnvelope correctly");
+}
+
+#[tokio::test]
+async fn test_partial_read_recovery() {
+    println!("Starting test_partial_read_recovery - testing fragmented read scenarios");
+    
+    // Create a test message with known content
+    let test_payload = "This is a test message for partial read recovery testing";
+    let (original_envelope, original_message) = create_test_envelope(test_payload);
+    
+    // Serialize the message to get the wire format data
+    let framed_message = FramedMessage::default();
+    let mut write_stream = MockStream::new();
+    framed_message.write_message(&mut write_stream, &original_envelope)
+        .await
+        .expect("Failed to write test message");
+    
+    let complete_data = write_stream.get_written_data().to_vec();
+    let total_length = complete_data.len();
+    
+    println!("Generated test message: {} bytes total (4-byte prefix + {} byte message)", 
+             total_length, total_length - LENGTH_PREFIX_SIZE);
+    
+    // Test Case 1: Length prefix fragmentation patterns
+    let fragmentation_patterns = vec![
+        (vec![1, 1, 1, 1], "1+1+1+1 bytes pattern for length prefix"),
+        (vec![2, 2], "2+2 bytes pattern for length prefix"),
+        (vec![3, 1], "3+1 bytes pattern for length prefix"),
+        (vec![1, 3], "1+3 bytes pattern for length prefix"),
+    ];
+    
+    for (read_sizes, description) in fragmentation_patterns {
+        println!("Testing length prefix fragmentation: {}", description);
+        
+        // Extend read sizes to include the rest of the message
+        let mut full_read_sizes = read_sizes.clone();
+        // After fragmenting the length prefix, read the message body in one go
+        full_read_sizes.push(total_length - LENGTH_PREFIX_SIZE);
+        
+        let mut controlled_stream = ControlledMockStream::new(complete_data.clone(), full_read_sizes);
+        
+        let received_envelope = framed_message.read_message(&mut controlled_stream)
+            .await
+            .expect(&format!("Failed to read message with {}", description));
+        
+        // Verify the message was reconstructed correctly
+        assert_eq!(original_envelope.sender(), received_envelope.sender(),
+                   "Sender should match for {}", description);
+        assert_eq!(original_envelope.timestamp(), received_envelope.timestamp(),
+                   "Timestamp should match for {}", description);
+        
+        let received_message = received_envelope.get_message()
+            .expect("Failed to deserialize received message");
+        assert_eq!(original_message.get_payload(), received_message.get_payload(),
+                   "Message payload should match for {}", description);
+        
+        assert!(controlled_stream.is_finished(), 
+                "All data should be consumed for {}", description);
+        
+        println!("✓ Length prefix fragmentation test passed: {}", description);
+    }
+    
+    // Test Case 2: Message body fragmentation with various chunk sizes
+    let message_body_size = total_length - LENGTH_PREFIX_SIZE;
+    let body_fragmentation_patterns = vec![
+        (vec![LENGTH_PREFIX_SIZE, 1], "Read prefix, then 1 byte chunks"),
+        (vec![LENGTH_PREFIX_SIZE, 10], "Read prefix, then 10 byte chunks"),
+        (vec![LENGTH_PREFIX_SIZE, 50], "Read prefix, then 50 byte chunks"),
+        (vec![LENGTH_PREFIX_SIZE, message_body_size / 4], "Read prefix, then quarter-size chunks"),
+        (vec![LENGTH_PREFIX_SIZE, message_body_size / 2], "Read prefix, then half-size chunks"),
+    ];
+    
+    for (base_pattern, description) in body_fragmentation_patterns {
+        println!("Testing message body fragmentation: {}", description);
+        
+        let mut read_sizes = base_pattern.clone();
+        
+        // For single-byte reads, we need to repeat until we've read the entire message
+        if read_sizes.len() > 1 && read_sizes[1] == 1 {
+            // Add enough 1-byte reads to cover the entire message body
+            for _ in 1..message_body_size {
+                read_sizes.push(1);
+            }
+        } else if read_sizes.len() > 1 {
+            // For larger chunks, calculate how many reads we need
+            let chunk_size = read_sizes[1];
+            let mut remaining = message_body_size - chunk_size;
+            while remaining > 0 {
+                let next_chunk = std::cmp::min(chunk_size, remaining);
+                read_sizes.push(next_chunk);
+                remaining -= next_chunk;
+            }
+        }
+        
+        let mut controlled_stream = ControlledMockStream::new(complete_data.clone(), read_sizes);
+        
+        let received_envelope = framed_message.read_message(&mut controlled_stream)
+            .await
+            .expect(&format!("Failed to read message with {}", description));
+        
+        // Verify final reconstructed message matches original exactly
+        assert_eq!(original_envelope.sender(), received_envelope.sender(),
+                   "Sender should match for {}", description);
+        assert_eq!(original_envelope.timestamp(), received_envelope.timestamp(),
+                   "Timestamp should match for {}", description);
+        
+        let received_message = received_envelope.get_message()
+            .expect("Failed to deserialize received message");
+        assert_eq!(original_message.get_nonce(), received_message.get_nonce(),
+                   "Message nonce should match for {}", description);
+        assert_eq!(original_message.get_payload(), received_message.get_payload(),
+                   "Message payload should match for {}", description);
+        assert_eq!(original_message.message_type(), received_message.message_type(),
+                   "Message type should match for {}", description);
+        
+        // Verify signature is still valid after fragmented transmission
+        assert!(received_envelope.verify_signature(),
+                "Signature should be valid after fragmented read for {}", description);
+        
+        assert!(controlled_stream.is_finished(), 
+                "All data should be consumed for {}", description);
+        
+        println!("✓ Message body fragmentation test passed: {}", description);
+    }
+    
+    // Test Case 3: Split exactly at length prefix/message body boundary
+    println!("Testing split exactly at length prefix/message body boundary");
+    
+    let boundary_read_sizes = vec![LENGTH_PREFIX_SIZE, message_body_size];
+    let mut boundary_stream = ControlledMockStream::new(complete_data.clone(), boundary_read_sizes);
+    
+    let received_envelope = framed_message.read_message(&mut boundary_stream)
+        .await
+        .expect("Failed to read message with boundary split");
+    
+    // Verify protocol maintains correct state during fragmented reads
+    let received_message = received_envelope.get_message()
+        .expect("Failed to deserialize received message");
+    assert_eq!(original_message.get_payload(), received_message.get_payload(),
+               "Message payload should match for boundary split");
+    
+    assert!(boundary_stream.is_finished(), 
+            "All data should be consumed for boundary split");
+    
+    println!("✓ Boundary split test passed");
+    
+    // Test Case 4: Complex fragmentation combining multiple patterns
+    println!("Testing complex fragmentation patterns");
+    
+    let complex_patterns = vec![
+        vec![1, 2, 1, 10, 5], // Start with tiny fragments, then larger chunks
+        vec![2, 1, 1, 20], // Mixed small and medium chunks
+        vec![1, 1, 2, message_body_size - 4], // Fragment prefix, then large body chunk
+    ];
+    
+    for (pattern_index, mut complex_read_sizes) in complex_patterns.into_iter().enumerate() {
+        // Ensure we read all remaining data
+        let bytes_in_pattern: usize = complex_read_sizes.iter().sum();
+        if bytes_in_pattern < total_length {
+            complex_read_sizes.push(total_length - bytes_in_pattern);
+        }
+        
+        println!("Testing complex pattern {}: {:?}", pattern_index + 1, complex_read_sizes);
+        
+        let mut complex_stream = ControlledMockStream::new(complete_data.clone(), complex_read_sizes);
+        
+        let received_envelope = framed_message.read_message(&mut complex_stream)
+            .await
+            .expect(&format!("Failed to read message with complex pattern {}", pattern_index + 1));
+        
+        // Verify final reconstructed message matches original exactly
+        let received_message = received_envelope.get_message()
+            .expect("Failed to deserialize received message");
+        assert_eq!(original_message.get_payload(), received_message.get_payload(),
+                   "Message payload should match for complex pattern {}", pattern_index + 1);
+        
+        assert!(received_envelope.verify_signature(),
+                "Signature should be valid after complex fragmented read pattern {}", pattern_index + 1);
+        
+        assert!(complex_stream.is_finished(), 
+                "All data should be consumed for complex pattern {}", pattern_index + 1);
+        
+        println!("✓ Complex fragmentation pattern {} passed", pattern_index + 1);
+    }
+    
+    println!("✓ All partial read recovery tests passed!");
+    println!("✓ Verified protocol maintains correct state during fragmented reads");
+    println!("✓ Verified final reconstructed messages match originals exactly");
 } 
