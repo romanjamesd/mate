@@ -11,6 +11,21 @@ use std::sync::Arc;
 use std::io::{self, Write, BufRead};
 use rand;
 
+/// Format round-trip time for display with appropriate precision
+fn format_round_trip_time(duration: std::time::Duration) -> String {
+    let millis = duration.as_millis();
+    let micros = duration.as_micros();
+    
+    if millis == 0 {
+        format!("{}μs", micros)
+    } else if millis < 1000 {
+        format!("{}ms", millis)
+    } else {
+        let seconds = duration.as_secs_f64();
+        format!("{:.2}s", seconds)
+    }
+}
+
 /// Initialize identity using secure storage
 pub async fn init_identity() -> Result<Identity> {
     Identity::load_or_generate()
@@ -185,6 +200,7 @@ async fn main() -> Result<()> {
                     
                     // Handle one-shot message mode
                     if let Some(msg_text) = message {
+                        info!("Sending message: \"{}\"", msg_text);
                         let start_time = Instant::now();
                         let ping_message = Message::new_ping(rand::random::<u64>(), msg_text.clone());
                         
@@ -194,9 +210,8 @@ async fn main() -> Result<()> {
                                 match connection.receive_message().await {
                                     Ok((response, _sender)) => {
                                         let round_trip_time = start_time.elapsed();
-                                        info!("Sending message: \"{}\"", msg_text);
-                                        info!("Received echo: \"{}\" (round-trip: {}ms)", 
-                                              response.get_payload(), round_trip_time.as_millis());
+                                        info!("Received echo: \"{}\" (round-trip: {})", 
+                                              response.get_payload(), format_round_trip_time(round_trip_time));
                                     }
                                     Err(e) => {
                                         error!("Failed to receive response: {}", e);
@@ -208,12 +223,14 @@ async fn main() -> Result<()> {
                             }
                         }
                     } else {
-                        // Interactive mode - full implementation
+                        // Interactive mode - full implementation with enhanced timing statistics
                         info!("Connected to peer: {}", peer_id);
                         info!("Interactive mode - type messages and press Enter. Type 'quit' to exit.");
                         
                         let stdin = io::stdin();
                         let mut stdin_lock = stdin.lock();
+                        let mut message_count = 0u32;
+                        let mut total_round_trip_time = std::time::Duration::ZERO;
                         
                         loop {
                             // Display prompt
@@ -225,6 +242,11 @@ async fn main() -> Result<()> {
                             match stdin_lock.read_line(&mut input) {
                                 Ok(0) => {
                                     // EOF (Ctrl+D)
+                                    if message_count > 0 {
+                                        let avg_time = total_round_trip_time / message_count;
+                                        info!("Session summary: {} messages sent, average round-trip: {}", 
+                                              message_count, format_round_trip_time(avg_time));
+                                    }
                                     info!("Goodbye!");
                                     break;
                                 }
@@ -233,6 +255,11 @@ async fn main() -> Result<()> {
                                     
                                     // Handle quit command
                                     if input == "quit" || input == "exit" {
+                                        if message_count > 0 {
+                                            let avg_time = total_round_trip_time / message_count;
+                                            info!("Session summary: {} messages sent, average round-trip: {}", 
+                                                  message_count, format_round_trip_time(avg_time));
+                                        }
                                         info!("Goodbye!");
                                         break;
                                     }
@@ -251,8 +278,10 @@ async fn main() -> Result<()> {
                                             match connection.receive_message().await {
                                                 Ok((response, _sender)) => {
                                                     let round_trip_time = start_time.elapsed();
-                                                    info!("Received echo: \"{}\" (round-trip: {}ms)", 
-                                                          response.get_payload(), round_trip_time.as_millis());
+                                                    message_count += 1;
+                                                    total_round_trip_time += round_trip_time;
+                                                    info!("Received echo: \"{}\" (round-trip: {})", 
+                                                          response.get_payload(), format_round_trip_time(round_trip_time));
                                                 }
                                                 Err(e) => {
                                                     error!("Failed to receive response: {}", e);
