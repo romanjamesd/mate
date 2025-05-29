@@ -426,4 +426,186 @@ async fn test_read_timeout_during_partial_operation() {
     println!("   - Tested timeout during message body read (25%, 50%, 75%, 99%)");
     println!("   - Verified complete messages don't timeout");
     println!("   - All timeouts occurred within expected timeframe ({:?})", read_timeout);
+}
+
+/// Test helper: A mock stream that never accepts any writes to simulate a blocked receiver
+/// This stream will never accept any data for writing, causing write operations to hang until timeout
+struct NeverWriteStream {
+    _buffer: Vec<u8>, // Placeholder buffer that we never actually use
+}
+
+impl NeverWriteStream {
+    fn new() -> Self {
+        Self {
+            _buffer: Vec::new(),
+        }
+    }
+}
+
+impl AsyncRead for NeverWriteStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        // Allow reads to succeed for consistency (just return empty data)
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for NeverWriteStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        // Always return Pending to simulate a stream that never accepts writes
+        // This will cause write operations to hang until timeout
+        Poll::Pending
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), io::Error>> {
+        // Also block flush operations
+        Poll::Pending
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<(), io::Error>> {
+        // Allow shutdown to succeed for cleanup
+        Poll::Ready(Ok(()))
+    }
+}
+
+/// Test write timeout enforcement
+///
+/// From essential-tests.md:
+/// 19. **`test_write_timeout_enforcement()`**
+///    - Configure write timeout with blocked receiver
+///    - Verify write operation times out within expected timeframe
+///    - Test that timeout errors are properly reported
+///    - Verify connection state after timeout
+#[tokio::test]
+async fn test_write_timeout_enforcement() {
+    use mate::crypto::Identity;
+    use mate::messages::{Message, SignedEnvelope};
+    
+    // Configure a short write timeout for testing
+    let read_timeout = Duration::from_secs(30); // Normal read timeout
+    let write_timeout = Duration::from_millis(100); // 100ms write timeout
+    
+    let wire_config = WireConfig::new(1024 * 1024, read_timeout, write_timeout);
+    let framed_message = FramedMessage::new(wire_config);
+    
+    // Create a test message to write
+    let identity = Identity::generate().expect("Failed to generate identity");
+    let message = Message::new_ping(42, "test_payload_for_write_timeout_test".to_string());
+    let envelope = SignedEnvelope::create(&message, &identity, Some(1234567890))
+        .expect("Failed to create signed envelope");
+    
+    // Create a stream that never accepts writes
+    let mut never_write_stream = NeverWriteStream::new();
+    
+    // Record the start time to verify timeout timing
+    let start_time = std::time::Instant::now();
+    
+    // Attempt to write a message - this should timeout
+    let result = framed_message.write_message_with_timeout(
+        &mut never_write_stream,
+        &envelope,
+        write_timeout
+    ).await;
+    
+    let elapsed = start_time.elapsed();
+    
+    // Verify the operation timed out
+    assert!(result.is_err(), "Write operation should have timed out");
+    
+    // Verify the error is a timeout error
+    let error = result.unwrap_err();
+    let wire_error = error.downcast_ref::<WireProtocolError>();
+    assert!(wire_error.is_some(), "Error should be a WireProtocolError");
+    
+    // Check that it's specifically a timeout-related error
+    let wire_error = wire_error.unwrap();
+    let is_timeout_error = matches!(wire_error, WireProtocolError::Timeout(_)) ||
+                          error.to_string().contains("timeout") || 
+                          error.to_string().contains("timed out");
+    assert!(is_timeout_error, "Error should be timeout-related, got: {}", error);
+    
+    // Verify timing: should have timed out approximately at the configured timeout
+    // Allow some tolerance for timing variations (±50ms)
+    let expected_timeout = write_timeout;
+    let min_expected = expected_timeout.saturating_sub(Duration::from_millis(50));
+    let max_expected = expected_timeout + Duration::from_millis(50);
+    
+    assert!(
+        elapsed >= min_expected,
+        "Timeout occurred too early: {:?} < expected minimum {:?}",
+        elapsed, min_expected
+    );
+    assert!(
+        elapsed <= max_expected,
+        "Timeout occurred too late: {:?} > expected maximum {:?}",
+        elapsed, max_expected
+    );
+    
+    // Verify that the timeout error contains timeout-related information
+    let error_string = error.to_string();
+    assert!(
+        error_string.contains("timeout") || 
+        error_string.contains("timed out") ||
+        error_string.contains("deadline has elapsed") ||
+        error_string.contains("Timeout error"),
+        "Error message should indicate a timeout occurred: {}",
+        error_string
+    );
+    
+    // Test with default timeout method as well
+    let start_time = std::time::Instant::now();
+    let result = framed_message.write_message_with_default_timeout(&mut never_write_stream, &envelope).await;
+    let elapsed = start_time.elapsed();
+    
+    // Should also timeout, but with the configured write timeout
+    assert!(result.is_err(), "Default timeout write should also timeout");
+    
+    // Verify timing matches configured timeout
+    let expected_timeout = write_timeout; // Same as configured
+    let min_expected = expected_timeout.saturating_sub(Duration::from_millis(50));
+    let max_expected = expected_timeout + Duration::from_millis(50);
+    
+    assert!(
+        elapsed >= min_expected && elapsed <= max_expected,
+        "Default timeout should match configured write timeout: {:?} not in range [{:?}, {:?}]",
+        elapsed, min_expected, max_expected
+    );
+    
+    // Verify connection state after timeout - the stream should still be in a consistent state
+    // We can't easily test this without more complex mocking, but we can verify the stream
+    // hasn't been corrupted by attempting another operation (which should also timeout cleanly)
+    let start_time = std::time::Instant::now();
+    let result = framed_message.write_message_with_timeout(
+        &mut never_write_stream,
+        &envelope,
+        write_timeout
+    ).await;
+    let elapsed = start_time.elapsed();
+    
+    // This should also timeout, indicating the stream is still in a usable state
+    assert!(result.is_err(), "Second write operation should also timeout");
+    assert!(
+        elapsed >= min_expected && elapsed <= max_expected,
+        "Second timeout should also be within expected range: {:?}",
+        elapsed
+    );
+    
+    println!("✅ Write timeout enforcement test passed");
+    println!("   - Write timeout: {:?}", write_timeout);
+    println!("   - Actual timeout timing: {:?}", elapsed);
+    println!("   - Error: {}", result.unwrap_err());
+    println!("   - Connection state remains consistent after timeout");
 } 
