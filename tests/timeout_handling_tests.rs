@@ -608,4 +608,236 @@ async fn test_write_timeout_enforcement() {
     println!("   - Actual timeout timing: {:?}", elapsed);
     println!("   - Error: {}", result.unwrap_err());
     println!("   - Connection state remains consistent after timeout");
+}
+
+/// Test configurable timeout values
+///
+/// From essential-tests.md:
+/// 20. **`test_configurable_timeout_values()`**
+///    - Test wire protocol respects configured timeout values
+///    - Verify different timeout values work correctly
+///    - Test very short and very long timeout configurations
+#[tokio::test]
+async fn test_configurable_timeout_values() {
+    use mate::crypto::Identity;
+    use mate::messages::{Message, SignedEnvelope};
+    
+    // Create a test message for write operations
+    let identity = Identity::generate().expect("Failed to generate identity");
+    let message = Message::new_ping(42, "test_payload_for_configurable_timeout_test".to_string());
+    let envelope = SignedEnvelope::create(&message, &identity, Some(1234567890))
+        .expect("Failed to create signed envelope");
+    
+    // Test cases with different timeout values
+    let timeout_test_cases = vec![
+        (Duration::from_millis(50), "very short timeout (50ms)"),
+        (Duration::from_millis(100), "short timeout (100ms)"),
+        (Duration::from_millis(200), "medium timeout (200ms)"),
+        (Duration::from_millis(500), "long timeout (500ms)"),
+        (Duration::from_millis(1000), "very long timeout (1000ms)"),
+    ];
+    
+    println!("Testing configurable timeout values for READ operations");
+    
+    for (timeout_duration, description) in &timeout_test_cases {
+        println!("  Testing read with {}", description);
+        
+        // Configure wire config with the specific read timeout
+        let wire_config = WireConfig::new(1024 * 1024, *timeout_duration, Duration::from_secs(30));
+        let framed_message = FramedMessage::new(wire_config);
+        
+        // Create a stream that never provides data
+        let mut never_read_stream = NeverReadStream::new();
+        
+        let start_time = std::time::Instant::now();
+        
+        // Test read with explicit timeout
+        let result = framed_message.read_message_with_timeout(
+            &mut never_read_stream,
+            *timeout_duration
+        ).await;
+        
+        let elapsed = start_time.elapsed();
+        
+        // Verify the operation timed out
+        assert!(result.is_err(), "Read operation should have timed out with {}", description);
+        
+        // Verify timing: should have timed out approximately at the configured timeout
+        // Use more generous tolerance for very short timeouts due to system scheduling
+        let tolerance = if timeout_duration.as_millis() < 100 { 
+            Duration::from_millis(50) 
+        } else { 
+            Duration::from_millis(100) 
+        };
+        
+        let min_expected = timeout_duration.saturating_sub(tolerance);
+        let max_expected = *timeout_duration + tolerance;
+        
+        assert!(
+            elapsed >= min_expected,
+            "Read timeout with {} occurred too early: {:?} < expected minimum {:?}",
+            description, elapsed, min_expected
+        );
+        assert!(
+            elapsed <= max_expected,
+            "Read timeout with {} occurred too late: {:?} > expected maximum {:?}",
+            description, elapsed, max_expected
+        );
+        
+        println!("    ✓ {} - timed out in {:?} (expected: {:?})", description, elapsed, timeout_duration);
+        
+        // Test read with default timeout (should use configured value)
+        let start_time = std::time::Instant::now();
+        let result = framed_message.read_message_with_default_timeout(&mut never_read_stream).await;
+        let elapsed = start_time.elapsed();
+        
+        // Should also timeout with the configured read timeout
+        assert!(result.is_err(), "Default read timeout should also timeout with {}", description);
+        
+        assert!(
+            elapsed >= min_expected && elapsed <= max_expected,
+            "Default read timeout with {} should match configured value: {:?} not in range [{:?}, {:?}]",
+            description, elapsed, min_expected, max_expected
+        );
+        
+        println!("    ✓ {} - default timeout in {:?}", description, elapsed);
+    }
+    
+    println!("\nTesting configurable timeout values for WRITE operations");
+    
+    for (timeout_duration, description) in &timeout_test_cases {
+        println!("  Testing write with {}", description);
+        
+        // Configure wire config with the specific write timeout
+        let wire_config = WireConfig::new(1024 * 1024, Duration::from_secs(30), *timeout_duration);
+        let framed_message = FramedMessage::new(wire_config);
+        
+        // Create a stream that never accepts writes
+        let mut never_write_stream = NeverWriteStream::new();
+        
+        let start_time = std::time::Instant::now();
+        
+        // Test write with explicit timeout
+        let result = framed_message.write_message_with_timeout(
+            &mut never_write_stream,
+            &envelope,
+            *timeout_duration
+        ).await;
+        
+        let elapsed = start_time.elapsed();
+        
+        // Verify the operation timed out
+        assert!(result.is_err(), "Write operation should have timed out with {}", description);
+        
+        // Verify timing: should have timed out approximately at the configured timeout
+        let tolerance = if timeout_duration.as_millis() < 100 { 
+            Duration::from_millis(50) 
+        } else { 
+            Duration::from_millis(100) 
+        };
+        
+        let min_expected = timeout_duration.saturating_sub(tolerance);
+        let max_expected = *timeout_duration + tolerance;
+        
+        assert!(
+            elapsed >= min_expected,
+            "Write timeout with {} occurred too early: {:?} < expected minimum {:?}",
+            description, elapsed, min_expected
+        );
+        assert!(
+            elapsed <= max_expected,
+            "Write timeout with {} occurred too late: {:?} > expected maximum {:?}",
+            description, elapsed, max_expected
+        );
+        
+        println!("    ✓ {} - timed out in {:?} (expected: {:?})", description, elapsed, timeout_duration);
+        
+        // Test write with default timeout (should use configured value)
+        let start_time = std::time::Instant::now();
+        let result = framed_message.write_message_with_default_timeout(&mut never_write_stream, &envelope).await;
+        let elapsed = start_time.elapsed();
+        
+        // Should also timeout with the configured write timeout
+        assert!(result.is_err(), "Default write timeout should also timeout with {}", description);
+        
+        assert!(
+            elapsed >= min_expected && elapsed <= max_expected,
+            "Default write timeout with {} should match configured value: {:?} not in range [{:?}, {:?}]",
+            description, elapsed, min_expected, max_expected
+        );
+        
+        println!("    ✓ {} - default timeout in {:?}", description, elapsed);
+    }
+    
+    println!("\nTesting mixed timeout configurations");
+    
+    // Test with mixed read/write timeout configurations
+    let mixed_test_cases = vec![
+        (Duration::from_millis(50), Duration::from_millis(200), "short read, long write"),
+        (Duration::from_millis(200), Duration::from_millis(50), "long read, short write"),
+        (Duration::from_millis(100), Duration::from_millis(100), "equal read/write"),
+    ];
+    
+    for (read_timeout, write_timeout, description) in mixed_test_cases {
+        println!("  Testing mixed config: {}", description);
+        
+        let wire_config = WireConfig::new(1024 * 1024, read_timeout, write_timeout);
+        let framed_message = FramedMessage::new(wire_config);
+        
+        // Test read uses read timeout
+        let mut never_read_stream = NeverReadStream::new();
+        let start_time = std::time::Instant::now();
+        let result = framed_message.read_message_with_default_timeout(&mut never_read_stream).await;
+        let elapsed = start_time.elapsed();
+        
+        assert!(result.is_err(), "Read operation should timeout with {}", description);
+        
+        let read_tolerance = if read_timeout.as_millis() < 100 { 
+            Duration::from_millis(50) 
+        } else { 
+            Duration::from_millis(100) 
+        };
+        
+        let read_min = read_timeout.saturating_sub(read_tolerance);
+        let read_max = read_timeout + read_tolerance;
+        
+        assert!(
+            elapsed >= read_min && elapsed <= read_max,
+            "Read operation with {} should use read timeout {:?}, got {:?}",
+            description, read_timeout, elapsed
+        );
+        
+        // Test write uses write timeout
+        let mut never_write_stream = NeverWriteStream::new();
+        let start_time = std::time::Instant::now();
+        let result = framed_message.write_message_with_default_timeout(&mut never_write_stream, &envelope).await;
+        let elapsed = start_time.elapsed();
+        
+        assert!(result.is_err(), "Write operation should timeout with {}", description);
+        
+        let write_tolerance = if write_timeout.as_millis() < 100 { 
+            Duration::from_millis(50) 
+        } else { 
+            Duration::from_millis(100) 
+        };
+        
+        let write_min = write_timeout.saturating_sub(write_tolerance);
+        let write_max = write_timeout + write_tolerance;
+        
+        assert!(
+            elapsed >= write_min && elapsed <= write_max,
+            "Write operation with {} should use write timeout {:?}, got {:?}",
+            description, write_timeout, elapsed
+        );
+        
+        println!("    ✓ {} - read: {:?}, write: {:?}", description, read_timeout, write_timeout);
+    }
+    
+    println!("✅ Configurable timeout values test passed");
+    println!("   - Tested very short timeouts (50ms)");
+    println!("   - Tested medium timeouts (100ms, 200ms)");
+    println!("   - Tested long timeouts (500ms, 1000ms)");
+    println!("   - Verified both explicit and default timeout methods");
+    println!("   - Tested mixed read/write timeout configurations");
+    println!("   - All timeouts respected configured values within expected tolerance");
 } 
