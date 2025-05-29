@@ -40,20 +40,44 @@ cargo build --release
 
 ```bash
 # 1. Initialize your identity
-mate init
+mate key generate
 
-# 2. Start listening for connections
+# 2. Check your peer ID
+mate key info
+
+# 3. Start listening for connections
 mate serve --bind 0.0.0.0:8080
-
-# 3. In another terminal, check your peer ID
-mate info
 
 # 4. Share your address (IP:8080) and peer ID with a friend
 ```
 
 ## Usage
 
-### Game Management
+### Identity & Key Management
+```bash
+# Generate a new cryptographic identity
+mate key generate
+
+# Show your peer ID and key information
+mate key info
+
+# Show where keys are stored
+mate key path
+```
+
+### Network & Connection
+```bash
+# Start server to accept connections
+mate serve --bind 0.0.0.0:8080
+
+# Connect to another peer for testing
+mate connect 192.168.1.100:8080
+
+# Send a specific message when connecting
+mate connect 192.168.1.100:8080 --message "Hello, peer!"
+```
+
+### Game Management (Future)
 ```bash
 # Invite someone to play (they need to be running `mate serve`)
 mate invite 192.168.1.100:8080
