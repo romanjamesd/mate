@@ -566,13 +566,24 @@ impl FramedMessage {
         self.validate_length(length)
     }
 
-    /// Validate message size against DoS protection thresholds
-    #[instrument(level = "trace", skip(self), fields(size, max_size = self.dos_config.max_message_size))]
+    /// Validate message size against DoS protection limits with comprehensive logging
+    /// 
+    /// This method performs multi-layered validation of message sizes to prevent
+    /// denial-of-service attacks through oversized messages or memory exhaustion.
+    /// All validation events are logged with structured data for security monitoring.
+    #[instrument(level = "trace", skip(self), fields(
+        size,
+        min_size = self.dos_config.min_message_size,
+        max_size = self.dos_config.max_message_size,
+        suspicious_threshold = self.dos_config.suspicious_threshold,
+        validation_result = tracing::field::Empty
+    ))]
     fn validate_message_size(&self, size: usize) -> Result<(), WireProtocolError> {
         tracing::Span::current().record("size", size);
         
         // Check minimum size to prevent zero-length or malformed messages
         if size < self.dos_config.min_message_size {
+            tracing::Span::current().record("validation_result", "rejected_too_small");
             warn!(
                 size = size,
                 min_size = self.dos_config.min_message_size,
@@ -586,9 +597,11 @@ impl FramedMessage {
         
         // Check maximum size to prevent memory exhaustion
         if size > self.dos_config.max_message_size {
+            tracing::Span::current().record("validation_result", "rejected_too_large");
             error!(
                 size = size,
                 max_size = self.dos_config.max_message_size,
+                security_event = "dos_protection_triggered",
                 "Message size exceeds maximum allowed size"
             );
             return Err(WireProtocolError::MessageTooLarge {
@@ -599,15 +612,24 @@ impl FramedMessage {
         
         // Log suspicious but allowed message sizes for monitoring
         if size > self.dos_config.suspicious_threshold {
+            tracing::Span::current().record("validation_result", "accepted_suspicious");
             warn!(
                 size = size,
                 threshold = self.dos_config.suspicious_threshold,
                 max_size = self.dos_config.max_message_size,
+                security_event = "suspicious_message_size",
+                size_ratio = (size as f64) / (self.dos_config.max_message_size as f64),
                 "Message size exceeds suspicious threshold but is still allowed"
             );
+        } else {
+            tracing::Span::current().record("validation_result", "accepted_normal");
         }
         
-        debug!("Message size validation passed for {} bytes", size);
+        debug!(
+            size = size,
+            utilization_pct = ((size as f64) / (self.dos_config.max_message_size as f64) * 100.0) as u32,
+            "Message size validation passed"
+        );
         Ok(())
     }
 
@@ -866,20 +888,45 @@ impl FramedMessage {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, writer, envelope))]
+    /// Write a message with enhanced DoS protection and structured logging
+    /// 
+    /// This method serializes a `SignedEnvelope` and writes it to the provided async writer
+    /// using the length-prefixed wire protocol format. The operation includes comprehensive
+    /// DoS protection with configurable size limits and detailed logging for monitoring.
+    /// 
+    /// # Arguments
+    /// * `writer` - The async writer to write the message to
+    /// * `envelope` - The SignedEnvelope to serialize and send
+    /// 
+    /// # Returns
+    /// * `Ok(())` - Message was successfully written
+    /// * `Err(anyhow::Error)` - Serialization, validation, or IO error occurred
+    /// 
+    /// # Wire Protocol Format
+    /// ```text
+    /// [4 bytes: message length (big-endian u32)][message bytes: serialized SignedEnvelope]
+    /// ```
+    #[instrument(level = "debug", skip(self, writer, envelope), fields(
+        message_size,
+        write_timeout_secs = self.wire_config.write_timeout.as_secs(),
+        max_message_size = self.wire_config.max_message_size
+    ))]
     pub async fn write_message(
         &self,
         writer: &mut (impl AsyncWrite + Unpin),
         envelope: &SignedEnvelope
     ) -> Result<()> {
+        let start_time = std::time::Instant::now();
         debug!("Starting message write operation with DoS protection");
         
         // Serialize the envelope to bytes with enhanced validation
         let message_bytes = self.serialize_envelope(envelope)
             .with_context(|| "Failed to serialize envelope for writing")?;
         
-        // Get the message length as u32 for the length prefix
+        // Record message size for metrics
         let message_length = message_bytes.len() as u32;
+        tracing::Span::current().record("message_size", message_length);
+        
         debug!("Prepared message: {} bytes with length prefix", message_length);
         
         // Create the 4-byte length prefix (big-endian)
@@ -897,7 +944,12 @@ impl FramedMessage {
         writer.flush().await
             .with_context(|| "Failed to flush writer after message write")?;
         
-        debug!("Message write operation completed successfully with DoS protection");
+        let elapsed = start_time.elapsed();
+        debug!(
+            message_size = message_length,
+            duration_ms = elapsed.as_millis(),
+            "Message write operation completed successfully with DoS protection"
+        );
         Ok(())
     }
     
