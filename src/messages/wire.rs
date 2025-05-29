@@ -224,8 +224,8 @@ pub enum WireProtocolError {
     #[error("Message too large: {size} bytes exceeds maximum of {max_size} bytes")]
     MessageTooLarge { size: usize, max_size: usize },
     
-    #[error("Invalid length prefix: {length}")]
-    InvalidLength { length: u32 },
+    #[error("Invalid length prefix: {length} (valid range: {min}-{max})")]
+    InvalidLength { length: u32, min: u32, max: u32 },
     
     #[error("Suspicious message size: {size} bytes exceeds threshold of {threshold} bytes")]
     SuspiciousMessageSize { size: usize, threshold: usize },
@@ -242,17 +242,211 @@ pub enum WireProtocolError {
     #[error("Write operation timed out after {timeout:?}")]
     WriteTimeout { timeout: Duration },
     
+    #[error("Operation timed out after {timeout:?}: {operation}")]
+    OperationTimeout { timeout: Duration, operation: String },
+    
     #[error("Corrupted data: {reason}")]
     CorruptedData { reason: String },
     
     #[error("Unexpected end of file while reading {operation}")]
     UnexpectedEof { operation: String },
     
+    #[error("Connection closed unexpectedly during {operation}")]
+    ConnectionClosed { operation: String },
+    
+    #[error("Protocol violation: {description}")]
+    ProtocolViolation { description: String },
+    
+    #[error("Buffer overflow: attempted to write {attempted} bytes to buffer of size {capacity}")]
+    BufferOverflow { attempted: usize, capacity: usize },
+    
+    #[error("Invalid message format: {details}")]
+    InvalidMessageFormat { details: String },
+    
+    #[error("Length mismatch: expected {expected} bytes, got {actual} bytes")]
+    LengthMismatch { expected: usize, actual: usize },
+    
     #[error("Serialization error: {0}")]
     Serialization(#[from] bincode::Error),
     
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    
+    #[error("Timeout error: {0}")]
+    Timeout(#[from] tokio::time::error::Elapsed),
+}
+
+impl WireProtocolError {
+    /// Create a new MessageTooLarge error with context
+    pub fn message_too_large(size: usize, max_size: usize) -> Self {
+        Self::MessageTooLarge { size, max_size }
+    }
+    
+    /// Create a new InvalidLength error with valid range context
+    pub fn invalid_length(length: u32) -> Self {
+        Self::InvalidLength { 
+            length, 
+            min: 1, 
+            max: MAX_MESSAGE_SIZE as u32 
+        }
+    }
+    
+    /// Create a new InvalidLength error with custom range
+    pub fn invalid_length_with_range(length: u32, min: u32, max: u32) -> Self {
+        Self::InvalidLength { length, min, max }
+    }
+    
+    /// Create a new CorruptedData error with reason
+    pub fn corrupted_data<S: Into<String>>(reason: S) -> Self {
+        Self::CorruptedData { reason: reason.into() }
+    }
+    
+    /// Create a new UnexpectedEof error with operation context
+    pub fn unexpected_eof<S: Into<String>>(operation: S) -> Self {
+        Self::UnexpectedEof { operation: operation.into() }
+    }
+    
+    /// Create a new ConnectionClosed error with operation context
+    pub fn connection_closed<S: Into<String>>(operation: S) -> Self {
+        Self::ConnectionClosed { operation: operation.into() }
+    }
+    
+    /// Create a new ProtocolViolation error with description
+    pub fn protocol_violation<S: Into<String>>(description: S) -> Self {
+        Self::ProtocolViolation { description: description.into() }
+    }
+    
+    /// Create a new BufferOverflow error with capacity information
+    pub fn buffer_overflow(attempted: usize, capacity: usize) -> Self {
+        Self::BufferOverflow { attempted, capacity }
+    }
+    
+    /// Create a new InvalidMessageFormat error with details
+    pub fn invalid_message_format<S: Into<String>>(details: S) -> Self {
+        Self::InvalidMessageFormat { details: details.into() }
+    }
+    
+    /// Create a new LengthMismatch error
+    pub fn length_mismatch(expected: usize, actual: usize) -> Self {
+        Self::LengthMismatch { expected, actual }
+    }
+    
+    /// Create a new OperationTimeout error with context
+    pub fn operation_timeout<S: Into<String>>(timeout: Duration, operation: S) -> Self {
+        Self::OperationTimeout { timeout, operation: operation.into() }
+    }
+    
+    /// Check if this error is recoverable (can be retried)
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            // Timeout errors are generally recoverable
+            WireProtocolError::ReadTimeout { .. } |
+            WireProtocolError::WriteTimeout { .. } |
+            WireProtocolError::OperationTimeout { .. } |
+            WireProtocolError::Timeout(_) => true,
+            
+            // Some IO errors are recoverable (e.g., interrupted operations)
+            WireProtocolError::Io(io_err) => match io_err.kind() {
+                std::io::ErrorKind::Interrupted |
+                std::io::ErrorKind::WouldBlock |
+                std::io::ErrorKind::TimedOut => true,
+                _ => false,
+            },
+            
+            // Connection closed might be recoverable if we can reconnect
+            WireProtocolError::ConnectionClosed { .. } => true,
+            
+            // Protocol violations and data corruption are not recoverable
+            WireProtocolError::ProtocolViolation { .. } |
+            WireProtocolError::CorruptedData { .. } |
+            WireProtocolError::InvalidMessageFormat { .. } |
+            WireProtocolError::Serialization(_) => false,
+            
+            // Size-related errors are configuration issues, not recoverable
+            WireProtocolError::MessageTooLarge { .. } |
+            WireProtocolError::MessageTooSmall { .. } |
+            WireProtocolError::AllocationDenied { .. } |
+            WireProtocolError::InvalidLength { .. } |
+            WireProtocolError::BufferOverflow { .. } |
+            WireProtocolError::LengthMismatch { .. } => false,
+            
+            // Suspicious messages may be recoverable if it's a false positive
+            WireProtocolError::SuspiciousMessageSize { .. } => true,
+            
+            // EOF is generally not recoverable
+            WireProtocolError::UnexpectedEof { .. } => false,
+        }
+    }
+    
+    /// Check if this error indicates a security concern
+    pub fn is_security_related(&self) -> bool {
+        match self {
+            WireProtocolError::MessageTooLarge { .. } |
+            WireProtocolError::SuspiciousMessageSize { .. } |
+            WireProtocolError::AllocationDenied { .. } |
+            WireProtocolError::ProtocolViolation { .. } |
+            WireProtocolError::CorruptedData { .. } |
+            WireProtocolError::InvalidMessageFormat { .. } |
+            WireProtocolError::BufferOverflow { .. } => true,
+            _ => false,
+        }
+    }
+    
+    /// Get a user-friendly error category
+    pub fn category(&self) -> &'static str {
+        match self {
+            WireProtocolError::ReadTimeout { .. } |
+            WireProtocolError::WriteTimeout { .. } |
+            WireProtocolError::OperationTimeout { .. } |
+            WireProtocolError::Timeout(_) => "Timeout",
+            
+            WireProtocolError::MessageTooLarge { .. } |
+            WireProtocolError::MessageTooSmall { .. } |
+            WireProtocolError::InvalidLength { .. } |
+            WireProtocolError::SuspiciousMessageSize { .. } => "Message Size",
+            
+            WireProtocolError::AllocationDenied { .. } |
+            WireProtocolError::BufferOverflow { .. } => "Memory",
+            
+            WireProtocolError::CorruptedData { .. } |
+            WireProtocolError::InvalidMessageFormat { .. } |
+            WireProtocolError::LengthMismatch { .. } |
+            WireProtocolError::Serialization(_) => "Data Format",
+            
+            WireProtocolError::UnexpectedEof { .. } |
+            WireProtocolError::ConnectionClosed { .. } |
+            WireProtocolError::Io(_) => "Connection",
+            
+            WireProtocolError::ProtocolViolation { .. } => "Protocol",
+        }
+    }
+}
+
+// Implement conversion from anyhow::Error for compatibility
+impl From<anyhow::Error> for WireProtocolError {
+    fn from(err: anyhow::Error) -> Self {
+        // Try to downcast to known error types first
+        if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+            return WireProtocolError::Io(std::io::Error::new(io_err.kind(), format!("{}", err)));
+        }
+        
+        if let Some(_bincode_err) = err.downcast_ref::<bincode::Error>() {
+            // Create a new serialization error with the context from anyhow
+            return WireProtocolError::invalid_message_format(format!("Serialization failed: {}", err));
+        }
+        
+        if let Some(_timeout_err) = err.downcast_ref::<tokio::time::error::Elapsed>() {
+            // Create a generic timeout error since we don't have the specific timeout duration
+            return WireProtocolError::ProtocolViolation { 
+                description: format!("Operation timed out: {}", err) 
+            };
+        }
+        
+        // For other anyhow errors, create a generic protocol violation
+        WireProtocolError::ProtocolViolation { 
+            description: format!("Unexpected error: {}", err) 
+        }
+    }
 }
 
 pub struct FramedMessage {
@@ -528,13 +722,13 @@ impl FramedMessage {
                 length = length,
                 "Length prefix is extremely large, possible corruption or attack"
             );
-            return Err(WireProtocolError::InvalidLength { length });
+            return Err(WireProtocolError::InvalidLength { length, min: 1, max: MAX_MESSAGE_SIZE as u32 });
         }
         
         // Check for zero length (should not happen for valid messages)
         if length == 0 {
             warn!("Received zero-length message prefix");
-            return Err(WireProtocolError::InvalidLength { length });
+            return Err(WireProtocolError::InvalidLength { length, min: 1, max: MAX_MESSAGE_SIZE as u32 });
         }
         
         debug!("Enhanced length validation passed for {} bytes", length_usize);
@@ -784,16 +978,15 @@ impl FramedMessage {
                 debug!("Timed read operation with DoS protection completed in {:?}", elapsed);
                 result
             }
-            Err(_elapsed) => {
+            Err(elapsed_err) => {
                 let elapsed = start_time.elapsed();
                 error!(
                     timeout = ?timeout_duration,
                     elapsed = ?elapsed,
                     "Read operation timed out"
                 );
-                Err(anyhow::anyhow!("{}", WireProtocolError::ReadTimeout { 
-                    timeout: timeout_duration 
-                }))
+                // Use the new From trait for automatic conversion
+                Err(WireProtocolError::from(elapsed_err).into())
             }
         }
     }
@@ -838,16 +1031,15 @@ impl FramedMessage {
                 debug!("Timed write operation with DoS protection completed in {:?}", elapsed);
                 result
             }
-            Err(_elapsed) => {
+            Err(elapsed_err) => {
                 let elapsed = start_time.elapsed();
                 error!(
                     timeout = ?timeout_duration,
                     elapsed = ?elapsed,
                     "Write operation timed out"
                 );
-                Err(anyhow::anyhow!("{}", WireProtocolError::WriteTimeout { 
-                    timeout: timeout_duration 
-                }))
+                // Use the new From trait for automatic conversion
+                Err(WireProtocolError::from(elapsed_err).into())
             }
         }
     }
