@@ -60,24 +60,38 @@ use rand;
 /// 
 /// # Example Usage
 /// 
-/// ```rust
+/// ```no_run
 /// use std::sync::Arc;
+/// use mate::network::Client;
+/// use mate::crypto::Identity;
+/// use mate::messages::Message;
 /// 
-/// let client = Client::new(identity);
-/// 
-/// // One-shot message exchange
-/// let response = client.send_message_to("127.0.0.1:8080", message).await?;
-/// 
-/// // Persistent connection for multiple messages
-/// let mut conn = client.connect("127.0.0.1:8080").await?;
-/// client.echo_session(&mut conn).await?;
-/// conn.send_message(message1).await?;
-/// conn.send_message(message2).await?;
-/// 
-/// // Connection quality assessment
-/// let quality = client.test_connection_quality("127.0.0.1:8080").await?;
-/// if quality.is_acceptable_quality() {
-///     println!("Connection quality: {}", quality.quality_assessment());
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     // Create test identity and messages
+///     let identity = Arc::new(Identity::generate()?);
+///     let message = Message::new_ping(12345, "test message".to_string());
+///     let message1 = Message::new_ping(11111, "message 1".to_string());
+///     let message2 = Message::new_ping(22222, "message 2".to_string());
+///     
+///     let client = Client::new(identity);
+///     
+///     // One-shot message exchange
+///     let response = client.send_message_to("127.0.0.1:8080", message).await?;
+///     
+///     // Persistent connection for multiple messages
+///     let mut conn = client.connect("127.0.0.1:8080").await?;
+///     client.echo_session(&mut conn).await?;
+///     conn.send_message(message1).await?;
+///     conn.send_message(message2).await?;
+///     
+///     // Connection quality assessment
+///     let quality = client.test_connection_quality("127.0.0.1:8080").await?;
+///     if quality.is_acceptable_quality() {
+///         println!("Connection quality: {}", quality.quality_assessment());
+///     }
+///     
+///     Ok(())
 /// }
 /// ```
 /// 

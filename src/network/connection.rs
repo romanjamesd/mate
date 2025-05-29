@@ -73,21 +73,33 @@ pub enum ConnectionError {
 /// 
 /// # Example Usage
 /// 
-/// ```rust
+/// ```no_run
 /// use std::sync::Arc;
 /// use tokio::net::TcpStream;
+/// use mate::network::Connection;
+/// use mate::crypto::Identity;
+/// use mate::messages::Message;
 /// 
-/// // Basic connection establishment
-/// let stream = TcpStream::connect("127.0.0.1:8080").await?;
-/// let mut connection = Connection::new(stream, identity).await;
-/// 
-/// // Perform handshake
-/// let peer_id = connection.handshake().await?;
-/// println!("Authenticated with peer: {}", peer_id);
-/// 
-/// // Send and receive messages
-/// connection.send_message(my_message).await?;
-/// let (response, sender) = connection.receive_message().await?;
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     // Create test identity and message
+///     let identity = Arc::new(Identity::generate()?);
+///     let my_message = Message::new_ping(12345, "test payload".to_string());
+///     
+///     // Basic connection establishment
+///     let stream = TcpStream::connect("127.0.0.1:8080").await?;
+///     let mut connection = Connection::new(stream, identity).await;
+///     
+///     // Perform handshake
+///     let peer_id = connection.handshake().await?;
+///     println!("Authenticated with peer: {}", peer_id);
+///     
+///     // Send and receive messages
+///     connection.send_message(my_message).await?;
+///     let (response, sender) = connection.receive_message().await?;
+///     
+///     Ok(())
+/// }
 /// ```
 /// 
 /// # Thread Safety

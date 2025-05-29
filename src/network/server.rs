@@ -64,17 +64,27 @@ use tracing::{info, error, warn, debug, instrument};
 /// 
 /// ```rust
 /// use std::sync::Arc;
+/// use mate::network::Server;
+/// use mate::crypto::Identity;
+/// use mate::messages::wire::WireConfig;
 /// 
-/// // Basic server setup
-/// let server = Server::bind("0.0.0.0:8080", identity).await?;
-/// 
-/// // Start accepting connections (runs forever)
-/// server.run().await?;
-/// 
-/// // With custom configuration
-/// let custom_config = WireConfig::for_server()
-///     .with_max_message_size(1024 * 1024); // 1MB messages
-/// let server = Server::bind_with_config("0.0.0.0:8080", identity, custom_config).await?;
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     // Create test identity
+///     let identity = Arc::new(Identity::generate()?);
+///     
+///     // Basic server setup
+///     let server = Server::bind("0.0.0.0:8080", identity.clone()).await?;
+///     
+///     // Start accepting connections (runs forever)
+///     // server.run().await?;  // Commented out as this would run indefinitely
+///     
+///     // With custom configuration
+///     let custom_config = WireConfig::with_max_message_size(1024 * 1024); // 1MB messages
+///     let server = Server::bind_with_config("0.0.0.0:8081", identity, custom_config).await?;
+///     
+///     Ok(())
+/// }
 /// ```
 /// 
 /// # Thread Safety
