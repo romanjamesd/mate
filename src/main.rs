@@ -1,9 +1,14 @@
 use mate::cli::{Cli, Commands, KeyCommand};
 use mate::crypto::Identity;
+use mate::network::Client;
+use mate::messages::Message;
 use clap::Parser;
 use anyhow::Result;
 use tracing::{info, error, warn};
 use base64::{Engine as _, engine::general_purpose};
+use tokio::time::Instant;
+use std::sync::Arc;
+use rand;
 
 /// Initialize identity using secure storage
 pub async fn init_identity() -> Result<Identity> {
@@ -163,11 +168,60 @@ async fn main() -> Result<()> {
             info!("Connecting to {}", address);
             
             // Use secure storage for identity
-            let identity = init_identity().await?;
+            let identity = Arc::new(init_identity().await?);
             info!("Using identity: {}", identity.peer_id());
             
-            // Implementation placeholder
-            todo!()
+            // Create client instance
+            let client = Client::new(identity);
+            
+            // Attempt connection
+            match client.connect(&address).await {
+                Ok(mut connection) => {
+                    let peer_id = connection.peer_identity()
+                        .unwrap_or("unknown")
+                        .to_string();
+                    info!("Connected to peer: {}", peer_id);
+                    
+                    // Handle one-shot message mode
+                    if let Some(msg_text) = message {
+                        let start_time = Instant::now();
+                        let ping_message = Message::new_ping(rand::random::<u64>(), msg_text.clone());
+                        
+                        // Send message and measure round-trip time
+                        match connection.send_message(ping_message).await {
+                            Ok(()) => {
+                                match connection.receive_message().await {
+                                    Ok((response, _sender)) => {
+                                        let round_trip_time = start_time.elapsed();
+                                        info!("Sending message: \"{}\"", msg_text);
+                                        info!("Received echo: \"{}\" (round-trip: {}ms)", 
+                                              response.get_payload(), round_trip_time.as_millis());
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to receive response: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to send message: {}", e);
+                            }
+                        }
+                    } else {
+                        // Interactive mode placeholder - will be implemented in next steps
+                        info!("Interactive mode - type messages and press Enter. Type 'quit' to exit.");
+                        info!("Note: Interactive mode will be fully implemented in next steps");
+                    }
+                    
+                    // Close connection
+                    if let Err(e) = connection.close().await {
+                        warn!("Failed to close connection cleanly: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to connect to {}: {}", address, e);
+                    std::process::exit(1);
+                }
+            }
         }
     }
     
