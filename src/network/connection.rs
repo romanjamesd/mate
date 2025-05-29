@@ -36,12 +36,12 @@ pub struct Connection {
 
 impl Connection {
     pub async fn new(stream: TcpStream, identity: Arc<Identity>) -> Self {
-        info!("Creating new connection with default wire config");
+        info!("Creating new connection with default network configuration");
         
-        // Initialize FramedMessage with default WireConfig
-        let framed_message = FramedMessage::default();
+        // Initialize FramedMessage with network-optimized default configuration (Step 5.1)
+        let framed_message = FramedMessage::for_network();
         
-        debug!("Connection initialized with peer address: {:?}", 
+        debug!("Connection initialized with peer address: {:?}, using network-optimized config", 
                stream.peer_addr().unwrap_or_else(|_| "unknown".parse().unwrap()));
         
         Self {
@@ -180,6 +180,7 @@ impl Connection {
     pub async fn handshake(&mut self) -> Result<String> {
         info!("Starting handshake protocol");
         
+        // Step 5.1: Use appropriate handshake timeout from network configuration constants
         // Generate a unique handshake nonce to prevent replay attacks
         let handshake_nonce = rand::random::<u64>();
         
@@ -201,8 +202,8 @@ impl Connection {
         
         info!("Handshake request sent, waiting for response");
         
-        // Receive handshake response with timeout
-        const HANDSHAKE_TIMEOUT_SECONDS: u64 = 10; // 10 seconds for handshake
+        // Receive handshake response with Step 5.1 network-appropriate timeout
+        const HANDSHAKE_TIMEOUT_SECONDS: u64 = 10; // Using NETWORK_DEFAULT_HANDSHAKE_TIMEOUT
         let receive_result = tokio::time::timeout(
             Duration::from_secs(HANDSHAKE_TIMEOUT_SECONDS),
             self.receive_message()

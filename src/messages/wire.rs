@@ -11,6 +11,29 @@ pub const LENGTH_PREFIX_SIZE: usize = 4; // 4 bytes for u32 length prefix
 pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
+// Network-specific default configurations for Step 5.1
+// These provide appropriate defaults optimized for network operations
+pub const NETWORK_DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
+pub const NETWORK_DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+pub const NETWORK_DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+pub const NETWORK_DEFAULT_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB for typical network messages
+pub const NETWORK_LARGE_MESSAGE_SIZE: usize = 8 * 1024 * 1024; // 8MB for large transfers
+pub const NETWORK_SMALL_MESSAGE_SIZE: usize = 64 * 1024; // 64KB for small/control messages
+
+// Connection-specific timeouts
+pub const CONNECTION_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
+pub const CONNECTION_IDLE_TIMEOUT: Duration = Duration::from_secs(600); // 10 minutes
+
+// Server-specific configuration
+pub const SERVER_ACCEPT_TIMEOUT: Duration = Duration::from_millis(100);
+pub const SERVER_MAX_CONCURRENT_CONNECTIONS: usize = 1000;
+pub const SERVER_CONNECTION_BACKLOG: usize = 128;
+
+// Client-specific configuration
+pub const CLIENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+pub const CLIENT_RETRY_MAX_ATTEMPTS: u32 = 3;
+pub const CLIENT_RETRY_BASE_DELAY: Duration = Duration::from_millis(1000);
+
 // DoS Protection Constants
 pub const MIN_MESSAGE_SIZE: usize = 1; // Minimum message size (1 byte)
 pub const MAX_REASONABLE_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB for reasonable messages
@@ -70,6 +93,89 @@ impl WireConfig {
             max_message_size: MAX_MESSAGE_SIZE,
             read_timeout: timeout,
             write_timeout: timeout,
+        }
+    }
+
+    // Step 5.1: Network-specific configuration presets for appropriate defaults
+
+    /// Create a WireConfig optimized for network operations with standard timeouts
+    /// Uses 1MB message size limit and 30-second timeouts
+    pub fn for_network() -> Self {
+        Self {
+            max_message_size: NETWORK_DEFAULT_MESSAGE_SIZE,
+            read_timeout: NETWORK_DEFAULT_READ_TIMEOUT,
+            write_timeout: NETWORK_DEFAULT_WRITE_TIMEOUT,
+        }
+    }
+
+    /// Create a WireConfig optimized for small/control messages with faster timeouts
+    /// Uses 64KB message size limit and 10-second timeouts for responsive communication
+    pub fn for_control_messages() -> Self {
+        Self {
+            max_message_size: NETWORK_SMALL_MESSAGE_SIZE,
+            read_timeout: NETWORK_DEFAULT_HANDSHAKE_TIMEOUT,
+            write_timeout: NETWORK_DEFAULT_HANDSHAKE_TIMEOUT,
+        }
+    }
+
+    /// Create a WireConfig optimized for large file transfers with extended timeouts
+    /// Uses 8MB message size limit and extended timeouts for bulk operations
+    pub fn for_large_transfers() -> Self {
+        Self {
+            max_message_size: NETWORK_LARGE_MESSAGE_SIZE,
+            read_timeout: Duration::from_secs(120), // 2 minutes for large messages
+            write_timeout: Duration::from_secs(120),
+        }
+    }
+
+    /// Create a WireConfig optimized for server operations
+    /// Balanced configuration for handling multiple concurrent connections
+    pub fn for_server() -> Self {
+        Self {
+            max_message_size: NETWORK_DEFAULT_MESSAGE_SIZE,
+            read_timeout: NETWORK_DEFAULT_READ_TIMEOUT,
+            write_timeout: NETWORK_DEFAULT_WRITE_TIMEOUT,
+        }
+    }
+
+    /// Create a WireConfig optimized for client operations
+    /// Slightly more aggressive timeouts for responsive client behavior
+    pub fn for_client() -> Self {
+        Self {
+            max_message_size: NETWORK_DEFAULT_MESSAGE_SIZE,
+            read_timeout: Duration::from_secs(20), // Slightly shorter for clients
+            write_timeout: Duration::from_secs(20),
+        }
+    }
+
+    /// Create a WireConfig for handshake operations with quick timeouts
+    /// Optimized for connection establishment with fast feedback
+    pub fn for_handshake() -> Self {
+        Self {
+            max_message_size: NETWORK_SMALL_MESSAGE_SIZE, // Handshakes should be small
+            read_timeout: NETWORK_DEFAULT_HANDSHAKE_TIMEOUT,
+            write_timeout: NETWORK_DEFAULT_HANDSHAKE_TIMEOUT,
+        }
+    }
+
+    /// Create a WireConfig for testing with very permissive settings
+    /// Allows large messages and long timeouts for development/testing
+    #[cfg(test)]
+    pub fn for_testing() -> Self {
+        Self {
+            max_message_size: MAX_MESSAGE_SIZE, // Allow maximum size for tests
+            read_timeout: Duration::from_secs(60), // Long timeouts for debugging
+            write_timeout: Duration::from_secs(60),
+        }
+    }
+
+    /// Create a WireConfig for production with conservative, secure settings
+    /// Optimized for security and resource management in production environments
+    pub fn for_production() -> Self {
+        Self {
+            max_message_size: NETWORK_DEFAULT_MESSAGE_SIZE, // Conservative 1MB limit
+            read_timeout: NETWORK_DEFAULT_READ_TIMEOUT,
+            write_timeout: NETWORK_DEFAULT_WRITE_TIMEOUT,
         }
     }
 }
@@ -840,5 +946,56 @@ impl FramedMessage {
     ) -> Result<()> {
         let framed = FramedMessage::default();
         framed.write_message_with_default_timeout(writer, envelope).await
+    }
+
+    // Step 5.1: Network-specific FramedMessage constructors for appropriate defaults
+
+    /// Create a FramedMessage optimized for general network operations
+    /// Uses 1MB message size limit and 30-second timeouts
+    pub fn for_network() -> Self {
+        Self::new(WireConfig::for_network())
+    }
+
+    /// Create a FramedMessage optimized for small/control messages
+    /// Uses 64KB message size limit and 10-second timeouts for responsive communication
+    pub fn for_control_messages() -> Self {
+        Self::new(WireConfig::for_control_messages())
+    }
+
+    /// Create a FramedMessage optimized for large file transfers
+    /// Uses 8MB message size limit and extended timeouts for bulk operations
+    pub fn for_large_transfers() -> Self {
+        Self::new(WireConfig::for_large_transfers())
+    }
+
+    /// Create a FramedMessage optimized for server operations
+    /// Balanced configuration for handling multiple concurrent connections
+    pub fn for_server() -> Self {
+        Self::new(WireConfig::for_server())
+    }
+
+    /// Create a FramedMessage optimized for client operations
+    /// Slightly more aggressive timeouts for responsive client behavior
+    pub fn for_client() -> Self {
+        Self::new(WireConfig::for_client())
+    }
+
+    /// Create a FramedMessage for handshake operations
+    /// Optimized for connection establishment with quick timeouts and small messages
+    pub fn for_handshake() -> Self {
+        Self::new(WireConfig::for_handshake())
+    }
+
+    /// Create a FramedMessage for testing with permissive settings
+    /// Allows large messages and long timeouts for development/testing
+    #[cfg(test)]
+    pub fn for_testing() -> Self {
+        Self::new(WireConfig::for_testing())
+    }
+
+    /// Create a FramedMessage for production with conservative, secure settings
+    /// Optimized for security and resource management in production environments
+    pub fn for_production() -> Self {
+        Self::new(WireConfig::for_production())
     }
 }

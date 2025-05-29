@@ -1,6 +1,6 @@
 use crate::crypto::Identity;
 use crate::network::Connection;
-use crate::messages::{Message, wire::WireConfig};
+use crate::messages::{Message, wire::{WireConfig, CLIENT_RETRY_MAX_ATTEMPTS, CLIENT_RETRY_BASE_DELAY}};
 use anyhow::{Result, Context};
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -17,10 +17,10 @@ pub struct Client {
 
 impl Client {
     pub fn new(identity: Arc<Identity>) -> Self {
-        info!("Creating new client with default wire config");
+        info!("Creating new client with client-optimized network configuration");
         Self {
             identity,
-            wire_config: WireConfig::default(),
+            wire_config: WireConfig::for_client(),
         }
     }
     
@@ -41,14 +41,14 @@ impl Client {
         debug!("Using wire config - max_message_size: {}, read_timeout: {:?}, write_timeout: {:?}",
                self.wire_config.max_message_size, self.wire_config.read_timeout, self.wire_config.write_timeout);
         
-        // Retry configuration for transient failures
-        const MAX_RETRY_ATTEMPTS: u32 = 3;
-        const RETRY_DELAY_MS: u64 = 1000; // 1 second base delay
+        // Step 5.1: Use configuration constants for retry logic
+        let max_retry_attempts = CLIENT_RETRY_MAX_ATTEMPTS;
+        let base_retry_delay = CLIENT_RETRY_BASE_DELAY;
         
         let mut last_error = None;
         
-        for attempt in 1..=MAX_RETRY_ATTEMPTS {
-            debug!("Connection attempt {} of {} to {}", attempt, MAX_RETRY_ATTEMPTS, addr);
+        for attempt in 1..=max_retry_attempts {
+            debug!("Connection attempt {} of {} to {}", attempt, max_retry_attempts, addr);
             
             match self.try_connect_once(addr).await {
                 Ok(mut connection) => {
@@ -79,16 +79,16 @@ impl Client {
             }
             
             // Add exponential backoff delay before retry (except for last attempt)
-            if attempt < MAX_RETRY_ATTEMPTS {
-                let delay_ms = RETRY_DELAY_MS * (2_u64.pow(attempt - 1)); // Exponential backoff
+            if attempt < max_retry_attempts {
+                let delay_ms = base_retry_delay.as_millis() * (2_u128.pow(attempt - 1)); // Exponential backoff
                 debug!("Retrying connection to {} in {} ms", addr, delay_ms);
-                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms as u64)).await;
             }
         }
         
         // All retry attempts failed
         let final_error = last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown connection failure"));
-        error!("Failed to connect to {} after {} attempts: {}", addr, MAX_RETRY_ATTEMPTS, final_error);
+        error!("Failed to connect to {} after {} attempts: {}", addr, max_retry_attempts, final_error);
         Err(final_error)
     }
     

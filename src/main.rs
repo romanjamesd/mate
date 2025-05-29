@@ -12,8 +12,22 @@ pub async fn init_identity() -> Result<Identity> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
+    // Step 5.1: Initialize tracing with appropriate logging levels for network operations
+    // Set up structured logging with appropriate levels for production use
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive("mate=info".parse()?)
+                .with_env_var("RUST_LOG")
+                .from_env_lossy()
+        )
+        .with_target(false)  // Hide target module in logs for cleaner output
+        .with_level(true)    // Show log levels
+        .with_file(false)    // Hide file names for production
+        .with_line_number(false) // Hide line numbers for production
+        .init();
+    
+    info!("Starting mate application with network-optimized logging configuration");
     
     let cli = Cli::parse();
     

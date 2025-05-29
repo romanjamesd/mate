@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 // Step 2.1: Add Required Imports
 // Add wire protocol imports
-use crate::messages::wire::{WireConfig, WireProtocolError};
+use crate::messages::wire::{WireConfig, WireProtocolError, SERVER_MAX_CONCURRENT_CONNECTIONS};
 use crate::network::{Connection, ConnectionError};
 // Add async handling imports
 use tokio::task::{self, JoinHandle};
@@ -28,11 +28,13 @@ impl Server {
             .await
             .with_context(|| format!("Failed to bind server to address: {}", addr))?;
         
-        // Initialize with default WireConfig
-        let wire_config = WireConfig::default();
+        // Initialize with Step 5.1 server-optimized WireConfig
+        let wire_config = WireConfig::for_server();
         
         // Log successful server binding
-        info!("Server successfully bound to address: {}", addr);
+        info!("Server successfully bound to address: {} with server-optimized configuration", addr);
+        debug!("Server wire config - max_message_size: {}, read_timeout: {:?}, write_timeout: {:?}", 
+               wire_config.max_message_size, wire_config.read_timeout, wire_config.write_timeout);
         
         Ok(Self {
             identity,
@@ -80,11 +82,10 @@ impl Server {
                     
                     info!("Accepted new connection {} from {}", connection_id, peer_addr);
                     
-                    // Check connection limits
-                    const MAX_CONNECTIONS: usize = 1000; // TODO: Make this configurable
-                    if active_connections.len() >= MAX_CONNECTIONS {
+                    // Check connection limits using Step 5.1 configuration constants
+                    if active_connections.len() >= SERVER_MAX_CONCURRENT_CONNECTIONS {
                         warn!("Connection limit reached ({}), rejecting connection from {}", 
-                              MAX_CONNECTIONS, peer_addr);
+                              SERVER_MAX_CONCURRENT_CONNECTIONS, peer_addr);
                         // Stream will be dropped, closing the connection
                         continue;
                     }
