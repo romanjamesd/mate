@@ -1,3 +1,17 @@
+//! Network Interruption Resilience Tests
+//! 
+//! This module contains tests for verifying the wire protocol's resilience to
+//! network interruptions and its ability to recover gracefully when network
+//! conditions improve. These tests correspond to Essential Test #21 and related
+//! network resilience requirements from the test specification.
+//!
+//! Key test scenarios covered:
+//! - Temporary network interruptions during message transmission
+//! - Protocol recovery when network returns after interruption
+//! - Resilience to various network condition changes
+//! - Message integrity preservation through network interruptions
+//! - Both read and write operation interruption handling
+
 use mate::crypto::Identity;
 use mate::messages::{Message, SignedEnvelope};
 use mate::messages::wire::{FramedMessage, WireProtocolError, LENGTH_PREFIX_SIZE};
@@ -11,15 +25,6 @@ use std::sync::{Arc, Mutex};
 fn create_test_envelope(payload: &str) -> (SignedEnvelope, Message) {
     let identity = Identity::generate().expect("Failed to generate identity");
     let message = Message::new_ping(42, payload.to_string());
-    let envelope = SignedEnvelope::create(&message, &identity, Some(1234567890))
-        .expect("Failed to create signed envelope");
-    (envelope, message)
-}
-
-/// Create a test SignedEnvelope with a unique identifier
-fn create_test_envelope_with_nonce(payload: &str, nonce: u64) -> (SignedEnvelope, Message) {
-    let identity = Identity::generate().expect("Failed to generate identity");
-    let message = Message::new_ping(nonce, payload.to_string());
     let envelope = SignedEnvelope::create(&message, &identity, Some(1234567890))
         .expect("Failed to create signed envelope");
     (envelope, message)
@@ -89,15 +94,6 @@ impl NetworkInterruptionMockStream {
         Self::new(Vec::new(), Vec::new(), interruption_points)
     }
 
-    /// Create for bidirectional testing
-    fn for_bidirectional_testing(
-        data: Vec<u8>, 
-        read_interruptions: Vec<usize>, 
-        write_interruptions: Vec<usize>
-    ) -> Self {
-        Self::new(data, read_interruptions, write_interruptions)
-    }
-
     /// Get the written data
     fn get_written_data(&self) -> &[u8] {
         &self.write_buffer
@@ -111,7 +107,6 @@ impl NetworkInterruptionMockStream {
             write_operations: config.write_operations,
             recovery_count: config.recovery_count,
             total_read_interruptions: config.read_interruption_points.len(),
-            total_write_interruptions: config.write_interruption_points.len(),
         }
     }
 
@@ -182,7 +177,6 @@ struct InterruptionStats {
     write_operations: usize,
     recovery_count: usize,
     total_read_interruptions: usize,
-    total_write_interruptions: usize,
 }
 
 impl AsyncRead for NetworkInterruptionMockStream {
