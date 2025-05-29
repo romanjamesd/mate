@@ -2,7 +2,7 @@ use crate::crypto::Identity;
 use crate::messages::{Message, SignedEnvelope};
 use crate::messages::wire::{FramedMessage, WireConfig, WireProtocolError};
 use tokio::net::TcpStream;
-use anyhow::Result;
+use anyhow::{Result, Context};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, warn, info, instrument};
@@ -197,10 +197,7 @@ impl Connection {
         
         // Send handshake request
         self.send_message(handshake_request).await
-            .map_err(|e| {
-                error!("Failed to send handshake request: {}", e);
-                anyhow::anyhow!("Handshake failed - could not send request: {}", e)
-            })?;
+            .context("Failed to send handshake request")?;
         
         info!("Handshake request sent, waiting for response");
         
@@ -215,11 +212,13 @@ impl Connection {
             Ok(Ok((msg, peer_id))) => (msg, peer_id),
             Ok(Err(e)) => {
                 error!("Failed to receive handshake response: {}", e);
-                return Err(anyhow::anyhow!("Handshake failed - response error: {}", e));
+                return Err(anyhow::Error::from(e))
+                    .context("Failed to receive handshake response");
             }
             Err(_) => {
                 error!("Handshake response timed out after {} seconds", HANDSHAKE_TIMEOUT_SECONDS);
-                return Err(anyhow::anyhow!("Handshake failed - response timeout"));
+                return Err(anyhow::anyhow!("Handshake response timeout after {} seconds", HANDSHAKE_TIMEOUT_SECONDS))
+                    .context("Handshake failed due to timeout");
             }
         };
         
@@ -233,7 +232,8 @@ impl Connection {
         // Validate that this is a proper handshake response
         if !response_message.is_pong() {
             error!("Expected Pong message for handshake response, got {}", response_message.message_type());
-            return Err(anyhow::anyhow!("Handshake failed - invalid response message type"));
+            return Err(anyhow::anyhow!("Expected Pong message, got {}", response_message.message_type()))
+                .context("Invalid handshake response message type");
         }
         
         // Validate the nonce matches our request
@@ -243,7 +243,11 @@ impl Connection {
                 received_nonce = response_message.get_nonce(),
                 "Handshake response nonce mismatch"
             );
-            return Err(anyhow::anyhow!("Handshake failed - nonce mismatch"));
+            return Err(anyhow::anyhow!(
+                "Nonce mismatch: expected {}, got {}", 
+                handshake_nonce, 
+                response_message.get_nonce()
+            )).context("Handshake nonce validation failed");
         }
         
         // Validate the response payload format: "HANDSHAKE_RESPONSE:<peer_id>"
@@ -256,7 +260,11 @@ impl Connection {
                 received_payload = response_payload,
                 "Invalid handshake response payload format"
             );
-            return Err(anyhow::anyhow!("Handshake failed - invalid response payload format"));
+            return Err(anyhow::anyhow!(
+                "Invalid response payload format: expected '{}' prefix, got '{}'", 
+                expected_response_prefix, 
+                response_payload
+            )).context("Handshake response payload validation failed");
         }
         
         // Extract peer ID from response payload
@@ -272,13 +280,18 @@ impl Connection {
                 envelope_peer_id = %peer_identity,
                 "Peer ID mismatch between payload and envelope"
             );
-            return Err(anyhow::anyhow!("Handshake failed - peer ID mismatch"));
+            return Err(anyhow::anyhow!(
+                "Peer ID mismatch: payload has '{}', envelope has '{}'", 
+                response_peer_id, 
+                peer_identity
+            )).context("Handshake peer identity validation failed");
         }
         
         // Validate peer identity format (basic check)
         if response_peer_id.is_empty() {
             error!("Received empty peer ID in handshake response");
-            return Err(anyhow::anyhow!("Handshake failed - empty peer ID"));
+            return Err(anyhow::anyhow!("Empty peer ID in handshake response"))
+                .context("Handshake peer identity validation failed");
         }
         
         // Store the authenticated peer identity
@@ -371,11 +384,13 @@ impl Connection {
             Ok(Ok((msg, peer_id))) => (msg, peer_id),
             Ok(Err(e)) => {
                 error!("Failed to receive handshake request: {}", e);
-                return Err(anyhow::anyhow!("Handshake failed - request error: {}", e));
+                return Err(anyhow::Error::from(e))
+                    .context("Failed to receive handshake request");
             }
             Err(_) => {
                 error!("Handshake request timed out after {} seconds", HANDSHAKE_TIMEOUT_SECONDS);
-                return Err(anyhow::anyhow!("Handshake failed - request timeout"));
+                return Err(anyhow::anyhow!("Handshake request timeout after {} seconds", HANDSHAKE_TIMEOUT_SECONDS))
+                    .context("Handshake failed due to timeout");
             }
         };
         
@@ -389,7 +404,8 @@ impl Connection {
         // Validate that this is a proper handshake request
         if !request_message.is_ping() {
             error!("Expected Ping message for handshake request, got {}", request_message.message_type());
-            return Err(anyhow::anyhow!("Handshake failed - invalid request message type"));
+            return Err(anyhow::anyhow!("Expected Ping message, got {}", request_message.message_type()))
+                .context("Invalid handshake request message type");
         }
         
         // Validate the request payload format: "HANDSHAKE_REQUEST:<peer_id>"
@@ -402,7 +418,11 @@ impl Connection {
                 received_payload = request_payload,
                 "Invalid handshake request payload format"
             );
-            return Err(anyhow::anyhow!("Handshake failed - invalid request payload format"));
+            return Err(anyhow::anyhow!(
+                "Invalid request payload format: expected '{}' prefix, got '{}'", 
+                expected_request_prefix, 
+                request_payload
+            )).context("Handshake request payload validation failed");
         }
         
         // Extract peer ID from request payload
@@ -418,13 +438,18 @@ impl Connection {
                 envelope_peer_id = %peer_identity,
                 "Peer ID mismatch between payload and envelope in request"
             );
-            return Err(anyhow::anyhow!("Handshake failed - peer ID mismatch in request"));
+            return Err(anyhow::anyhow!(
+                "Peer ID mismatch in request: payload has '{}', envelope has '{}'", 
+                request_peer_id, 
+                peer_identity
+            )).context("Handshake request peer identity validation failed");
         }
         
         // Validate peer identity format (basic check)
         if request_peer_id.is_empty() {
             error!("Received empty peer ID in handshake request");
-            return Err(anyhow::anyhow!("Handshake failed - empty peer ID in request"));
+            return Err(anyhow::anyhow!("Empty peer ID in handshake request"))
+                .context("Handshake request peer identity validation failed");
         }
         
         // Create handshake response message
@@ -440,10 +465,7 @@ impl Connection {
         
         // Send handshake response
         self.send_message(handshake_response).await
-            .map_err(|e| {
-                error!("Failed to send handshake response: {}", e);
-                anyhow::anyhow!("Handshake failed - could not send response: {}", e)
-            })?;
+            .context("Failed to send handshake response")?;
         
         // Store the authenticated peer identity
         self.peer_id = Some(peer_identity.clone());

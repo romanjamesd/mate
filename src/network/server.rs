@@ -12,6 +12,9 @@ use crate::network::{Connection, ConnectionError};
 use tokio::task::{self, JoinHandle};
 use tracing::{info, error, warn, debug, instrument};
 
+// Step 4.2: Error conversion is automatically provided by anyhow's blanket implementation
+// since ConnectionError and WireProtocolError implement std::error::Error via thiserror::Error
+
 pub struct Server {
     identity: Arc<Identity>,
     listener: TcpListener,
@@ -135,7 +138,7 @@ impl Server {
         let mut connection = Connection::new_with_config(stream, identity, wire_config).await;
         
         // Perform handshake
-        let peer_id = match connection.handshake().await {
+        let _peer_id = match connection.handle_handshake_request().await {
             Ok(peer_id) => {
                 info!("Handshake successful for connection {} with peer: {}", connection_id, peer_id);
                 peer_id

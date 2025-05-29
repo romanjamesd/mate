@@ -1,11 +1,14 @@
 use crate::crypto::Identity;
-use crate::network::{Connection, ConnectionError};
-use crate::messages::{Message, wire::{FramedMessage, WireConfig}};
-use anyhow::Result;
+use crate::network::Connection;
+use crate::messages::{Message, wire::WireConfig};
+use anyhow::{Result, Context};
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tracing::{info, error, debug, instrument, warn};
 use rand;
+
+// Step 4.2: Error conversion is automatically provided by anyhow's blanket implementation
+// since ConnectionError implements std::error::Error via thiserror::Error
 
 pub struct Client {
     identity: Arc<Identity>,
@@ -96,10 +99,7 @@ impl Client {
         
         // Create TcpStream connection to target address
         let stream = TcpStream::connect(addr).await
-            .map_err(|e| {
-                debug!("TCP connection failed to {}: {}", addr, e);
-                anyhow::anyhow!("Failed to connect to {}: {}", addr, e)
-            })?;
+            .with_context(|| format!("Failed to connect to {}", addr))?;
         
         debug!("TCP stream established to {}", addr);
         
@@ -339,7 +339,7 @@ impl Client {
         
         // Establish connection
         let mut connection = self.connect(addr).await
-            .map_err(|e| anyhow::anyhow!("Failed to connect to {}: {}", addr, e))?;
+            .with_context(|| format!("Failed to connect to {}", addr))?;
         
         let peer_id = connection.peer_identity()
             .unwrap_or("unknown")
@@ -349,13 +349,13 @@ impl Client {
         
         // Send message with error context
         connection.send_message(message).await
-            .map_err(|e| anyhow::anyhow!("Failed to send message to {}: {}", addr, e))?;
+            .with_context(|| format!("Failed to send message to {}", addr))?;
         
         debug!("Message sent successfully, waiting for response");
         
         // Receive response
         let (response_message, response_sender) = connection.receive_message().await
-            .map_err(|e| anyhow::anyhow!("Failed to receive response from {}: {}", addr, e))?;
+            .with_context(|| format!("Failed to receive response from {}", addr))?;
         
         info!("Received response from {} (type: {}, nonce: {})", 
               response_sender, response_message.message_type(), response_message.get_nonce());
@@ -407,7 +407,7 @@ impl Client {
         // Establish connection and measure handshake time
         let handshake_start = std::time::Instant::now();
         let mut connection = self.connect(addr).await
-            .map_err(|e| anyhow::anyhow!("Connection failed during quality test: {}", e))?;
+            .context("Connection failed during quality test")?;
         let handshake_duration = handshake_start.elapsed();
         
         let peer_id = connection.peer_identity().unwrap_or("unknown").to_string();
