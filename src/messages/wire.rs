@@ -199,6 +199,7 @@ impl WireConfig {
 ///     pub burst_allowance: u32,
 /// }
 /// ```
+#[derive(Debug, Clone)]
 pub struct DosProtectionConfig {
     pub max_message_size: usize,
     pub min_message_size: usize,
@@ -449,6 +450,7 @@ impl From<anyhow::Error> for WireProtocolError {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct FramedMessage {
     wire_config: WireConfig,
     dos_config: DosProtectionConfig,
@@ -1242,4 +1244,949 @@ impl FramedMessage {
     pub fn for_production() -> Self {
         Self::new(WireConfig::for_production())
     }
+
+    /// Read a message with graceful degradation and retry logic (Step 4.3)
+    /// 
+    /// This method provides enhanced resilience for message reading operations by:
+    /// - Implementing exponential backoff retry logic for transient failures
+    /// - Tracking connection state and degrading gracefully on repeated errors
+    /// - Providing detailed logging and monitoring of retry attempts
+    /// 
+    /// # Arguments
+    /// * `reader` - The async reader to read from
+    /// * `retry_config` - Configuration for retry behavior
+    /// * `connection_state` - Mutable reference to track connection health
+    /// 
+    /// # Returns
+    /// * `Ok(SignedEnvelope)` - Successfully read and validated message
+    /// * `Err(WireProtocolError)` - Operation failed after all retry attempts
+    #[instrument(level = "debug", skip(self, reader, connection_state), fields(
+        max_attempts = retry_config.max_attempts,
+        connection_state = ?connection_state
+    ))]
+    pub async fn read_message_with_graceful_degradation(
+        &self,
+        reader: &mut (impl AsyncRead + Unpin),
+        retry_config: &RetryConfig,
+        connection_state: &mut ConnectionState,
+    ) -> Result<SignedEnvelope, WireProtocolError> {
+        let mut last_error = None;
+        
+        for attempt in 1..=retry_config.max_attempts {
+            // Check if connection state allows operations
+            if !connection_state.can_attempt_operation() {
+                warn!(
+                    operation = "read_message",
+                    attempt = attempt,
+                    connection_state = ?connection_state,
+                    "Aborting operation due to connection state"
+                );
+                
+                if let Some(err) = last_error {
+                    return Err(err);
+                } else {
+                    return Err(WireProtocolError::connection_closed(
+                        format!("read_message - connection in unusable state: {:?}", connection_state)
+                    ));
+                }
+            }
+
+            // Log retry attempt
+            if attempt > 1 {
+                debug!(
+                    operation = "read_message",
+                    attempt = attempt,
+                    max_attempts = retry_config.max_attempts,
+                    connection_state = ?connection_state,
+                    "Retrying operation"
+                );
+            }
+
+            // Execute the operation
+            match self.read_message(reader).await {
+                Ok(result) => {
+                    // Operation succeeded - update connection state
+                    connection_state.update_on_success();
+                    
+                    if attempt > 1 {
+                        debug!(
+                            operation = "read_message",
+                            attempt = attempt,
+                            "Operation succeeded after retry"
+                        );
+                    }
+                    
+                    return Ok(result);
+                }
+                Err(error) => {
+                    let wire_error = WireProtocolError::from(error);
+                    
+                    // Update connection state based on error
+                    connection_state.update_on_error(&wire_error);
+                    
+                    // Check if we should retry this error
+                    let should_retry = retry_config.should_retry(&wire_error);
+                    let is_last_attempt = attempt >= retry_config.max_attempts;
+                    
+                    if should_retry && !is_last_attempt {
+                        let delay = retry_config.calculate_delay(attempt);
+                        
+                        warn!(
+                            operation = "read_message",
+                            attempt = attempt,
+                            max_attempts = retry_config.max_attempts,
+                            error = %wire_error,
+                            delay_ms = delay.as_millis(),
+                            connection_state = ?connection_state,
+                            "Operation failed, will retry after delay"
+                        );
+                        
+                        // Wait before retrying
+                        if delay > Duration::from_millis(0) {
+                            tokio::time::sleep(delay).await;
+                        }
+                        
+                        last_error = Some(wire_error);
+                    } else {
+                        // Either not retryable or last attempt
+                        error!(
+                            operation = "read_message",
+                            attempt = attempt,
+                            max_attempts = retry_config.max_attempts,
+                            error = %wire_error,
+                            should_retry = should_retry,
+                            is_last_attempt = is_last_attempt,
+                            connection_state = ?connection_state,
+                            "Operation failed permanently"
+                        );
+                        
+                        return Err(wire_error);
+                    }
+                }
+            }
+        }
+        
+        // This should never be reached, but handle it gracefully
+        if let Some(err) = last_error {
+            Err(err)
+        } else {
+            Err(WireProtocolError::operation_timeout(
+                Duration::from_secs(0),
+                "read_message - max retry attempts reached".to_string()
+            ))
+        }
+    }
+
+    /// Write a message with graceful degradation and retry logic (Step 4.3)
+    /// 
+    /// This method provides enhanced resilience for message writing operations by:
+    /// - Implementing exponential backoff retry logic for transient failures
+    /// - Tracking connection state and degrading gracefully on repeated errors
+    /// - Providing detailed logging and monitoring of retry attempts
+    /// 
+    /// # Arguments
+    /// * `writer` - The async writer to write to
+    /// * `envelope` - The message to send
+    /// * `retry_config` - Configuration for retry behavior
+    /// * `connection_state` - Mutable reference to track connection health
+    /// 
+    /// # Returns
+    /// * `Ok(())` - Message was successfully written
+    /// * `Err(WireProtocolError)` - Operation failed after all retry attempts
+    #[instrument(level = "debug", skip(self, writer, envelope, connection_state), fields(
+        max_attempts = retry_config.max_attempts,
+        connection_state = ?connection_state
+    ))]
+    pub async fn write_message_with_graceful_degradation(
+        &self,
+        writer: &mut (impl AsyncWrite + Unpin),
+        envelope: &SignedEnvelope,
+        retry_config: &RetryConfig,
+        connection_state: &mut ConnectionState,
+    ) -> Result<(), WireProtocolError> {
+        let mut last_error = None;
+        
+        for attempt in 1..=retry_config.max_attempts {
+            // Check if connection state allows operations
+            if !connection_state.can_attempt_operation() {
+                warn!(
+                    operation = "write_message",
+                    attempt = attempt,
+                    connection_state = ?connection_state,
+                    "Aborting operation due to connection state"
+                );
+                
+                if let Some(err) = last_error {
+                    return Err(err);
+                } else {
+                    return Err(WireProtocolError::connection_closed(
+                        format!("write_message - connection in unusable state: {:?}", connection_state)
+                    ));
+                }
+            }
+
+            // Log retry attempt
+            if attempt > 1 {
+                debug!(
+                    operation = "write_message",
+                    attempt = attempt,
+                    max_attempts = retry_config.max_attempts,
+                    connection_state = ?connection_state,
+                    "Retrying operation"
+                );
+            }
+
+            // Execute the operation
+            match self.write_message(writer, envelope).await {
+                Ok(result) => {
+                    // Operation succeeded - update connection state
+                    connection_state.update_on_success();
+                    
+                    if attempt > 1 {
+                        debug!(
+                            operation = "write_message",
+                            attempt = attempt,
+                            "Operation succeeded after retry"
+                        );
+                    }
+                    
+                    return Ok(result);
+                }
+                Err(error) => {
+                    let wire_error = WireProtocolError::from(error);
+                    
+                    // Update connection state based on error
+                    connection_state.update_on_error(&wire_error);
+                    
+                    // Check if we should retry this error
+                    let should_retry = retry_config.should_retry(&wire_error);
+                    let is_last_attempt = attempt >= retry_config.max_attempts;
+                    
+                    if should_retry && !is_last_attempt {
+                        let delay = retry_config.calculate_delay(attempt);
+                        
+                        warn!(
+                            operation = "write_message",
+                            attempt = attempt,
+                            max_attempts = retry_config.max_attempts,
+                            error = %wire_error,
+                            delay_ms = delay.as_millis(),
+                            connection_state = ?connection_state,
+                            "Operation failed, will retry after delay"
+                        );
+                        
+                        // Wait before retrying
+                        if delay > Duration::from_millis(0) {
+                            tokio::time::sleep(delay).await;
+                        }
+                        
+                        last_error = Some(wire_error);
+                    } else {
+                        // Either not retryable or last attempt
+                        error!(
+                            operation = "write_message",
+                            attempt = attempt,
+                            max_attempts = retry_config.max_attempts,
+                            error = %wire_error,
+                            should_retry = should_retry,
+                            is_last_attempt = is_last_attempt,
+                            connection_state = ?connection_state,
+                            "Operation failed permanently"
+                        );
+                        
+                        return Err(wire_error);
+                    }
+                }
+            }
+        }
+        
+        // This should never be reached, but handle it gracefully
+        if let Some(err) = last_error {
+            Err(err)
+        } else {
+            Err(WireProtocolError::operation_timeout(
+                Duration::from_secs(0),
+                "write_message - max retry attempts reached".to_string()
+            ))
+        }
+    }
+
+    /// Read a message with timeout and graceful degradation (Step 4.3)
+    /// 
+    /// Combines timeout handling with retry logic for maximum resilience.
+    /// This is the recommended method for production network operations.
+    #[instrument(level = "debug", skip(self, reader, connection_state), fields(
+        timeout_secs = timeout_duration.as_secs(),
+        max_attempts = retry_config.max_attempts,
+        connection_state = ?connection_state
+    ))]
+    pub async fn read_message_with_timeout_and_graceful_degradation(
+        &self,
+        reader: &mut (impl AsyncRead + Unpin),
+        timeout_duration: Duration,
+        retry_config: &RetryConfig,
+        connection_state: &mut ConnectionState,
+    ) -> Result<SignedEnvelope, WireProtocolError> {
+        let mut last_error = None;
+        
+        for attempt in 1..=retry_config.max_attempts {
+            // Check if connection state allows operations
+            if !connection_state.can_attempt_operation() {
+                warn!(
+                    operation = "read_message_with_timeout",
+                    attempt = attempt,
+                    connection_state = ?connection_state,
+                    "Aborting operation due to connection state"
+                );
+                
+                if let Some(err) = last_error {
+                    return Err(err);
+                } else {
+                    return Err(WireProtocolError::connection_closed(
+                        format!("read_message_with_timeout - connection in unusable state: {:?}", connection_state)
+                    ));
+                }
+            }
+
+            // Log retry attempt
+            if attempt > 1 {
+                debug!(
+                    operation = "read_message_with_timeout",
+                    attempt = attempt,
+                    max_attempts = retry_config.max_attempts,
+                    connection_state = ?connection_state,
+                    "Retrying operation"
+                );
+            }
+
+            // Execute the operation with timeout
+            match self.read_message_with_timeout(reader, timeout_duration).await {
+                Ok(result) => {
+                    // Operation succeeded - update connection state
+                    connection_state.update_on_success();
+                    
+                    if attempt > 1 {
+                        debug!(
+                            operation = "read_message_with_timeout",
+                            attempt = attempt,
+                            "Operation succeeded after retry"
+                        );
+                    }
+                    
+                    return Ok(result);
+                }
+                Err(error) => {
+                    let wire_error = WireProtocolError::from(error);
+                    
+                    // Update connection state based on error
+                    connection_state.update_on_error(&wire_error);
+                    
+                    // Check if we should retry this error
+                    let should_retry = retry_config.should_retry(&wire_error);
+                    let is_last_attempt = attempt >= retry_config.max_attempts;
+                    
+                    if should_retry && !is_last_attempt {
+                        let delay = retry_config.calculate_delay(attempt);
+                        
+                        warn!(
+                            operation = "read_message_with_timeout",
+                            attempt = attempt,
+                            max_attempts = retry_config.max_attempts,
+                            error = %wire_error,
+                            delay_ms = delay.as_millis(),
+                            connection_state = ?connection_state,
+                            "Operation failed, will retry after delay"
+                        );
+                        
+                        // Wait before retrying
+                        if delay > Duration::from_millis(0) {
+                            tokio::time::sleep(delay).await;
+                        }
+                        
+                        last_error = Some(wire_error);
+                    } else {
+                        // Either not retryable or last attempt
+                        error!(
+                            operation = "read_message_with_timeout",
+                            attempt = attempt,
+                            max_attempts = retry_config.max_attempts,
+                            error = %wire_error,
+                            should_retry = should_retry,
+                            is_last_attempt = is_last_attempt,
+                            connection_state = ?connection_state,
+                            "Operation failed permanently"
+                        );
+                        
+                        return Err(wire_error);
+                    }
+                }
+            }
+        }
+        
+        // This should never be reached, but handle it gracefully
+        if let Some(err) = last_error {
+            Err(err)
+        } else {
+            Err(WireProtocolError::operation_timeout(
+                Duration::from_secs(0),
+                "read_message_with_timeout - max retry attempts reached".to_string()
+            ))
+        }
+    }
+
+    /// Write a message with timeout and graceful degradation (Step 4.3)
+    /// 
+    /// Combines timeout handling with retry logic for maximum resilience.
+    /// This is the recommended method for production network operations.
+    #[instrument(level = "debug", skip(self, writer, envelope, connection_state), fields(
+        timeout_secs = timeout_duration.as_secs(),
+        max_attempts = retry_config.max_attempts,
+        connection_state = ?connection_state
+    ))]
+    pub async fn write_message_with_timeout_and_graceful_degradation(
+        &self,
+        writer: &mut (impl AsyncWrite + Unpin),
+        envelope: &SignedEnvelope,
+        timeout_duration: Duration,
+        retry_config: &RetryConfig,
+        connection_state: &mut ConnectionState,
+    ) -> Result<(), WireProtocolError> {
+        let mut last_error = None;
+        
+        for attempt in 1..=retry_config.max_attempts {
+            // Check if connection state allows operations
+            if !connection_state.can_attempt_operation() {
+                warn!(
+                    operation = "write_message_with_timeout",
+                    attempt = attempt,
+                    connection_state = ?connection_state,
+                    "Aborting operation due to connection state"
+                );
+                
+                if let Some(err) = last_error {
+                    return Err(err);
+                } else {
+                    return Err(WireProtocolError::connection_closed(
+                        format!("write_message_with_timeout - connection in unusable state: {:?}", connection_state)
+                    ));
+                }
+            }
+
+            // Log retry attempt
+            if attempt > 1 {
+                debug!(
+                    operation = "write_message_with_timeout",
+                    attempt = attempt,
+                    max_attempts = retry_config.max_attempts,
+                    connection_state = ?connection_state,
+                    "Retrying operation"
+                );
+            }
+
+            // Execute the operation with timeout
+            match self.write_message_with_timeout(writer, envelope, timeout_duration).await {
+                Ok(result) => {
+                    // Operation succeeded - update connection state
+                    connection_state.update_on_success();
+                    
+                    if attempt > 1 {
+                        debug!(
+                            operation = "write_message_with_timeout",
+                            attempt = attempt,
+                            "Operation succeeded after retry"
+                        );
+                    }
+                    
+                    return Ok(result);
+                }
+                Err(error) => {
+                    let wire_error = WireProtocolError::from(error);
+                    
+                    // Update connection state based on error
+                    connection_state.update_on_error(&wire_error);
+                    
+                    // Check if we should retry this error
+                    let should_retry = retry_config.should_retry(&wire_error);
+                    let is_last_attempt = attempt >= retry_config.max_attempts;
+                    
+                    if should_retry && !is_last_attempt {
+                        let delay = retry_config.calculate_delay(attempt);
+                        
+                        warn!(
+                            operation = "write_message_with_timeout",
+                            attempt = attempt,
+                            max_attempts = retry_config.max_attempts,
+                            error = %wire_error,
+                            delay_ms = delay.as_millis(),
+                            connection_state = ?connection_state,
+                            "Operation failed, will retry after delay"
+                        );
+                        
+                        // Wait before retrying
+                        if delay > Duration::from_millis(0) {
+                            tokio::time::sleep(delay).await;
+                        }
+                        
+                        last_error = Some(wire_error);
+                    } else {
+                        // Either not retryable or last attempt
+                        error!(
+                            operation = "write_message_with_timeout",
+                            attempt = attempt,
+                            max_attempts = retry_config.max_attempts,
+                            error = %wire_error,
+                            should_retry = should_retry,
+                            is_last_attempt = is_last_attempt,
+                            connection_state = ?connection_state,
+                            "Operation failed permanently"
+                        );
+                        
+                        return Err(wire_error);
+                    }
+                }
+            }
+        }
+        
+        // This should never be reached, but handle it gracefully
+        if let Some(err) = last_error {
+            Err(err)
+        } else {
+            Err(WireProtocolError::operation_timeout(
+                Duration::from_secs(0),
+                "write_message_with_timeout - max retry attempts reached".to_string()
+            ))
+        }
+    }
+
+    /// Perform a connection health check with graceful degradation (Step 4.3)
+    /// 
+    /// This method can be used to verify connection health and update connection state
+    /// without performing actual message operations. Useful for connection pooling
+    /// and maintenance tasks.
+    /// 
+    /// # Implementation Note
+    /// This is a placeholder implementation that tests basic I/O capability.
+    /// Real implementations should consider sending ping/pong messages or similar.
+    #[instrument(level = "debug", skip(self, _reader, writer, connection_state))]
+    pub async fn health_check_with_graceful_degradation(
+        &self,
+        _reader: &mut (impl AsyncRead + Unpin),
+        writer: &mut (impl AsyncWrite + Unpin),
+        retry_config: &RetryConfig,
+        connection_state: &mut ConnectionState,
+    ) -> Result<(), WireProtocolError> {
+        let mut last_error = None;
+        
+        for attempt in 1..=retry_config.max_attempts {
+            // Check if connection state allows operations
+            if !connection_state.can_attempt_operation() {
+                warn!(
+                    operation = "health_check",
+                    attempt = attempt,
+                    connection_state = ?connection_state,
+                    "Aborting operation due to connection state"
+                );
+                
+                if let Some(err) = last_error {
+                    return Err(err);
+                } else {
+                    return Err(WireProtocolError::connection_closed(
+                        format!("health_check - connection in unusable state: {:?}", connection_state)
+                    ));
+                }
+            }
+
+            // Log retry attempt
+            if attempt > 1 {
+                debug!(
+                    operation = "health_check",
+                    attempt = attempt,
+                    max_attempts = retry_config.max_attempts,
+                    connection_state = ?connection_state,
+                    "Retrying operation"
+                );
+            }
+
+            // Execute the health check
+            match writer.flush().await {
+                Ok(_) => {
+                    // Operation succeeded - update connection state
+                    connection_state.update_on_success();
+                    
+                    if attempt > 1 {
+                        debug!(
+                            operation = "health_check",
+                            attempt = attempt,
+                            "Operation succeeded after retry"
+                        );
+                    }
+                    
+                    debug!("Health check: connection appears healthy");
+                    return Ok(());
+                }
+                Err(error) => {
+                    let wire_error = WireProtocolError::Io(error);
+                    
+                    // Update connection state based on error
+                    connection_state.update_on_error(&wire_error);
+                    
+                    // Check if we should retry this error
+                    let should_retry = retry_config.should_retry(&wire_error);
+                    let is_last_attempt = attempt >= retry_config.max_attempts;
+                    
+                    if should_retry && !is_last_attempt {
+                        let delay = retry_config.calculate_delay(attempt);
+                        
+                        warn!(
+                            operation = "health_check",
+                            attempt = attempt,
+                            max_attempts = retry_config.max_attempts,
+                            error = %wire_error,
+                            delay_ms = delay.as_millis(),
+                            connection_state = ?connection_state,
+                            "Operation failed, will retry after delay"
+                        );
+                        
+                        // Wait before retrying
+                        if delay > Duration::from_millis(0) {
+                            tokio::time::sleep(delay).await;
+                        }
+                        
+                        last_error = Some(wire_error);
+                    } else {
+                        // Either not retryable or last attempt
+                        error!(
+                            operation = "health_check",
+                            attempt = attempt,
+                            max_attempts = retry_config.max_attempts,
+                            error = %wire_error,
+                            should_retry = should_retry,
+                            is_last_attempt = is_last_attempt,
+                            connection_state = ?connection_state,
+                            "Operation failed permanently"
+                        );
+                        
+                        return Err(wire_error);
+                    }
+                }
+            }
+        }
+        
+        // This should never be reached, but handle it gracefully
+        if let Some(err) = last_error {
+            Err(err)
+        } else {
+            Err(WireProtocolError::operation_timeout(
+                Duration::from_secs(0),
+                "health_check - max retry attempts reached".to_string()
+            ))
+        }
+    }
+
+    /// Create a resilient message exchange session (Step 4.3)
+    /// 
+    /// This helper method creates a reusable context for message operations with
+    /// consistent retry configuration and connection state tracking.
+    pub fn create_resilient_session(
+        &self,
+        retry_config: RetryConfig,
+    ) -> ResilientSession {
+        ResilientSession {
+            framed_message: self.clone(),
+            retry_config,
+            connection_state: ConnectionState::Healthy,
+        }
+    }
+}
+
+/// Retry configuration for graceful degradation (Step 4.3)
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    pub max_attempts: u32,
+    pub base_delay: Duration,
+    pub max_delay: Duration,
+    pub backoff_multiplier: f64,
+    pub retry_on_timeout: bool,
+    pub retry_on_connection_errors: bool,
+    pub retry_on_transient_io_errors: bool,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: CLIENT_RETRY_MAX_ATTEMPTS,
+            base_delay: CLIENT_RETRY_BASE_DELAY,
+            max_delay: Duration::from_secs(60), // Cap at 1 minute
+            backoff_multiplier: 2.0,
+            retry_on_timeout: true,
+            retry_on_connection_errors: true,
+            retry_on_transient_io_errors: true,
+        }
+    }
+}
+
+impl RetryConfig {
+    /// Create a conservative retry configuration for production use
+    pub fn conservative() -> Self {
+        Self {
+            max_attempts: 2,
+            base_delay: Duration::from_millis(500),
+            max_delay: Duration::from_secs(10),
+            backoff_multiplier: 1.5,
+            retry_on_timeout: true,
+            retry_on_connection_errors: false, // Don't retry on connection errors in production
+            retry_on_transient_io_errors: true,
+        }
+    }
+
+    /// Create an aggressive retry configuration for development/testing
+    pub fn aggressive() -> Self {
+        Self {
+            max_attempts: 5,
+            base_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(30),
+            backoff_multiplier: 2.0,
+            retry_on_timeout: true,
+            retry_on_connection_errors: true,
+            retry_on_transient_io_errors: true,
+        }
+    }
+
+    /// Create a no-retry configuration for operations that must not be retried
+    pub fn no_retry() -> Self {
+        Self {
+            max_attempts: 1,
+            base_delay: Duration::from_millis(0),
+            max_delay: Duration::from_millis(0),
+            backoff_multiplier: 1.0,
+            retry_on_timeout: false,
+            retry_on_connection_errors: false,
+            retry_on_transient_io_errors: false,
+        }
+    }
+
+    /// Calculate the delay for a specific retry attempt with exponential backoff
+    pub fn calculate_delay(&self, attempt: u32) -> Duration {
+        if attempt == 0 {
+            return Duration::from_millis(0);
+        }
+
+        let multiplier = self.backoff_multiplier.powi((attempt - 1) as i32);
+        let delay_ms = (self.base_delay.as_millis() as f64 * multiplier) as u64;
+        let delay = Duration::from_millis(delay_ms);
+        
+        // Cap at max_delay
+        if delay > self.max_delay {
+            self.max_delay
+        } else {
+            delay
+        }
+    }
+
+    /// Check if an error should trigger a retry based on configuration
+    pub fn should_retry(&self, error: &WireProtocolError) -> bool {
+        match error {
+            // Timeout errors
+            WireProtocolError::ReadTimeout { .. } |
+            WireProtocolError::WriteTimeout { .. } |
+            WireProtocolError::OperationTimeout { .. } |
+            WireProtocolError::Timeout(_) => self.retry_on_timeout,
+
+            // Connection errors  
+            WireProtocolError::ConnectionClosed { .. } => self.retry_on_connection_errors,
+
+            // Transient IO errors
+            WireProtocolError::Io(io_err) => match io_err.kind() {
+                std::io::ErrorKind::Interrupted |
+                std::io::ErrorKind::WouldBlock |
+                std::io::ErrorKind::TimedOut => self.retry_on_transient_io_errors,
+                
+                // Connection-related IO errors
+                std::io::ErrorKind::ConnectionAborted |
+                std::io::ErrorKind::ConnectionReset |
+                std::io::ErrorKind::BrokenPipe => self.retry_on_connection_errors,
+                
+                _ => false,
+            },
+
+            // Suspicious messages might be retryable (could be network corruption)
+            WireProtocolError::SuspiciousMessageSize { .. } => self.retry_on_transient_io_errors,
+
+            // These errors should never be retried
+            WireProtocolError::MessageTooLarge { .. } |
+            WireProtocolError::MessageTooSmall { .. } |
+            WireProtocolError::InvalidLength { .. } |
+            WireProtocolError::AllocationDenied { .. } |
+            WireProtocolError::ProtocolViolation { .. } |
+            WireProtocolError::CorruptedData { .. } |
+            WireProtocolError::InvalidMessageFormat { .. } |
+            WireProtocolError::BufferOverflow { .. } |
+            WireProtocolError::LengthMismatch { .. } |
+            WireProtocolError::Serialization(_) |
+            WireProtocolError::UnexpectedEof { .. } => false,
+        }
+    }
+}
+
+/// Connection state tracking for recovery purposes (Step 4.3)
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConnectionState {
+    /// Connection is healthy and operational
+    Healthy,
+    /// Connection experienced a recoverable error but may still be usable
+    Degraded { error_count: u32, last_error: String },
+    /// Connection is suspected to be broken and should be replaced
+    Broken { reason: String },
+    /// Connection is being recovered/reconnected
+    Recovering,
+}
+
+impl ConnectionState {
+    /// Check if the connection state allows for operation attempts
+    pub fn can_attempt_operation(&self) -> bool {
+        match self {
+            ConnectionState::Healthy => true,
+            ConnectionState::Degraded { error_count, .. } => *error_count < 3,
+            ConnectionState::Broken { .. } => false,
+            ConnectionState::Recovering => false,
+        }
+    }
+
+    /// Update the connection state based on an operation result
+    pub fn update_on_error(&mut self, error: &WireProtocolError) {
+        match self {
+            ConnectionState::Healthy => {
+                if error.is_recoverable() {
+                    *self = ConnectionState::Degraded {
+                        error_count: 1,
+                        last_error: error.to_string(),
+                    };
+                } else {
+                    *self = ConnectionState::Broken {
+                        reason: error.to_string(),
+                    };
+                }
+            }
+            ConnectionState::Degraded { error_count, last_error } => {
+                if error.is_recoverable() {
+                    *error_count += 1;
+                    *last_error = error.to_string();
+                    
+                    if *error_count >= 3 {
+                        *self = ConnectionState::Broken {
+                            reason: format!("Too many recoverable errors: {}", last_error),
+                        };
+                    }
+                } else {
+                    *self = ConnectionState::Broken {
+                        reason: error.to_string(),
+                    };
+                }
+            }
+            ConnectionState::Broken { .. } => {
+                // Already broken, no state change needed
+            }
+            ConnectionState::Recovering => {
+                // If we get an error while recovering, mark as broken
+                *self = ConnectionState::Broken {
+                    reason: format!("Error during recovery: {}", error),
+                };
+            }
+        }
+    }
+
+    /// Update the connection state after a successful operation
+    pub fn update_on_success(&mut self) {
+        match self {
+            ConnectionState::Healthy => {
+                // Already healthy, no change needed
+            }
+            ConnectionState::Degraded { .. } => {
+                // Successful operation recovered the connection
+                *self = ConnectionState::Healthy;
+            }
+            ConnectionState::Broken { .. } => {
+                // Unexpected success on broken connection - mark as healthy
+                warn!("Unexpected successful operation on broken connection, marking as healthy");
+                *self = ConnectionState::Healthy;
+            }
+            ConnectionState::Recovering => {
+                // Recovery completed successfully
+                *self = ConnectionState::Healthy;
+            }
+        }
+    }
+
+    /// Mark the connection as recovering
+    pub fn mark_recovering(&mut self) {
+        *self = ConnectionState::Recovering;
+    }
+}
+
+/// A resilient session for message operations with persistent connection state (Step 4.3)
+#[derive(Debug, Clone)]
+pub struct ResilientSession {
+    framed_message: FramedMessage,
+    retry_config: RetryConfig,
+    connection_state: ConnectionState,
+}
+
+impl ResilientSession {
+    /// Create a new resilient session with custom configuration
+    pub fn new(framed_message: FramedMessage, retry_config: RetryConfig) -> Self {
+        Self {
+            framed_message,
+            retry_config,
+            connection_state: ConnectionState::Healthy,
+        }
+    }
+
+    /// Get the current connection state
+    pub fn connection_state(&self) -> &ConnectionState {
+        &self.connection_state
+    }
+
+    /// Reset the connection state to healthy (use after successful reconnection)
+    pub fn reset_connection_state(&mut self) {
+        self.connection_state = ConnectionState::Healthy;
+    }
+
+    /// Read a message with session-managed retry and connection state
+    pub async fn read_message(
+        &mut self,
+        reader: &mut (impl AsyncRead + Unpin),
+    ) -> Result<SignedEnvelope, WireProtocolError> {
+        self.framed_message
+            .read_message_with_graceful_degradation(
+                reader,
+                &self.retry_config,
+                &mut self.connection_state,
+            )
+            .await
+    }
+
+    /// Write a message with session-managed retry and connection state
+    pub async fn write_message(
+        &mut self,
+        writer: &mut (impl AsyncWrite + Unpin),
+        envelope: &SignedEnvelope,
+    ) -> Result<(), WireProtocolError> {
+        self.framed_message
+            .write_message_with_graceful_degradation(
+                writer,
+                envelope,
+                &self.retry_config,
+                &mut self.connection_state,
+            )
+            .await
+    }
+}
+
+/// Summary information about a resilient session for monitoring
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionSummary {
+    pub connection_state: ConnectionState,
+    pub max_attempts: u32,
+    pub base_delay_ms: u64,
+    pub can_attempt_operations: bool,
 }

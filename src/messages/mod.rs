@@ -9,6 +9,12 @@ pub use wire::{
     WireProtocolError,
     DosProtectionConfig,
     
+    // Graceful degradation types (Step 4.3)
+    RetryConfig,
+    ConnectionState,
+    ResilientSession,
+    SessionSummary,
+    
     // Wire protocol constants
     MAX_MESSAGE_SIZE,
     MIN_MESSAGE_SIZE,
@@ -19,4 +25,8 @@ pub use wire::{
     LENGTH_PREFIX_SIZE,
     DEFAULT_READ_TIMEOUT,
     DEFAULT_WRITE_TIMEOUT,
+    
+    // Client retry constants
+    CLIENT_RETRY_MAX_ATTEMPTS,
+    CLIENT_RETRY_BASE_DELAY,
 };
