@@ -1,6 +1,6 @@
 //! Network-related unit tests
 //! 
-//! This module contains unit tests for network components including
-//! timeout handling, connection management, and network I/O operations.
+//! This module contains tests for network operations, timeouts, and interruptions.
 
-pub mod timeouts; 
+pub mod timeouts;
+pub mod interruptions; 
