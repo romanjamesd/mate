@@ -364,23 +364,69 @@ async fn test_length_prefix_format() {
 
 #[tokio::test]
 async fn test_length_prefix_accuracy() {
+    // Test case 5 from essential-tests.md: Length prefix accuracy
+    println!("Testing length prefix accuracy with messages at size boundaries");
+    
     let framed_message = FramedMessage::default();
     
-    // Test messages of known sizes to verify length prefix accuracy
-    let test_sizes = vec![1, 10, 100, 500, 1000, 5000];
+    // Test messages of known sizes including size boundaries as specified
+    let test_cases = vec![
+        // Small messages
+        (1, "1 byte"),
+        (10, "10 bytes"),
+        (100, "100 bytes"),
+        (500, "500 bytes"),
+        
+        // Size boundary tests (1KB, 1MB, etc.)
+        (1024, "1KB boundary"),
+        (1023, "1KB - 1 byte"),
+        (1025, "1KB + 1 byte"),
+        
+        (2048, "2KB"),
+        (4096, "4KB"), 
+        (8192, "8KB"),
+        (16384, "16KB"),
+        (32768, "32KB"),
+        (65536, "64KB"),
+        
+        (1024 * 100, "100KB"),
+        (1024 * 500, "500KB"),
+        (1024 * 1024, "1MB boundary"),
+        (1024 * 1024 - 1, "1MB - 1 byte"),
+        (1024 * 1024 + 1, "1MB + 1 byte"),
+        
+        (1024 * 1024 * 2, "2MB"),
+        (1024 * 1024 * 5, "5MB"),
+        (1024 * 1024 * 8, "8MB"),
+    ];
     
-    for size in test_sizes {
-        let payload = "x".repeat(size);
+    for (size, description) in &test_cases {
+        println!("Testing {} ({})", description, *size);
+        
+        // Create a message with exactly the specified payload size
+        let payload = "x".repeat(*size);
         let (envelope, _) = create_test_envelope(&payload);
         
+        // Serialize the envelope to get the exact serialized size
+        let serialized_envelope = bincode::serialize(&envelope)
+            .expect("Failed to serialize test envelope");
+        let expected_serialized_size = serialized_envelope.len();
+        
+        println!("  Payload size: {} bytes", *size);
+        println!("  Serialized envelope size: {} bytes", expected_serialized_size);
+        
+        // Write the message using the wire protocol
         let mut stream = MockStream::new();
         framed_message.write_message(&mut stream, &envelope)
             .await
-            .expect("Failed to write message");
+            .expect(&format!("Failed to write {} message", description));
         
         let written_data = stream.get_written_data();
         
-        // Extract length prefix
+        // Extract and verify length prefix
+        assert!(written_data.len() >= LENGTH_PREFIX_SIZE, 
+                "Written data should contain at least the length prefix for {}", description);
+        
         let length_prefix = u32::from_be_bytes([
             written_data[0],
             written_data[1], 
@@ -388,15 +434,42 @@ async fn test_length_prefix_accuracy() {
             written_data[3]
         ]);
         
-        // Verify length prefix matches actual serialized message size
-        let actual_message_size = written_data.len() - LENGTH_PREFIX_SIZE;
-        assert_eq!(length_prefix as usize, actual_message_size,
-                   "Length prefix should match actual serialized size for {} byte payload", size);
+        // The length prefix should match the serialized message size exactly
+        assert_eq!(length_prefix as usize, expected_serialized_size,
+                   "Length prefix ({}) should match actual serialized message size ({}) for {}",
+                   length_prefix, expected_serialized_size, description);
         
-        println!("✓ Length accuracy verified for {} byte payload", size);
+        // Verify the total written data size is length prefix + message data
+        let actual_message_size = written_data.len() - LENGTH_PREFIX_SIZE;
+        assert_eq!(actual_message_size, expected_serialized_size,
+                   "Actual written message size ({}) should match expected serialized size ({}) for {}",
+                   actual_message_size, expected_serialized_size, description);
+        
+        // Additional verification: ensure we can read the message back correctly
+        let mut read_stream = MockStream::with_data(written_data.to_vec());
+        let received_envelope = framed_message.read_message(&mut read_stream)
+            .await
+            .expect(&format!("Failed to read back {} message", description));
+        
+        // Verify the received message has the same payload size
+        let received_message = received_envelope.get_message()
+            .expect("Failed to deserialize received message");
+        assert_eq!(received_message.get_payload().len(), *size,
+                   "Received message payload size should match original for {}", description);
+        
+        // Verify content integrity
+        assert_eq!(received_message.get_payload(), payload,
+                   "Received message payload should match original content for {}", description);
+        
+        println!("  ✓ Length prefix accuracy verified: {} bytes", length_prefix);
+        println!("  ✓ Round-trip successful for {}", description);
     }
     
-    println!("✓ Length prefix accuracy tests passed!");
+    println!("✓ All length prefix accuracy tests passed!");
+    println!("  - Tested {} different message sizes", test_cases.len());
+    println!("  - Verified length prefixes match actual serialized message sizes");
+    println!("  - Tested messages at size boundaries (1KB, 1MB, etc.)");
+    println!("  - All messages successfully round-tripped through wire protocol");
 }
 
 #[tokio::test]
