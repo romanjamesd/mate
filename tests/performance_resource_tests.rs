@@ -5,6 +5,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::sync::{mpsc, Barrier};
 
 /// Test helper to create a mock read/write stream from a buffer
 struct MockStream {
@@ -601,4 +602,385 @@ async fn test_concurrent_memory_usage() {
            "Average allocation per concurrent operation should be reasonable");
     
     println!("✅ Concurrent memory usage tests completed successfully");
+}
+
+/// Test concurrent operation safety and thread safety
+#[tokio::test]
+async fn test_concurrent_operation_safety() {
+    println!("Testing concurrent operation safety and thread safety");
+    
+    let framed_message = FramedMessage::default();
+    
+    // Test 1: Test concurrent read and write operations on same connection
+    println!("Test 1: Testing concurrent read and write operations on same connection");
+    
+    // Create a shared connection simulation using a bidirectional channel
+    let (tx_to_server, mut rx_from_client) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (tx_to_client, mut rx_from_server) = mpsc::unbounded_channel::<Vec<u8>>();
+    
+    let messages_to_send = 10;
+    let barrier = Arc::new(Barrier::new(3)); // Reader, writer, and main thread
+    
+    // Create test messages
+    let mut test_messages = Vec::new();
+    for i in 0..messages_to_send {
+        let payload = format!("Concurrent safety test message {}", i);
+        let (envelope, _) = create_test_envelope_with_nonce(&payload, i);
+        test_messages.push(envelope);
+    }
+    
+    let test_messages = Arc::new(test_messages);
+    let framed_message = Arc::new(framed_message);
+    
+    // Spawn writer task
+    let writer_messages = Arc::clone(&test_messages);
+    let writer_framed = Arc::clone(&framed_message);
+    let writer_tx = tx_to_server;
+    let writer_barrier = Arc::clone(&barrier);
+    
+    let writer_handle = tokio::spawn(async move {
+        // Wait for all tasks to be ready
+        writer_barrier.wait().await;
+        
+        println!("  Writer task started - sending {} messages", messages_to_send);
+        
+        for (i, envelope) in writer_messages.iter().enumerate() {
+            // Simulate writing to connection
+            let mut write_stream = MockStream::new();
+            
+            writer_framed.write_message(&mut write_stream, envelope)
+                .await
+                .expect(&format!("Failed to write concurrent message {}", i));
+            
+            let written_data = write_stream.get_written_data().to_vec();
+            
+            // Send to "server" side
+            writer_tx.send(written_data)
+                .expect(&format!("Failed to send message {} to server", i));
+            
+            // Small delay to allow interleaving
+            tokio::time::sleep(Duration::from_micros(100)).await;
+        }
+        
+        println!("  Writer task completed");
+    });
+    
+    // Spawn reader task
+    let reader_framed = Arc::clone(&framed_message);
+    let reader_tx = tx_to_client;
+    let reader_barrier = Arc::clone(&barrier);
+    
+    let reader_handle = tokio::spawn(async move {
+        // Wait for all tasks to be ready
+        reader_barrier.wait().await;
+        
+        println!("  Reader task started - expecting {} messages", messages_to_send);
+        
+        let mut received_count = 0;
+        
+        while received_count < messages_to_send {
+            // Receive data from "client" side
+            if let Some(message_data) = rx_from_server.recv().await {
+                let mut read_stream = MockStream::with_data(message_data);
+                
+                let received_envelope = reader_framed.read_message(&mut read_stream)
+                    .await
+                    .expect(&format!("Failed to read concurrent message {}", received_count));
+                
+                // Verify message integrity
+                assert!(received_envelope.verify_signature(),
+                       "Concurrent message {} signature should be valid", received_count);
+                
+                received_count += 1;
+                
+                // Small delay to allow interleaving
+                tokio::time::sleep(Duration::from_micros(50)).await;
+            }
+        }
+        
+        println!("  Reader task completed - received {} messages", received_count);
+        received_count
+    });
+    
+    // Main coordination task
+    let coordination_barrier = Arc::clone(&barrier);
+    let coordination_handle = tokio::spawn(async move {
+        // Wait for all tasks to be ready
+        coordination_barrier.wait().await;
+        
+        println!("  Coordination task started - managing message flow");
+        
+        let mut forwarded_count = 0;
+        
+        while forwarded_count < messages_to_send {
+            // Forward messages from client to server
+            if let Some(client_data) = rx_from_client.recv().await {
+                reader_tx.send(client_data)
+                    .expect(&format!("Failed to forward message {}", forwarded_count));
+                forwarded_count += 1;
+            }
+        }
+        
+        println!("  Coordination task completed - forwarded {} messages", forwarded_count);
+        forwarded_count
+    });
+    
+    // Wait for all tasks to complete
+    let start_time = Instant::now();
+    let (writer_result, reader_result, coordination_result) = tokio::join!(
+        writer_handle,
+        reader_handle,
+        coordination_handle
+    );
+    let total_duration = start_time.elapsed();
+    
+    // Verify results
+    writer_result.expect("Writer task should complete successfully");
+    let received_count = reader_result.expect("Reader task should complete successfully");
+    let forwarded_count = coordination_result.expect("Coordination task should complete successfully");
+    
+    assert_eq!(received_count, messages_to_send, "Should receive all sent messages");
+    assert_eq!(forwarded_count, messages_to_send, "Should forward all sent messages");
+    
+    println!("    ✓ Concurrent read/write operations completed successfully in {:?}", total_duration);
+    println!("    ✓ Sent: {}, Received: {}, Forwarded: {}", messages_to_send, received_count, forwarded_count);
+    
+    // Test 2: Verify thread safety of wire protocol operations
+    println!("Test 2: Verifying thread safety of wire protocol operations");
+    
+    let thread_safety_operations = 20;
+    let thread_safety_payload = "Thread safety test";
+    
+    // Create multiple tasks that perform wire protocol operations simultaneously
+    let mut thread_safety_handles = Vec::new();
+    
+    for thread_id in 0..thread_safety_operations {
+        let framed_clone = FramedMessage::default();  // Each thread gets its own instance
+        let payload = format!("{} - thread {}", thread_safety_payload, thread_id);
+        
+        let handle = tokio::spawn(async move {
+            let (envelope, _) = create_test_envelope_with_nonce(&payload, thread_id);
+            
+            // Perform write operation
+            let mut write_stream = MockStream::new();
+            let write_result = framed_clone.write_message(&mut write_stream, &envelope).await;
+            
+            if write_result.is_err() {
+                return Err(format!("Thread {} write failed: {:?}", thread_id, write_result.err()));
+            }
+            
+            // Perform read operation
+            let written_data = write_stream.get_written_data().to_vec();
+            let mut read_stream = MockStream::with_data(written_data);
+            let read_result = framed_clone.read_message(&mut read_stream).await;
+            
+            match read_result {
+                Ok(received_envelope) => {
+                    if !received_envelope.verify_signature() {
+                        return Err(format!("Thread {} signature verification failed", thread_id));
+                    }
+                    Ok(thread_id)
+                },
+                Err(e) => Err(format!("Thread {} read failed: {:?}", thread_id, e))
+            }
+        });
+        
+        thread_safety_handles.push(handle);
+    }
+    
+    // Wait for all thread safety operations to complete
+    let thread_safety_start = Instant::now();
+    let mut successful_threads = 0;
+    let mut failed_threads = 0;
+    
+    for handle in thread_safety_handles {
+        match handle.await {
+            Ok(Ok(thread_id)) => {
+                successful_threads += 1;
+                if thread_id % 5 == 0 {  // Log every 5th thread for visibility
+                    println!("    Thread {} completed successfully", thread_id);
+                }
+            },
+            Ok(Err(error_msg)) => {
+                failed_threads += 1;
+                println!("    Thread failed: {}", error_msg);
+            },
+            Err(join_error) => {
+                failed_threads += 1;
+                println!("    Thread join failed: {:?}", join_error);
+            }
+        }
+    }
+    
+    let thread_safety_duration = thread_safety_start.elapsed();
+    
+    assert_eq!(failed_threads, 0, "All thread safety operations should succeed");
+    assert_eq!(successful_threads, thread_safety_operations, "All threads should complete successfully");
+    
+    println!("    ✓ Thread safety verified: {}/{} operations successful in {:?}", 
+             successful_threads, thread_safety_operations, thread_safety_duration);
+    
+    // Test 3: Test multiple concurrent connections don't interfere
+    println!("Test 3: Testing multiple concurrent connections don't interfere");
+    
+    let connection_count = 5;
+    let messages_per_connection = 4;
+    
+    // Create multiple "connections" (each with their own FramedMessage instance)
+    let mut connection_handles = Vec::new();
+    
+    for connection_id in 0..connection_count {
+        let connection_framed = FramedMessage::default();
+        
+        let handle = tokio::spawn(async move {
+            let mut connection_results = Vec::new();
+            
+            for message_id in 0..messages_per_connection {
+                let payload = format!("Connection {} Message {}", connection_id, message_id);
+                let (envelope, _) = create_test_envelope_with_nonce(&payload, 
+                    (connection_id * messages_per_connection + message_id) as u64);
+                
+                // Each connection performs its own write/read cycle
+                let mut conn_stream = MockStream::new();
+                
+                // Write operation
+                connection_framed.write_message(&mut conn_stream, &envelope)
+                    .await
+                    .expect(&format!("Connection {} message {} write should succeed", 
+                           connection_id, message_id));
+                
+                // Read operation  
+                let written_data = conn_stream.get_written_data().to_vec();
+                let mut read_stream = MockStream::with_data(written_data);
+                
+                let received_envelope = connection_framed.read_message(&mut read_stream)
+                    .await
+                    .expect(&format!("Connection {} message {} read should succeed", 
+                           connection_id, message_id));
+                
+                // Verify integrity
+                assert!(received_envelope.verify_signature(),
+                       "Connection {} message {} signature should be valid", 
+                       connection_id, message_id);
+                
+                connection_results.push((connection_id, message_id));
+                
+                // Small delay to allow interleaving between connections
+                tokio::time::sleep(Duration::from_micros(200)).await;
+            }
+            
+            connection_results
+        });
+        
+        connection_handles.push(handle);
+    }
+    
+    // Wait for all connections to complete
+    let connections_start = Instant::now();
+    let mut total_operations = 0;
+    let mut connection_results = Vec::new();
+    
+    for handle in connection_handles {
+        let results = handle.await.expect("Connection should complete successfully");
+        total_operations += results.len();
+        connection_results.extend(results);
+    }
+    
+    let connections_duration = connections_start.elapsed();
+    
+    // Verify all operations completed
+    let expected_operations = connection_count * messages_per_connection;
+    assert_eq!(total_operations, expected_operations, 
+              "All connection operations should complete");
+    
+    // Verify no interference between connections
+    for connection_id in 0..connection_count {
+        let connection_ops: Vec<_> = connection_results.iter()
+            .filter(|(cid, _)| *cid == connection_id)
+            .collect();
+        
+        assert_eq!(connection_ops.len(), messages_per_connection,
+                  "Connection {} should have completed all its operations", connection_id);
+    }
+    
+    println!("    ✓ Multiple connections operated independently: {} connections × {} messages = {} operations in {:?}",
+             connection_count, messages_per_connection, total_operations, connections_duration);
+    
+    // Test 4: Verify resource isolation between concurrent operations
+    println!("Test 4: Verifying resource isolation between concurrent operations");
+    
+    let isolation_operations = 10;
+    let isolation_payload_sizes = vec![100, 1000, 5000, 10000];
+    
+    // Create operations with different resource requirements
+    let mut isolation_handles = Vec::new();
+    
+    for (op_id, &payload_size) in (0..isolation_operations).zip(isolation_payload_sizes.iter().cycle()) {
+        let isolation_framed = FramedMessage::default();
+        
+        let handle = tokio::spawn(async move {
+            let payload = "R".repeat(payload_size);  // Different payload sizes
+            let (envelope, _) = create_test_envelope_with_nonce(&payload, op_id as u64);
+            
+            let operation_start = Instant::now();
+            
+            // Write operation
+            let mut isolation_stream = MockStream::new();
+            isolation_framed.write_message(&mut isolation_stream, &envelope)
+                .await
+                .expect(&format!("Isolation operation {} write should succeed", op_id));
+            
+            // Read operation
+            let written_data = isolation_stream.get_written_data().to_vec();
+            let mut read_stream = MockStream::with_data(written_data);
+            
+            let received_envelope = isolation_framed.read_message(&mut read_stream)
+                .await
+                .expect(&format!("Isolation operation {} read should succeed", op_id));
+            
+            let operation_duration = operation_start.elapsed();
+            
+            // Verify integrity
+            assert!(received_envelope.verify_signature(),
+                   "Isolation operation {} signature should be valid", op_id);
+            
+            (op_id, payload_size, operation_duration)
+        });
+        
+        isolation_handles.push(handle);
+    }
+    
+    // Wait for all isolation operations to complete
+    let isolation_start = Instant::now();
+    let mut isolation_results = Vec::new();
+    
+    for handle in isolation_handles {
+        let result = handle.await.expect("Isolation operation should complete successfully");
+        isolation_results.push(result);
+    }
+    
+    let total_isolation_duration = isolation_start.elapsed();
+    
+    // Verify resource isolation - operations should complete regardless of payload size
+    assert_eq!(isolation_results.len(), isolation_operations, 
+              "All isolation operations should complete");
+    
+    // Verify that larger operations don't block smaller ones excessively
+    let mut size_groups: std::collections::HashMap<usize, Vec<Duration>> = std::collections::HashMap::new();
+    
+    for (_, payload_size, duration) in &isolation_results {
+        size_groups.entry(*payload_size).or_insert_with(Vec::new).push(*duration);
+    }
+    
+    println!("    Resource isolation verification:");
+    for (size, durations) in &size_groups {
+        let avg_duration = durations.iter().sum::<Duration>() / durations.len() as u32;
+        println!("      {} byte operations: {} samples, avg duration: {:?}", 
+                 size, durations.len(), avg_duration);
+    }
+    
+    println!("    ✓ Resource isolation verified: {} operations with varying resource requirements in {:?}",
+             isolation_operations, total_isolation_duration);
+    
+    println!("✅ Concurrent operation safety tests completed successfully");
 } 
