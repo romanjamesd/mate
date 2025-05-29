@@ -8,6 +8,7 @@ use tracing::{info, error, warn};
 use base64::{Engine as _, engine::general_purpose};
 use tokio::time::Instant;
 use std::sync::Arc;
+use std::io::{self, Write, BufRead};
 use rand;
 
 /// Initialize identity using secure storage
@@ -207,9 +208,72 @@ async fn main() -> Result<()> {
                             }
                         }
                     } else {
-                        // Interactive mode placeholder - will be implemented in next steps
+                        // Interactive mode - full implementation
+                        info!("Connected to peer: {}", peer_id);
                         info!("Interactive mode - type messages and press Enter. Type 'quit' to exit.");
-                        info!("Note: Interactive mode will be fully implemented in next steps");
+                        
+                        let stdin = io::stdin();
+                        let mut stdin_lock = stdin.lock();
+                        
+                        loop {
+                            // Display prompt
+                            print!("> ");
+                            io::stdout().flush().unwrap();
+                            
+                            // Read user input
+                            let mut input = String::new();
+                            match stdin_lock.read_line(&mut input) {
+                                Ok(0) => {
+                                    // EOF (Ctrl+D)
+                                    info!("Goodbye!");
+                                    break;
+                                }
+                                Ok(_) => {
+                                    let input = input.trim().to_string();
+                                    
+                                    // Handle quit command
+                                    if input == "quit" || input == "exit" {
+                                        info!("Goodbye!");
+                                        break;
+                                    }
+                                    
+                                    // Skip empty messages
+                                    if input.is_empty() {
+                                        continue;
+                                    }
+                                    
+                                    // Send message and measure round-trip time
+                                    let start_time = Instant::now();
+                                    let ping_message = Message::new_ping(rand::random::<u64>(), input.clone());
+                                    
+                                    match connection.send_message(ping_message).await {
+                                        Ok(()) => {
+                                            match connection.receive_message().await {
+                                                Ok((response, _sender)) => {
+                                                    let round_trip_time = start_time.elapsed();
+                                                    info!("Received echo: \"{}\" (round-trip: {}ms)", 
+                                                          response.get_payload(), round_trip_time.as_millis());
+                                                }
+                                                Err(e) => {
+                                                    error!("Failed to receive response: {}", e);
+                                                    error!("Connection may have been lost");
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to send message: {}", e);
+                                            error!("Connection may have been lost");
+                                            break;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Failed to read input: {}", e);
+                                    break;
+                                }
+                            }
+                        }
                     }
                     
                     // Close connection
