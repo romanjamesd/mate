@@ -4,3 +4,6 @@
 //! the complete system with multiple components working together.
 
 // Placeholder for future integration tests 
+
+// Server integration tests
+pub mod server_shutdown; 

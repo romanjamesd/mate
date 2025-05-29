@@ -145,11 +145,19 @@ async fn main() -> Result<()> {
             info!("Starting server on {}", bind);
             
             // Use secure storage for identity
-            let identity = init_identity().await?;
+            let identity = std::sync::Arc::new(init_identity().await?);
             info!("Loaded identity: {}", identity.peer_id());
             
-            // Implementation placeholder
-            todo!()
+            // Create and run server
+            let server = mate::network::Server::bind(&bind, identity).await?;
+            
+            info!("Server bound successfully, starting to accept connections...");
+            if let Err(e) = server.run().await {
+                error!("Server error: {}", e);
+                std::process::exit(1);
+            }
+            
+            info!("Server shutdown complete");
         }
         Commands::Connect { address, message } => {
             info!("Connecting to {}", address);
