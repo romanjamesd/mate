@@ -3,9 +3,13 @@ pub mod wire;
 
 pub use types::{Message, SignedEnvelope};
 pub use wire::{
+    // Core wire protocol types
     FramedMessage, 
+    WireConfig,
     WireProtocolError,
     DosProtectionConfig,
+    
+    // Wire protocol constants
     MAX_MESSAGE_SIZE,
     MIN_MESSAGE_SIZE,
     MAX_REASONABLE_MESSAGE_SIZE,
