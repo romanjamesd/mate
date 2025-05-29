@@ -10,6 +10,81 @@ use rand;
 // Step 4.2: Error conversion is automatically provided by anyhow's blanket implementation
 // since ConnectionError implements std::error::Error via thiserror::Error
 
+/// A secure peer-to-peer client with automatic retry logic and connection management.
+/// 
+/// The `Client` provides a robust foundation for establishing authenticated connections to peers.
+/// It handles connection establishment, authentication handshake, and provides both one-shot
+/// and persistent connection patterns.
+/// 
+/// # Security Features
+/// 
+/// - **Automatic Authentication**: All connections require successful handshake completion
+/// - **Cryptographic Verification**: Messages are automatically signed and verified
+/// - **Connection Validation**: Failed handshakes prevent message exchange
+/// - **Timeout Protection**: All operations have appropriate timeouts to prevent hanging
+/// 
+/// # Error Recovery Strategies
+/// 
+/// ## Connection Establishment
+/// - **Connection failures**: Automatic retry with exponential backoff (up to 3 attempts)
+///   - *Recovery*: Check network connectivity, verify target address and port
+/// - **Handshake failures**: Authentication errors are not retried automatically
+///   - *Recovery*: Verify peer identity, check clock synchronization, examine logs
+/// - **Timeout errors**: May indicate network congestion or peer availability issues
+///   - *Recovery*: Retry after delay, consider increasing timeout values
+/// 
+/// ## Message Exchange Errors
+/// - **Invalid signatures**: Security errors indicating potential tampering
+///   - *Recovery*: Do not retry, investigate security implications
+/// - **Timestamp validation failures**: Clock synchronization issues
+///   - *Recovery*: Check system time, retry with fresh message
+/// - **Connection drops**: Network or peer issues
+///   - *Recovery*: Re-establish connection and retry operation
+/// 
+/// ## Performance Optimization
+/// - **Connection reuse**: For multiple messages to same peer, reuse connections
+/// - **Retry configuration**: Tune retry attempts and delays via `CLIENT_RETRY_*` constants
+/// - **Echo sessions**: Use `echo_session()` to validate connection quality
+/// 
+/// # Configuration Options
+/// 
+/// ## Wire Protocol Configuration
+/// - **Message limits**: Configure maximum message size via `WireConfig`
+/// - **Timeout values**: Adjust for network conditions (read/write timeouts)
+/// - **Retry behavior**: Modify `CLIENT_RETRY_MAX_ATTEMPTS` and `CLIENT_RETRY_BASE_DELAY`
+/// 
+/// ## Connection Patterns
+/// - **One-shot**: Use `send_message_to()` for single message exchanges
+/// - **Persistent**: Use `connect()` and reuse connection for multiple messages
+/// - **Quality testing**: Use `test_connection_quality()` for network assessment
+/// 
+/// # Example Usage
+/// 
+/// ```rust
+/// use std::sync::Arc;
+/// 
+/// let client = Client::new(identity);
+/// 
+/// // One-shot message exchange
+/// let response = client.send_message_to("127.0.0.1:8080", message).await?;
+/// 
+/// // Persistent connection for multiple messages
+/// let mut conn = client.connect("127.0.0.1:8080").await?;
+/// client.echo_session(&mut conn).await?;
+/// conn.send_message(message1).await?;
+/// conn.send_message(message2).await?;
+/// 
+/// // Connection quality assessment
+/// let quality = client.test_connection_quality("127.0.0.1:8080").await?;
+/// if quality.is_acceptable_quality() {
+///     println!("Connection quality: {}", quality.quality_assessment());
+/// }
+/// ```
+/// 
+/// # Thread Safety
+/// 
+/// `Client` is thread-safe and can be shared across threads. Individual `Connection` instances
+/// are NOT thread-safe and should be used by a single task at a time.
 pub struct Client {
     identity: Arc<Identity>,
     wire_config: WireConfig,

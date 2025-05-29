@@ -27,6 +27,73 @@ pub enum ConnectionError {
     Io(#[from] std::io::Error),
 }
 
+/// Represents an authenticated peer-to-peer connection with integrated wire protocol support.
+/// 
+/// The `Connection` struct provides a secure, authenticated communication channel between peers
+/// using the length-prefixed wire protocol and cryptographic message signing. Each connection
+/// maintains state about the authenticated peer and handles message serialization, transmission,
+/// and verification automatically.
+/// 
+/// # Security Features
+/// 
+/// - **Message Authentication**: All messages are automatically wrapped in `SignedEnvelope` with
+///   cryptographic signatures. Invalid signatures are rejected automatically.
+/// - **Timestamp Validation**: Messages are validated for freshness (5-minute maximum age) to
+///   prevent replay attacks.
+/// - **Handshake Protocol**: Bidirectional authentication ensures both peers verify each other's
+///   identity before message exchange.
+/// - **Nonce-based Handshake**: Handshake uses random nonces to prevent replay attacks.
+/// 
+/// # Error Recovery Strategies
+/// 
+/// ## Connection Errors
+/// - **`WireProtocol` errors**: Usually indicate network issues or protocol violations.
+///   - *Recovery*: Retry connection establishment or check network connectivity.
+/// - **`HandshakeFailed`**: Authentication protocol failure.
+///   - *Recovery*: Verify peer identity credentials and retry. Check for clock skew.
+/// - **`AuthenticationFailed`**: Cryptographic verification failure.
+///   - *Recovery*: Check identity keys and peer certificates. May indicate malicious activity.
+/// - **`InvalidSignature`**: Message signature verification failed.
+///   - *Recovery*: Do not retry. Log security event. May indicate tampering or wrong keys.
+/// - **`InvalidTimestamp`**: Message timestamp outside acceptable window.
+///   - *Recovery*: Check system clock synchronization. Retry with fresh message.
+/// - **`ConnectionClosed`**: Peer closed connection unexpectedly.
+///   - *Recovery*: Attempt reconnection after brief delay.
+/// 
+/// ## Timeout Recovery
+/// - **Read timeouts**: May indicate slow peer or network congestion.
+///   - *Recovery*: Increase timeout values in `WireConfig` or check network quality.
+/// - **Write timeouts**: May indicate peer is not consuming messages or network issues.
+///   - *Recovery*: Check peer health, consider connection replacement.
+/// 
+/// ## Performance Considerations
+/// - Monitor throughput metrics in debug logs to identify bottlenecks
+/// - Large message handling is automatic via wire protocol
+/// - Connection reuse is recommended for multiple messages to same peer
+/// 
+/// # Example Usage
+/// 
+/// ```rust
+/// use std::sync::Arc;
+/// use tokio::net::TcpStream;
+/// 
+/// // Basic connection establishment
+/// let stream = TcpStream::connect("127.0.0.1:8080").await?;
+/// let mut connection = Connection::new(stream, identity).await;
+/// 
+/// // Perform handshake
+/// let peer_id = connection.handshake().await?;
+/// println!("Authenticated with peer: {}", peer_id);
+/// 
+/// // Send and receive messages
+/// connection.send_message(my_message).await?;
+/// let (response, sender) = connection.receive_message().await?;
+/// ```
+/// 
+/// # Thread Safety
+/// 
+/// `Connection` is NOT thread-safe. For concurrent access, wrap in appropriate synchronization
+/// primitives or use separate connections per thread.
 pub struct Connection {
     stream: TcpStream,
     peer_id: Option<String>,
@@ -76,6 +143,7 @@ impl Connection {
     
     #[instrument(level = "debug", skip(self, msg), fields(msg_type = msg.message_type()))]
     pub async fn send_message(&mut self, msg: Message) -> Result<(), ConnectionError> {
+        let send_start = std::time::Instant::now();
         info!("Sending {} message", msg.message_type());
         debug!("Message nonce: {}, payload_len: {}", msg.get_nonce(), msg.get_payload().len());
         
@@ -110,12 +178,29 @@ impl Connection {
                 })
             })?;
         
-        info!("Successfully sent {} message ({} bytes)", msg.message_type(), envelope_size);
+        let send_duration = send_start.elapsed();
+        info!(
+            "Successfully sent {} message ({} bytes) in {:?}",
+            msg.message_type(), envelope_size, send_duration
+        );
+        
+        // Performance metrics logging
+        debug!(
+            message_type = msg.message_type(),
+            envelope_size_bytes = envelope_size,
+            send_duration_ms = send_duration.as_millis(),
+            throughput_bytes_per_sec = if send_duration.as_secs_f64() > 0.0 {
+                envelope_size as f64 / send_duration.as_secs_f64()
+            } else { 0.0 },
+            "Message send performance metrics"
+        );
+        
         Ok(())
     }
     
     #[instrument(level = "debug", skip(self), fields(peer_id = self.peer_id.as_deref()))]
     pub async fn receive_message(&mut self) -> Result<(Message, String), ConnectionError> {
+        let receive_start = std::time::Instant::now();
         info!("Waiting to receive message");
         
         // Use framed_message to read with default timeout
@@ -159,12 +244,19 @@ impl Connection {
             })?;
         
         let sender_id = envelope.sender().to_string();
+        let receive_duration = receive_start.elapsed();
+        
+        // Calculate message size for performance metrics
+        let envelope_size = bincode::serialize(&envelope)
+            .map(|bytes| bytes.len())
+            .unwrap_or(0);
         
         info!(
-            "Successfully received {} message from {} (age: {} seconds)",
+            "Successfully received {} message from {} (age: {} seconds) in {:?}",
             message.message_type(),
             sender_id,
-            envelope.get_age_seconds()
+            envelope.get_age_seconds(),
+            receive_duration
         );
         
         debug!(
@@ -173,11 +265,25 @@ impl Connection {
             message.get_payload().len()
         );
         
+        // Performance metrics logging
+        debug!(
+            message_type = message.message_type(),
+            sender_id = %sender_id,
+            envelope_size_bytes = envelope_size,
+            receive_duration_ms = receive_duration.as_millis(),
+            message_age_seconds = envelope.get_age_seconds(),
+            throughput_bytes_per_sec = if receive_duration.as_secs_f64() > 0.0 {
+                envelope_size as f64 / receive_duration.as_secs_f64()
+            } else { 0.0 },
+            "Message receive performance metrics"
+        );
+        
         Ok((message, sender_id))
     }
     
     #[instrument(level = "debug", skip(self), fields(local_peer = self.identity.peer_id().as_str()))]
     pub async fn handshake(&mut self) -> Result<String> {
+        let handshake_start = std::time::Instant::now();
         info!("Starting handshake protocol");
         
         // Step 5.1: Use appropriate handshake timeout from network configuration constants
@@ -298,9 +404,12 @@ impl Connection {
         // Store the authenticated peer identity
         self.peer_id = Some(peer_identity.clone());
         
+        let handshake_duration = handshake_start.elapsed();
+        
         info!(
             peer_id = %peer_identity,
-            "Handshake completed successfully"
+            "Handshake completed successfully in {:?}",
+            handshake_duration
         );
         
         debug!(
@@ -308,6 +417,15 @@ impl Connection {
             remote_peer = %peer_identity,
             handshake_nonce = handshake_nonce,
             "Handshake authentication successful"
+        );
+        
+        // Performance metrics logging
+        debug!(
+            handshake_duration_ms = handshake_duration.as_millis(),
+            peer_id = %peer_identity,
+            local_peer = %local_peer_id,
+            handshake_nonce = handshake_nonce,
+            "Handshake performance metrics"
         );
         
         Ok(peer_identity)

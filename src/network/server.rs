@@ -15,6 +15,72 @@ use tracing::{info, error, warn, debug, instrument};
 // Step 4.2: Error conversion is automatically provided by anyhow's blanket implementation
 // since ConnectionError and WireProtocolError implement std::error::Error via thiserror::Error
 
+/// A secure peer-to-peer server with integrated authentication and wire protocol support.
+/// 
+/// The `Server` provides a robust foundation for accepting and managing multiple concurrent
+/// peer connections. Each connection is automatically authenticated through the handshake
+/// protocol and maintains cryptographic message integrity.
+/// 
+/// # Security Features
+/// 
+/// - **Automatic Authentication**: All incoming connections must complete handshake protocol
+/// - **Connection Limits**: Built-in protection against connection exhaustion attacks
+/// - **Cryptographic Verification**: All messages are automatically verified for authenticity
+/// - **Isolation**: Each connection is handled in a separate async task for security isolation
+/// 
+/// # Error Recovery Strategies
+/// 
+/// ## Server-Level Errors
+/// - **Bind failures**: Usually indicate port conflicts or permission issues.
+///   - *Recovery*: Check port availability, verify permissions, try alternative ports.
+/// - **Accept failures**: Individual connection accept errors don't stop the server.
+///   - *Recovery*: Logged and server continues accepting other connections.
+/// 
+/// ## Connection-Level Error Handling
+/// - **Handshake failures**: Connections with failed handshakes are automatically closed.
+///   - *Recovery*: Connection is terminated, server continues operating normally.
+/// - **Message errors**: Invalid messages don't affect other connections.
+///   - *Recovery*: Error logged, connection may be closed depending on severity.
+/// - **Connection limits exceeded**: New connections are rejected when limit reached.
+///   - *Recovery*: Client should retry after delay, server remains stable.
+/// 
+/// ## Performance Monitoring
+/// - Connection counts and lifetimes are automatically logged
+/// - Failed handshakes and connection errors are tracked
+/// - Performance metrics available in debug logs
+/// 
+/// # Configuration Options
+/// 
+/// ## Wire Protocol Configuration
+/// - **Message size limits**: Configure via `WireConfig::max_message_size`
+/// - **Timeout values**: Adjust read/write timeouts for network conditions
+/// - **Handshake timeout**: Fixed at 10 seconds for security
+/// 
+/// ## Connection Management
+/// - **Concurrent connection limit**: Set via `SERVER_MAX_CONCURRENT_CONNECTIONS`
+/// - **Automatic cleanup**: Completed connections are cleaned up automatically
+/// 
+/// # Example Usage
+/// 
+/// ```rust
+/// use std::sync::Arc;
+/// 
+/// // Basic server setup
+/// let server = Server::bind("0.0.0.0:8080", identity).await?;
+/// 
+/// // Start accepting connections (runs forever)
+/// server.run().await?;
+/// 
+/// // With custom configuration
+/// let custom_config = WireConfig::for_server()
+///     .with_max_message_size(1024 * 1024); // 1MB messages
+/// let server = Server::bind_with_config("0.0.0.0:8080", identity, custom_config).await?;
+/// ```
+/// 
+/// # Thread Safety
+/// 
+/// The server is designed to be run in a single async task. Connection handling is automatically
+/// distributed across the tokio runtime's thread pool.
 pub struct Server {
     identity: Arc<Identity>,
     listener: TcpListener,
