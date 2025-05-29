@@ -382,4 +382,189 @@ async fn test_message_ordering_preservation() {
              test_messages.iter().map(|(payload, _)| payload.len()).max().unwrap());
     println!("  - All messages received in correct order");
     println!("  - Message size variations did not affect ordering");
+}
+
+#[tokio::test]
+async fn test_empty_and_minimal_messages() {
+    // Test case 3 from essential-tests.md: Empty and minimal messages
+    println!("Testing behavior with minimal valid messages");
+    
+    let framed_message = FramedMessage::default();
+    
+    // Test 1: Empty payload message (minimal valid Message)
+    println!("Testing empty payload message...");
+    let (empty_envelope, empty_message) = create_test_envelope("");
+    
+    // Verify it's actually an empty payload
+    assert_eq!(empty_message.get_payload(), "", "Test message should have empty payload");
+    
+    // Write and read back the empty payload message
+    let mut empty_stream = MockStream::new();
+    framed_message.write_message(&mut empty_stream, &empty_envelope)
+        .await
+        .expect("Failed to write empty payload message");
+    
+    let empty_data = empty_stream.get_written_data().to_vec();
+    let mut empty_read_stream = MockStream::with_data(empty_data.clone());
+    
+    let received_empty = framed_message.read_message(&mut empty_read_stream)
+        .await
+        .expect("Failed to read empty payload message");
+    
+    // Verify empty message integrity
+    assert!(received_empty.verify_signature(), "Empty message signature should be valid");
+    let received_empty_msg = received_empty.get_message()
+        .expect("Failed to deserialize empty message");
+    assert_eq!(received_empty_msg.get_payload(), "", "Empty payload should be preserved");
+    assert_eq!(received_empty_msg.get_nonce(), empty_message.get_nonce(), "Nonce should match");
+    println!("✓ Empty payload message handled correctly");
+    
+    // Test 2: Single character payload (minimal non-empty)
+    println!("Testing single character payload message...");
+    let (single_envelope, _single_message) = create_test_envelope("a");
+    
+    let mut single_stream = MockStream::new();
+    framed_message.write_message(&mut single_stream, &single_envelope)
+        .await
+        .expect("Failed to write single character message");
+    
+    let single_data = single_stream.get_written_data().to_vec();
+    let mut single_read_stream = MockStream::with_data(single_data.clone());
+    
+    let received_single = framed_message.read_message(&mut single_read_stream)
+        .await
+        .expect("Failed to read single character message");
+    
+    assert!(received_single.verify_signature(), "Single character message signature should be valid");
+    let received_single_msg = received_single.get_message()
+        .expect("Failed to deserialize single character message");
+    assert_eq!(received_single_msg.get_payload(), "a", "Single character payload should be preserved");
+    println!("✓ Single character payload message handled correctly");
+    
+    // Test 3: Different message types with minimal payloads
+    println!("Testing minimal Ping and Pong messages...");
+    
+    // Create minimal Ping message
+    let identity = mate::crypto::Identity::generate().expect("Failed to generate identity");
+    let ping_message = mate::messages::Message::new_ping(0, String::new()); // nonce 0, empty payload
+    let ping_envelope = mate::messages::SignedEnvelope::create(&ping_message, &identity, Some(1234567890))
+        .expect("Failed to create ping envelope");
+    
+    // Create minimal Pong message  
+    let pong_message = mate::messages::Message::new_pong(0, String::new()); // nonce 0, empty payload
+    let pong_envelope = mate::messages::SignedEnvelope::create(&pong_message, &identity, Some(1234567890))
+        .expect("Failed to create pong envelope");
+    
+    // Test minimal Ping
+    let mut ping_stream = MockStream::new();
+    framed_message.write_message(&mut ping_stream, &ping_envelope)
+        .await
+        .expect("Failed to write minimal ping message");
+    
+    let ping_data = ping_stream.get_written_data().to_vec();
+    let mut ping_read_stream = MockStream::with_data(ping_data.clone());
+    
+    let received_ping = framed_message.read_message(&mut ping_read_stream)
+        .await
+        .expect("Failed to read minimal ping message");
+    
+    assert!(received_ping.verify_signature(), "Minimal ping signature should be valid");
+    let received_ping_msg = received_ping.get_message()
+        .expect("Failed to deserialize minimal ping message");
+    assert!(received_ping_msg.is_ping(), "Should be a Ping message");
+    assert_eq!(received_ping_msg.get_nonce(), 0, "Ping nonce should be 0");
+    assert_eq!(received_ping_msg.get_payload(), "", "Ping payload should be empty");
+    
+    // Test minimal Pong
+    let mut pong_stream = MockStream::new();
+    framed_message.write_message(&mut pong_stream, &pong_envelope)
+        .await
+        .expect("Failed to write minimal pong message");
+    
+    let pong_data = pong_stream.get_written_data().to_vec();
+    let mut pong_read_stream = MockStream::with_data(pong_data.clone());
+    
+    let received_pong = framed_message.read_message(&mut pong_read_stream)
+        .await
+        .expect("Failed to read minimal pong message");
+    
+    assert!(received_pong.verify_signature(), "Minimal pong signature should be valid");
+    let received_pong_msg = received_pong.get_message()
+        .expect("Failed to deserialize minimal pong message");
+    assert!(received_pong_msg.is_pong(), "Should be a Pong message");
+    assert_eq!(received_pong_msg.get_nonce(), 0, "Pong nonce should be 0");
+    assert_eq!(received_pong_msg.get_payload(), "", "Pong payload should be empty");
+    
+    println!("✓ Minimal Ping and Pong messages handled correctly");
+    
+    // Test 4: Verify minimum message size requirements
+    println!("Testing minimum message size requirements...");
+    
+    // Check that all minimal messages have proper length prefixes
+    let test_messages = vec![
+        ("Empty payload", empty_data),
+        ("Single char", single_data),
+        ("Minimal ping", ping_data),
+        ("Minimal pong", pong_data),
+    ];
+    
+    for (description, data) in test_messages {
+        // Verify minimum length (4 bytes for length prefix + at least some message data)
+        assert!(data.len() > LENGTH_PREFIX_SIZE, 
+               "{} should have more than {} bytes (length prefix + message)", 
+               description, LENGTH_PREFIX_SIZE);
+        
+        // Extract and verify length prefix
+        let length_prefix = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+        let actual_message_length = data.len() - LENGTH_PREFIX_SIZE;
+        
+        assert_eq!(length_prefix as usize, actual_message_length,
+                   "{} length prefix should match actual message size", description);
+        
+        // Verify message is not unreasonably small (SignedEnvelope has minimum structure)
+        assert!(length_prefix > 0, "{} should have non-zero message length", description);
+        
+        println!("✓ {} passed minimum size requirements (total: {} bytes, message: {} bytes)", 
+                description, data.len(), length_prefix);
+    }
+    
+    // Test 5: Edge case - very small nonce values
+    println!("Testing edge cases with small nonce values...");
+    
+    let edge_cases = vec![
+        (0u64, "zero nonce"),
+        (1u64, "minimal nonce"),
+        (u64::MAX, "maximum nonce"),
+    ];
+    
+    for (nonce, description) in edge_cases {
+        let (edge_envelope, _edge_message) = create_test_envelope_with_nonce("", nonce);
+        
+        let mut edge_stream = MockStream::new();
+        framed_message.write_message(&mut edge_stream, &edge_envelope)
+            .await
+            .expect(&format!("Failed to write {} message", description));
+        
+        let edge_data = edge_stream.get_written_data().to_vec();
+        let mut edge_read_stream = MockStream::with_data(edge_data);
+        
+        let received_edge = framed_message.read_message(&mut edge_read_stream)
+            .await
+            .expect(&format!("Failed to read {} message", description));
+        
+        assert!(received_edge.verify_signature(), "{} signature should be valid", description);
+        let received_edge_msg = received_edge.get_message()
+            .expect(&format!("Failed to deserialize {} message", description));
+        assert_eq!(received_edge_msg.get_nonce(), nonce, "{} nonce should match", description);
+        
+        println!("✓ {} handled correctly (nonce: {})", description, nonce);
+    }
+    
+    println!("✓ All empty and minimal message tests passed!");
+    println!("  - Empty payload messages work correctly");
+    println!("  - Single character messages work correctly");  
+    println!("  - Minimal Ping and Pong messages work correctly");
+    println!("  - Minimum message size requirements are met");
+    println!("  - Edge cases with extreme nonce values work correctly");
+    println!("  - Protocol handles smallest possible SignedEnvelope correctly");
 } 
