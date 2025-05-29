@@ -74,6 +74,29 @@ fn create_test_envelope(payload: &str) -> (SignedEnvelope, Message) {
     (envelope, message)
 }
 
+/// Create a test SignedEnvelope with a unique identifier
+fn create_test_envelope_with_nonce(payload: &str, nonce: u64) -> (SignedEnvelope, Message) {
+    let identity = Identity::generate().expect("Failed to generate identity");
+    let message = Message::new_ping(nonce, payload.to_string());
+    let envelope = SignedEnvelope::create(&message, &identity, Some(1234567890))
+        .expect("Failed to create signed envelope");
+    (envelope, message)
+}
+
+/// Helper function to write multiple messages to a single buffer in sequence
+async fn write_multiple_messages_to_buffer(messages: &[(SignedEnvelope, Message)]) -> Vec<u8> {
+    let framed_message = FramedMessage::default();
+    let mut stream = MockStream::new();
+    
+    for (envelope, _) in messages {
+        framed_message.write_message(&mut stream, envelope)
+            .await
+            .expect("Failed to write message to buffer");
+    }
+    
+    stream.get_written_data().to_vec()
+}
+
 #[tokio::test]
 async fn test_successful_message_roundtrip() {
     // Test cases with various message sizes as specified in essential-tests.md
@@ -243,4 +266,120 @@ async fn test_length_prefix_accuracy() {
     }
     
     println!("✓ Length prefix accuracy tests passed!");
+}
+
+#[tokio::test]
+async fn test_message_ordering_preservation() {
+    // Test case 2 from essential-tests.md: Message ordering preservation
+    println!("Testing message ordering preservation with different sizes");
+    
+    let framed_message = FramedMessage::default();
+    
+    // Create large strings first to avoid lifetime issues
+    let large_1kb = "x".repeat(1000);
+    let large_5kb = "y".repeat(5000);
+    
+    // Create test messages with different sizes and unique nonces for identification
+    let test_messages = vec![
+        // Small message
+        ("small_msg", 1001u64),
+        // Medium message  
+        ("medium_message_with_more_content_to_test_ordering", 1002u64),
+        // Large message (1KB)
+        (large_1kb.as_str(), 1003u64),
+        // Another small message
+        ("small_again", 1004u64),
+        // Large message (5KB) 
+        (large_5kb.as_str(), 1005u64),
+        // Medium message
+        ("final_medium_message_for_ordering_test", 1006u64),
+    ];
+    
+    // Create signed envelopes for all test messages
+    let mut messages_with_envelopes = Vec::new();
+    for (payload, nonce) in &test_messages {
+        let (envelope, message) = create_test_envelope_with_nonce(payload, *nonce);
+        messages_with_envelopes.push((envelope, message));
+        println!("Created message with nonce {} and payload length {}", nonce, payload.len());
+    }
+    
+    // Write all messages to a single buffer in sequence
+    let combined_buffer = write_multiple_messages_to_buffer(&messages_with_envelopes).await;
+    println!("Combined buffer size: {} bytes", combined_buffer.len());
+    
+    // Create a mock stream with the combined buffer for reading
+    let mut read_stream = MockStream::with_data(combined_buffer);
+    
+    // Read messages back and verify they arrive in the same order
+    let mut received_messages = Vec::new();
+    for i in 0..test_messages.len() {
+        println!("Reading message {} of {}", i + 1, test_messages.len());
+        
+        let received_envelope = framed_message.read_message(&mut read_stream)
+            .await
+            .expect(&format!("Failed to read message {}", i + 1));
+        
+        // Verify signature is still valid
+        assert!(received_envelope.verify_signature(), 
+               "Signature should be valid for message {}", i + 1);
+        
+        // Deserialize the message to check content
+        let received_message = received_envelope.get_message()
+            .expect(&format!("Failed to deserialize message {}", i + 1));
+        
+        received_messages.push((received_envelope, received_message));
+        println!("Successfully received message {} with nonce {}", 
+                i + 1, received_messages[i].1.get_nonce());
+    }
+    
+    // Verify ordering is preserved by checking nonces
+    println!("Verifying message ordering preservation...");
+    for (i, ((original_envelope, original_message), (received_envelope, received_message))) in 
+        messages_with_envelopes.iter().zip(received_messages.iter()).enumerate() {
+        
+        // Check nonces match (primary ordering verification)
+        assert_eq!(original_message.get_nonce(), received_message.get_nonce(),
+                   "Message {} nonce mismatch: expected {}, got {}", 
+                   i + 1, original_message.get_nonce(), received_message.get_nonce());
+        
+        // Check payloads match
+        assert_eq!(original_message.get_payload(), received_message.get_payload(),
+                   "Message {} payload mismatch", i + 1);
+        
+        // Check message types match  
+        assert_eq!(original_message.message_type(), received_message.message_type(),
+                   "Message {} type mismatch", i + 1);
+        
+        // Check timestamps match
+        assert_eq!(original_envelope.timestamp(), received_envelope.timestamp(),
+                   "Message {} timestamp mismatch", i + 1);
+        
+        println!("✓ Message {} ordering and content verified (nonce: {}, payload_len: {})", 
+                i + 1, received_message.get_nonce(), received_message.get_payload().len());
+    }
+    
+    // Verify we received exactly the expected number of messages
+    assert_eq!(received_messages.len(), test_messages.len(),
+               "Should receive exactly {} messages, got {}", 
+               test_messages.len(), received_messages.len());
+    
+    // Additional verification: ensure message sizes didn't affect ordering
+    let original_nonces: Vec<u64> = messages_with_envelopes.iter()
+        .map(|(_, msg)| msg.get_nonce())
+        .collect();
+    let received_nonces: Vec<u64> = received_messages.iter()
+        .map(|(_, msg)| msg.get_nonce())
+        .collect();
+    
+    assert_eq!(original_nonces, received_nonces,
+               "Message ordering should be preserved regardless of size. Original: {:?}, Received: {:?}",
+               original_nonces, received_nonces);
+    
+    println!("✓ Message ordering preservation test passed!");
+    println!("  - Sent {} messages with varying sizes ({} bytes to {} bytes)", 
+             test_messages.len(),
+             test_messages.iter().map(|(payload, _)| payload.len()).min().unwrap(),
+             test_messages.iter().map(|(payload, _)| payload.len()).max().unwrap());
+    println!("  - All messages received in correct order");
+    println!("  - Message size variations did not affect ordering");
 } 
