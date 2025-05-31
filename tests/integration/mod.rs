@@ -15,4 +15,7 @@ pub mod connection_core;
 pub mod cli_tests; 
 
 // Interactive mode initialization tests
-pub mod interactive_initialization; 
+pub mod interactive_initialization;
+
+// Interactive commands tests
+pub mod interactive_commands; 
