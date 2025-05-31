@@ -30,4 +30,7 @@ pub mod interactive_message_exchange;
 pub mod connection_recovery; 
 
 // Session summary tests
-pub mod session_summary; 
+pub mod session_summary;
+
+// Error handling tests
+pub mod error_handling; 
