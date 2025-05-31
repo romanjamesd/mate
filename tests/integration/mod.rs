@@ -39,4 +39,7 @@ pub mod error_handling;
 pub mod user_experience; 
 
 // Edge cases and boundary tests
-pub mod edge_cases_boundaries; 
+pub mod edge_cases_boundaries;
+
+// Comprehensive integration tests
+pub mod integration_tests; 
