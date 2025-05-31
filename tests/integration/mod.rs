@@ -7,3 +7,6 @@
 
 // Server integration tests
 pub mod server_shutdown; 
+
+// Core connection tests
+pub mod connection_core; 
