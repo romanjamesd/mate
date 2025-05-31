@@ -18,4 +18,7 @@ pub mod cli_tests;
 pub mod interactive_initialization;
 
 // Interactive commands tests
-pub mod interactive_commands; 
+pub mod interactive_commands;
+
+// Interactive input handling tests
+pub mod interactive_input_handling; 
