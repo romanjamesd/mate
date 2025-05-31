@@ -33,4 +33,7 @@ pub mod connection_recovery;
 pub mod session_summary;
 
 // Error handling tests
-pub mod error_handling; 
+pub mod error_handling;
+
+// User experience tests
+pub mod user_experience; 
