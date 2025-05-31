@@ -28,3 +28,6 @@ pub mod interactive_message_exchange;
 
 // Connection recovery tests
 pub mod connection_recovery; 
+
+// Session summary tests
+pub mod session_summary; 
