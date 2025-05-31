@@ -37,3 +37,6 @@ pub mod error_handling;
 
 // User experience tests
 pub mod user_experience; 
+
+// Edge cases and boundary tests
+pub mod edge_cases_boundaries; 
