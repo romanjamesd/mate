@@ -21,4 +21,7 @@ pub mod interactive_initialization;
 pub mod interactive_commands;
 
 // Interactive input handling tests
-pub mod interactive_input_handling; 
+pub mod interactive_input_handling;
+
+// Interactive message exchange tests
+pub mod interactive_message_exchange; 
