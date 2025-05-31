@@ -25,3 +25,6 @@ pub mod interactive_input_handling;
 
 // Interactive message exchange tests
 pub mod interactive_message_exchange; 
+
+// Connection recovery tests
+pub mod connection_recovery; 
