@@ -311,7 +311,7 @@ impl Server {
                             
                             // Handle different message types
                             match message.message_type() {
-                                "ping" => {
+                                "Ping" => {
                                     debug!("Echoing ping message back to {}", sender);
                                     if let Err(e) = connection.send_message(message).await {
                                         error!("Failed to echo message on connection {}: {}", connection_id, e);

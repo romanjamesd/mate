@@ -1,9 +1,30 @@
 use mate::cli::{Cli, Commands, KeyCommand};
 use mate::crypto::Identity;
+use mate::network::Client;
+use mate::messages::Message;
 use clap::Parser;
 use anyhow::Result;
 use tracing::{info, error, warn};
 use base64::{Engine as _, engine::general_purpose};
+use tokio::time::Instant;
+use std::sync::Arc;
+use std::io::{self, Write, BufRead};
+use rand;
+
+/// Format round-trip time for display with appropriate precision
+fn format_round_trip_time(duration: std::time::Duration) -> String {
+    let millis = duration.as_millis();
+    let micros = duration.as_micros();
+    
+    if millis == 0 {
+        format!("{}μs", micros)
+    } else if millis < 1000 {
+        format!("{}ms", millis)
+    } else {
+        let seconds = duration.as_secs_f64();
+        format!("{:.2}s", seconds)
+    }
+}
 
 /// Initialize identity using secure storage
 pub async fn init_identity() -> Result<Identity> {
@@ -163,11 +184,240 @@ async fn main() -> Result<()> {
             info!("Connecting to {}", address);
             
             // Use secure storage for identity
-            let identity = init_identity().await?;
+            let identity = Arc::new(init_identity().await?);
             info!("Using identity: {}", identity.peer_id());
             
-            // Implementation placeholder
-            todo!()
+            // Create client instance
+            let client = Client::new(identity);
+            
+            // Attempt connection
+            match client.connect(&address).await {
+                Ok(mut connection) => {
+                    let peer_id = connection.peer_identity()
+                        .unwrap_or("unknown")
+                        .to_string();
+                    info!("Connected to peer: {}", peer_id);
+                    
+                    // Handle one-shot message mode
+                    if let Some(msg_text) = message {
+                        info!("Sending message: \"{}\"", msg_text);
+                        let start_time = Instant::now();
+                        let ping_message = Message::new_ping(rand::random::<u64>(), msg_text.clone());
+                        
+                        // Send message and measure round-trip time
+                        match connection.send_message(ping_message).await {
+                            Ok(()) => {
+                                match connection.receive_message().await {
+                                    Ok((response, _sender)) => {
+                                        let round_trip_time = start_time.elapsed();
+                                        info!("Received echo: \"{}\" (round-trip: {})", 
+                                              response.get_payload(), format_round_trip_time(round_trip_time));
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to receive response: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to send message: {}", e);
+                            }
+                        }
+                    } else {
+                        // Interactive mode - enhanced session management with help commands and status display
+                        println!("=== MATE Chat Session ===");
+                        println!("Connected to peer: {}", peer_id);
+                        println!("Connection status: Active");
+                        println!();
+                        println!("Available commands:");
+                        println!("  help    - Show this help message");
+                        println!("  info    - Show connection information");
+                        println!("  quit    - Exit the chat session");
+                        println!("  exit    - Exit the chat session");
+                        println!();
+                        println!("Type messages and press Enter to send. Press Ctrl+C or Ctrl+D to exit.");
+                        println!("{}", "=".repeat(30));
+                        
+                        let stdin = io::stdin();
+                        let mut stdin_lock = stdin.lock();
+                        let mut message_count = 0u32;
+                        let mut total_round_trip_time = std::time::Duration::ZERO;
+                        let session_start = Instant::now();
+                        
+                        loop {
+                            // Display prompt with connection status indicator
+                            print!("mate> ");
+                            io::stdout().flush().unwrap();
+                            
+                            // Read user input
+                            let mut input = String::new();
+                            match stdin_lock.read_line(&mut input) {
+                                Ok(0) => {
+                                    // EOF (Ctrl+D)
+                                    println!(); // New line after Ctrl+D
+                                    break;
+                                }
+                                Ok(_) => {
+                                    let input = input.trim().to_string();
+                                    
+                                    // Handle empty input
+                                    if input.is_empty() {
+                                        continue;
+                                    }
+                                    
+                                    // Handle special commands
+                                    match input.as_str() {
+                                        "help" => {
+                                            println!("=== Available Commands ===");
+                                            println!("  help    - Show this help message");
+                                            println!("  info    - Show connection information");
+                                            println!("  quit    - Exit the chat session");
+                                            println!("  exit    - Exit the chat session");
+                                            println!();
+                                            println!("Any other text will be sent as a message to the peer.");
+                                            continue;
+                                        }
+                                        "info" => {
+                                            let session_duration = session_start.elapsed();
+                                            println!("=== Connection Information ===");
+                                            println!("Peer ID: {}", peer_id);
+                                            println!("Connection status: Active");
+                                            println!("Session duration: {}", format_round_trip_time(session_duration));
+                                            println!("Messages sent: {}", message_count);
+                                            if message_count > 0 {
+                                                let avg_time = total_round_trip_time / message_count;
+                                                println!("Average round-trip time: {}", format_round_trip_time(avg_time));
+                                            }
+                                            continue;
+                                        }
+                                        "quit" | "exit" => {
+                                            break;
+                                        }
+                                        _ => {
+                                            // Regular message - send to peer
+                                        }
+                                    }
+                                    
+                                    // Send message and measure round-trip time
+                                    let start_time = Instant::now();
+                                    let ping_message = Message::new_ping(rand::random::<u64>(), input.clone());
+                                    
+                                    match connection.send_message(ping_message).await {
+                                        Ok(()) => {
+                                            match connection.receive_message().await {
+                                                Ok((response, _sender)) => {
+                                                    let round_trip_time = start_time.elapsed();
+                                                    message_count += 1;
+                                                    total_round_trip_time += round_trip_time;
+                                                    println!("← Received echo: \"{}\" (round-trip: {})", 
+                                                            response.get_payload(), format_round_trip_time(round_trip_time));
+                                                }
+                                                Err(e) => {
+                                                    error!("Connection error: Failed to receive response: {}", e);
+                                                    warn!("The connection to the peer may have been lost.");
+                                                    println!("Connection status: Disconnected");
+                                                    println!("Attempting to reconnect...");
+                                                    
+                                                    // Attempt to reconnect (basic retry logic)
+                                                    match client.connect(&address).await {
+                                                        Ok(new_connection) => {
+                                                            connection = new_connection;
+                                                            let new_peer_id = connection.peer_identity()
+                                                                .unwrap_or("unknown")
+                                                                .to_string();
+                                                            info!("Reconnected to peer: {}", new_peer_id);
+                                                            println!("Connection status: Reconnected");
+                                                        }
+                                                        Err(reconnect_err) => {
+                                                            error!("Failed to reconnect: {}", reconnect_err);
+                                                            println!("Reconnection failed. Please restart the session.");
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Connection error: Failed to send message: {}", e);
+                                            warn!("The connection to the peer may have been lost.");
+                                            println!("Connection status: Disconnected");
+                                            println!("Attempting to reconnect...");
+                                            
+                                            // Attempt to reconnect (basic retry logic)
+                                            match client.connect(&address).await {
+                                                Ok(new_connection) => {
+                                                    connection = new_connection;
+                                                    let new_peer_id = connection.peer_identity()
+                                                        .unwrap_or("unknown")
+                                                        .to_string();
+                                                    info!("Reconnected to peer: {}", new_peer_id);
+                                                    println!("Connection status: Reconnected");
+                                                    
+                                                    // Retry sending the message
+                                                    let retry_start_time = Instant::now();
+                                                    let retry_ping_message = Message::new_ping(rand::random::<u64>(), input.clone());
+                                                    match connection.send_message(retry_ping_message).await {
+                                                        Ok(()) => {
+                                                            match connection.receive_message().await {
+                                                                Ok((response, _sender)) => {
+                                                                    let round_trip_time = retry_start_time.elapsed();
+                                                                    message_count += 1;
+                                                                    total_round_trip_time += round_trip_time;
+                                                                    println!("← Received echo: \"{}\" (round-trip: {})", 
+                                                                            response.get_payload(), format_round_trip_time(round_trip_time));
+                                                                }
+                                                                Err(e) => {
+                                                                    error!("Still failed to receive after reconnect: {}", e);
+                                                                    break;
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            error!("Still failed to send after reconnect: {}", e);
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                Err(reconnect_err) => {
+                                                    error!("Failed to reconnect: {}", reconnect_err);
+                                                    println!("Reconnection failed. Please restart the session.");
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Failed to read input: {}", e);
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Display session summary
+                        let session_duration = session_start.elapsed();
+                        println!();
+                        println!("=== Session Summary ===");
+                        println!("Session duration: {}", format_round_trip_time(session_duration));
+                        if message_count > 0 {
+                            let avg_time = total_round_trip_time / message_count;
+                            println!("Messages sent: {}", message_count);
+                            println!("Average round-trip time: {}", format_round_trip_time(avg_time));
+                        } else {
+                            println!("No messages sent during this session");
+                        }
+                        println!("Goodbye!");
+                    }
+                    
+                    // Close connection
+                    if let Err(e) = connection.close().await {
+                        warn!("Failed to close connection cleanly: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to connect to {}: {}", address, e);
+                    std::process::exit(1);
+                }
+            }
         }
     }
     
