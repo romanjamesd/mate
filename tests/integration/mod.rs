@@ -10,3 +10,6 @@ pub mod server_shutdown;
 
 // Core connection tests
 pub mod connection_core; 
+
+// CLI integration tests
+pub mod cli_tests; 
