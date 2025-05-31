@@ -13,3 +13,6 @@ pub mod connection_core;
 
 // CLI integration tests
 pub mod cli_tests; 
+
+// Interactive mode initialization tests
+pub mod interactive_initialization; 
