@@ -368,9 +368,12 @@ impl WireProtocolError {
             | WireProtocolError::Timeout(_) => true,
 
             // Some IO errors are recoverable (e.g., interrupted operations)
-            WireProtocolError::Io(io_err) => matches!(io_err.kind(), std::io::ErrorKind::Interrupted
-                | std::io::ErrorKind::WouldBlock
-                | std::io::ErrorKind::TimedOut),
+            WireProtocolError::Io(io_err) => matches!(
+                io_err.kind(),
+                std::io::ErrorKind::Interrupted
+                    | std::io::ErrorKind::WouldBlock
+                    | std::io::ErrorKind::TimedOut
+            ),
 
             // Connection closed might be recoverable if we can reconnect
             WireProtocolError::ConnectionClosed { .. } => true,
@@ -399,13 +402,16 @@ impl WireProtocolError {
 
     /// Check if this error indicates a security concern
     pub fn is_security_related(&self) -> bool {
-        matches!(self, WireProtocolError::MessageTooLarge { .. }
-            | WireProtocolError::SuspiciousMessageSize { .. }
-            | WireProtocolError::AllocationDenied { .. }
-            | WireProtocolError::ProtocolViolation { .. }
-            | WireProtocolError::CorruptedData { .. }
-            | WireProtocolError::InvalidMessageFormat { .. }
-            | WireProtocolError::BufferOverflow { .. })
+        matches!(
+            self,
+            WireProtocolError::MessageTooLarge { .. }
+                | WireProtocolError::SuspiciousMessageSize { .. }
+                | WireProtocolError::AllocationDenied { .. }
+                | WireProtocolError::ProtocolViolation { .. }
+                | WireProtocolError::CorruptedData { .. }
+                | WireProtocolError::InvalidMessageFormat { .. }
+                | WireProtocolError::BufferOverflow { .. }
+        )
     }
 
     /// Get a user-friendly error category
@@ -468,8 +474,7 @@ impl From<anyhow::Error> for WireProtocolError {
     }
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct FramedMessage {
     wire_config: WireConfig,
     dos_config: DosProtectionConfig,
