@@ -1,3 +1,3 @@
 //! Display-related unit tests
 
-pub mod timing; 
+pub mod timing;

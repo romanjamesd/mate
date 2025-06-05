@@ -8,15 +8,15 @@
 //! - Test input reading error handling
 //! - Test that non-command input is sent as regular messages
 
+use anyhow::Result;
+use mate::crypto::Identity;
+use mate::network::Server;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
-use mate::network::Server;
-use mate::crypto::Identity;
-use std::sync::Arc;
-use anyhow::Result;
-use tokio::io::AsyncWriteExt;
 
 /// Helper function to start a test server
 async fn start_test_server(bind_addr: &str) -> Result<Server> {
@@ -37,12 +37,11 @@ async fn test_clear_prompt_displayed() {
     println!("Testing that clear prompt is displayed for user input");
 
     let server_addr = "127.0.0.1:18111";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     // Wait for server to start
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -79,15 +78,23 @@ async fn test_clear_prompt_displayed() {
     println!("Prompt display output:\n{}", combined_output);
 
     // Verify a prompt is displayed
-    assert!(combined_output.contains(">") || combined_output.contains("$") ||
-            combined_output.contains("Enter") || combined_output.contains("Type") ||
-            combined_output.contains("message"),
-           "Output should display a clear prompt for user input. Output: {}", combined_output);
+    assert!(
+        combined_output.contains(">")
+            || combined_output.contains("$")
+            || combined_output.contains("Enter")
+            || combined_output.contains("Type")
+            || combined_output.contains("message"),
+        "Output should display a clear prompt for user input. Output: {}",
+        combined_output
+    );
 
     // Verify it's not just noise - should have some structure
     let line_count = combined_output.lines().count();
-    assert!(line_count > 1,
-           "Output should have multiple lines showing initialization and prompt. Output: {}", combined_output);
+    assert!(
+        line_count > 1,
+        "Output should have multiple lines showing initialization and prompt. Output: {}",
+        combined_output
+    );
 
     println!("✅ Clear prompt display test passed");
     println!("   - Prompt is displayed for user input");
@@ -100,12 +107,11 @@ async fn test_empty_input_ignored() {
     println!("Testing that empty input is ignored and doesn't send messages to peer");
 
     let server_addr = "127.0.0.1:18112";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -123,21 +129,21 @@ async fn test_empty_input_ignored() {
         // Send multiple empty inputs
         let _ = stdin.write_all(b"\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b"\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b"\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         // Send a real message to contrast
         let _ = stdin.write_all(b"test message\n").await;
         tokio::time::sleep(Duration::from_millis(300)).await;
-        
+
         // Send more empty inputs
         let _ = stdin.write_all(b"\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b"quit\n").await;
     }
 
@@ -162,8 +168,11 @@ async fn test_empty_input_ignored() {
                echo_count, combined_output);
 
     // Verify the real message was echoed
-    assert!(combined_output.contains("test message"),
-           "The real message should be echoed back. Output: {}", combined_output);
+    assert!(
+        combined_output.contains("test message"),
+        "The real message should be echoed back. Output: {}",
+        combined_output
+    );
 
     // Verify no sending messages for empty inputs
     let user_message_sending = combined_output.matches("Sending Ping message").count();
@@ -184,12 +193,11 @@ async fn test_whitespace_only_input_treated_as_empty() {
     println!("Testing that whitespace-only input is treated as empty");
 
     let server_addr = "127.0.0.1:18113";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -207,23 +215,23 @@ async fn test_whitespace_only_input_treated_as_empty() {
         // Send various whitespace-only inputs
         let _ = stdin.write_all(b" \n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b"  \n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b"\t\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b" \t \n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b"   \t   \n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         // Send a real message to contrast
         let _ = stdin.write_all(b"real message\n").await;
         tokio::time::sleep(Duration::from_millis(300)).await;
-        
+
         let _ = stdin.write_all(b"quit\n").await;
     }
 
@@ -248,8 +256,11 @@ async fn test_whitespace_only_input_treated_as_empty() {
                echo_count, combined_output);
 
     // Verify the real message was echoed
-    assert!(combined_output.contains("real message"),
-           "The real message should be echoed back. Output: {}", combined_output);
+    assert!(
+        combined_output.contains("real message"),
+        "The real message should be echoed back. Output: {}",
+        combined_output
+    );
 
     // Verify no sending messages for whitespace-only inputs
     let user_message_sending = combined_output.matches("Sending Ping message").count();
@@ -270,12 +281,11 @@ async fn test_end_of_input_graceful_termination() {
     println!("Testing end-of-input (Ctrl+D) handling with graceful session termination");
 
     let server_addr = "127.0.0.1:18114";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -303,8 +313,11 @@ async fn test_end_of_input_graceful_termination() {
         .expect("Command should execute successfully");
 
     // Verify graceful exit
-    assert!(command_output.status.success(),
-           "End-of-input should result in graceful exit. Status: {}", command_output.status);
+    assert!(
+        command_output.status.success(),
+        "End-of-input should result in graceful exit. Status: {}",
+        command_output.status
+    );
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
@@ -314,14 +327,17 @@ async fn test_end_of_input_graceful_termination() {
 
     // Verify graceful termination (should show some kind of termination message or at least clean exit)
     // Note: The exact termination message may vary, so we check for graceful behavior
-    let has_graceful_termination = combined_output.contains("session") ||
-                                  combined_output.contains("terminated") ||
-                                  combined_output.contains("goodbye") ||
-                                  combined_output.contains("exit") ||
-                                  command_output.status.success();
+    let has_graceful_termination = combined_output.contains("session")
+        || combined_output.contains("terminated")
+        || combined_output.contains("goodbye")
+        || combined_output.contains("exit")
+        || command_output.status.success();
 
-    assert!(has_graceful_termination,
-           "Should handle end-of-input gracefully. Output: {}", combined_output);
+    assert!(
+        has_graceful_termination,
+        "Should handle end-of-input gracefully. Output: {}",
+        combined_output
+    );
 
     println!("✅ End-of-input graceful termination test passed");
     println!("   - End-of-input (Ctrl+D) handled gracefully");
@@ -334,12 +350,11 @@ async fn test_input_reading_error_handling() {
     println!("Testing input reading error handling");
 
     let server_addr = "127.0.0.1:18115";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -358,7 +373,7 @@ async fn test_input_reading_error_handling() {
         let _ = stdin.write_all(b"normal message\n").await;
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
-    
+
     // Close stdin abruptly to simulate input error
     if let Some(stdin) = child.stdin.take() {
         drop(stdin);
@@ -379,12 +394,18 @@ async fn test_input_reading_error_handling() {
     println!("Input error handling output:\n{}", combined_output);
 
     // Verify the normal message was processed before the error
-    assert!(combined_output.contains("normal message"),
-           "Normal message should be processed before input error. Output: {}", combined_output);
+    assert!(
+        combined_output.contains("normal message"),
+        "Normal message should be processed before input error. Output: {}",
+        combined_output
+    );
 
     // Verify graceful handling of input error (no crash, clean exit)
-    assert!(command_output.status.success() || command_output.status.code() == Some(0),
-           "Should handle input errors gracefully without crashing. Status: {}", command_output.status);
+    assert!(
+        command_output.status.success() || command_output.status.code() == Some(0),
+        "Should handle input errors gracefully without crashing. Status: {}",
+        command_output.status
+    );
 
     println!("✅ Input reading error handling test passed");
     println!("   - Normal messages processed before error");
@@ -398,12 +419,11 @@ async fn test_non_command_input_sent_as_messages() {
     println!("Testing that non-command input is sent as regular messages");
 
     let server_addr = "127.0.0.1:18116";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -423,8 +443,8 @@ async fn test_non_command_input_sent_as_messages() {
         "123456789",
         "Message with special chars: !@#$%^&*()",
         "Multi word message with spaces",
-        "helpme", // Not the "help" command
-        "information", // Not the "info" command
+        "helpme",        // Not the "help" command
+        "information",   // Not the "info" command
         "quitting soon", // Not the "quit" command
     ];
 
@@ -434,7 +454,7 @@ async fn test_non_command_input_sent_as_messages() {
             let _ = stdin.write_all(format!("{}\n", message).as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
-        
+
         let _ = stdin.write_all(b"quit\n").await;
     }
 
@@ -454,22 +474,35 @@ async fn test_non_command_input_sent_as_messages() {
 
     // Count echo responses - should be one for each test message
     let echo_count = combined_output.matches("Received echo").count();
-    assert_eq!(echo_count, test_messages.len(),
-               "Should have echo responses for all test messages. Expected: {}, Got: {}, Output: {}", 
-               test_messages.len(), echo_count, combined_output);
+    assert_eq!(
+        echo_count,
+        test_messages.len(),
+        "Should have echo responses for all test messages. Expected: {}, Got: {}, Output: {}",
+        test_messages.len(),
+        echo_count,
+        combined_output
+    );
 
     // Verify each test message was echoed back
     for message in &test_messages {
-        assert!(combined_output.contains(message),
-               "Message '{}' should be echoed back. Output: {}", message, combined_output);
+        assert!(
+            combined_output.contains(message),
+            "Message '{}' should be echoed back. Output: {}",
+            message,
+            combined_output
+        );
     }
 
     // Verify messages were sent (not treated as commands)
     let user_message_sending = combined_output.matches("Sending Ping message").count();
     // Should have handshake ping + one ping for each test message
-    assert!(user_message_sending >= test_messages.len() + 1,
-           "Should send all non-command messages. Expected at least: {}, Got: {}, Output: {}", 
-           test_messages.len() + 1, user_message_sending, combined_output);
+    assert!(
+        user_message_sending >= test_messages.len() + 1,
+        "Should send all non-command messages. Expected at least: {}, Got: {}, Output: {}",
+        test_messages.len() + 1,
+        user_message_sending,
+        combined_output
+    );
 
     println!("✅ Non-command input sent as messages test passed");
     println!("   - All non-command inputs were sent as regular messages");
@@ -483,12 +516,11 @@ async fn test_comprehensive_interactive_input_handling() {
     println!("Testing comprehensive interactive input handling");
 
     let server_addr = "127.0.0.1:18117";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -504,34 +536,34 @@ async fn test_comprehensive_interactive_input_handling() {
 
     if let Some(stdin) = child.stdin.as_mut() {
         // Test complete input handling workflow
-        
+
         // Empty inputs (should be ignored)
         let _ = stdin.write_all(b"\n").await;
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         let _ = stdin.write_all(b"  \n").await;
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // Real command
         let _ = stdin.write_all(b"help\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         // Regular message
         let _ = stdin.write_all(b"test message\n").await;
         tokio::time::sleep(Duration::from_millis(300)).await;
-        
+
         // More empty inputs
         let _ = stdin.write_all(b"\t\n").await;
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // Info command
         let _ = stdin.write_all(b"info\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         // Another regular message
         let _ = stdin.write_all(b"final message\n").await;
         tokio::time::sleep(Duration::from_millis(300)).await;
-        
+
         // Graceful exit
         let _ = stdin.write_all(b"quit\n").await;
     }
@@ -552,10 +584,24 @@ async fn test_comprehensive_interactive_input_handling() {
 
     // Verify all input handling features worked
     let checks = vec![
-        ("prompt_displayed", combined_output.contains(">") || combined_output.contains("Enter") || combined_output.contains("Type")),
-        ("empty_ignored", combined_output.matches("Received echo").count() == 2), // Only 2 real messages
-        ("commands_worked", combined_output.contains("help") || combined_output.contains("info")),
-        ("messages_sent", combined_output.contains("test message") && combined_output.contains("final message")),
+        (
+            "prompt_displayed",
+            combined_output.contains(">")
+                || combined_output.contains("Enter")
+                || combined_output.contains("Type"),
+        ),
+        (
+            "empty_ignored",
+            combined_output.matches("Received echo").count() == 2,
+        ), // Only 2 real messages
+        (
+            "commands_worked",
+            combined_output.contains("help") || combined_output.contains("info"),
+        ),
+        (
+            "messages_sent",
+            combined_output.contains("test message") && combined_output.contains("final message"),
+        ),
         ("graceful_exit", command_output.status.success()),
     ];
 
@@ -570,11 +616,18 @@ async fn test_comprehensive_interactive_input_handling() {
     }
 
     // Require most checks to pass
-    assert!(passed_checks >= 4,
-           "At least 4/5 input handling checks should pass. Passed: {}/5. Output: {}", 
-           passed_checks, combined_output);
+    assert!(
+        passed_checks >= 4,
+        "At least 4/5 input handling checks should pass. Passed: {}/5. Output: {}",
+        passed_checks,
+        combined_output
+    );
 
     println!("✅ Comprehensive interactive input handling test passed");
-    println!("   - {}/{} input handling features verified", passed_checks, checks.len());
+    println!(
+        "   - {}/{} input handling features verified",
+        passed_checks,
+        checks.len()
+    );
     println!("   - Complete input handling workflow successful");
-} 
+}
