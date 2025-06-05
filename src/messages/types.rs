@@ -281,11 +281,7 @@ impl SignedEnvelope {
             Err(_) => return 0, // System time error
         };
 
-        if now >= self.timestamp {
-            now - self.timestamp
-        } else {
-            0 // Future timestamp
-        }
+        now.saturating_sub(self.timestamp)
     }
 }
 
