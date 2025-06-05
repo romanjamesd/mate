@@ -6,15 +6,15 @@
 //! - Test quit/exit commands terminate session gracefully
 //! - Test that commands are case-sensitive and exact-match
 
+use anyhow::Result;
+use mate::crypto::Identity;
+use mate::network::Server;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
-use mate::network::Server;
-use mate::crypto::Identity;
-use std::sync::Arc;
-use anyhow::Result;
-use tokio::io::AsyncWriteExt;
 
 /// Helper function to start a test server
 async fn start_test_server(bind_addr: &str) -> Result<Server> {
@@ -35,12 +35,11 @@ async fn test_help_command_displays_functionality() {
     println!("Testing that help command displays available functionality without sending to peer");
 
     let server_addr = "127.0.0.1:18101";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     // Wait for server to start
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -79,21 +78,31 @@ async fn test_help_command_displays_functionality() {
     println!("Help command output:\n{}", combined_output);
 
     // Verify help command shows available functionality
-    assert!(combined_output.contains("help") || combined_output.contains("commands") ||
-            combined_output.contains("available"),
-           "Help output should show available functionality. Output: {}", combined_output);
+    assert!(
+        combined_output.contains("help")
+            || combined_output.contains("commands")
+            || combined_output.contains("available"),
+        "Help output should show available functionality. Output: {}",
+        combined_output
+    );
 
     // Verify key commands are mentioned
-    let has_command_list = combined_output.contains("quit") || 
-                          combined_output.contains("exit") ||
-                          combined_output.contains("info");
-    
-    assert!(has_command_list,
-           "Help should list key commands. Output: {}", combined_output);
+    let has_command_list = combined_output.contains("quit")
+        || combined_output.contains("exit")
+        || combined_output.contains("info");
+
+    assert!(
+        has_command_list,
+        "Help should list key commands. Output: {}",
+        combined_output
+    );
 
     // Verify it's local help display (not sent to peer)
-    assert!(!combined_output.contains("Sending message") && !combined_output.contains("echo"),
-           "Help command should not send messages to peer. Output: {}", combined_output);
+    assert!(
+        !combined_output.contains("Sending message") && !combined_output.contains("echo"),
+        "Help command should not send messages to peer. Output: {}",
+        combined_output
+    );
 
     println!("✅ Help command functionality test passed");
     println!("   - Help displays available functionality");
@@ -107,12 +116,11 @@ async fn test_info_command_shows_connection_details() {
     println!("Testing that info command shows current connection details");
 
     let server_addr = "127.0.0.1:18102";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -148,18 +156,29 @@ async fn test_info_command_shows_connection_details() {
     println!("Info command output:\n{}", combined_output);
 
     // Verify connection details are shown
-    assert!(combined_output.contains("connection") || combined_output.contains("peer") ||
-            combined_output.contains("status"),
-           "Info should show connection details. Output: {}", combined_output);
+    assert!(
+        combined_output.contains("connection")
+            || combined_output.contains("peer")
+            || combined_output.contains("status"),
+        "Info should show connection details. Output: {}",
+        combined_output
+    );
 
     // Verify session duration information
-    assert!(combined_output.contains("session") || combined_output.contains("duration") ||
-            combined_output.contains("time"),
-           "Info should show session duration. Output: {}", combined_output);
+    assert!(
+        combined_output.contains("session")
+            || combined_output.contains("duration")
+            || combined_output.contains("time"),
+        "Info should show session duration. Output: {}",
+        combined_output
+    );
 
     // Verify it's local info display (not sent to peer)
-    assert!(!combined_output.contains("Sending message") && !combined_output.contains("echo"),
-           "Info command should not send messages to peer. Output: {}", combined_output);
+    assert!(
+        !combined_output.contains("Sending message") && !combined_output.contains("echo"),
+        "Info command should not send messages to peer. Output: {}",
+        combined_output
+    );
 
     println!("✅ Info command connection details test passed");
     println!("   - Connection details are displayed");
@@ -170,15 +189,16 @@ async fn test_info_command_shows_connection_details() {
 /// Test info command shows message statistics and performance metrics after messages
 #[tokio::test]
 async fn test_info_command_shows_statistics_after_messages() {
-    println!("Testing that info command shows message statistics and performance metrics after messages");
+    println!(
+        "Testing that info command shows message statistics and performance metrics after messages"
+    );
 
     let server_addr = "127.0.0.1:18103";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -196,7 +216,7 @@ async fn test_info_command_shows_statistics_after_messages() {
         // Send a test message first to generate statistics
         let _ = stdin.write_all(b"test message for stats\n").await;
         tokio::time::sleep(Duration::from_millis(500)).await;
-        
+
         // Then send info command
         let _ = stdin.write_all(b"info\n").await;
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -218,14 +238,23 @@ async fn test_info_command_shows_statistics_after_messages() {
     println!("Info with statistics output:\n{}", combined_output);
 
     // Verify message statistics are shown
-    assert!(combined_output.contains("message") || combined_output.contains("count") ||
-            combined_output.contains("statistics"),
-           "Info should show message statistics after messages. Output: {}", combined_output);
+    assert!(
+        combined_output.contains("message")
+            || combined_output.contains("count")
+            || combined_output.contains("statistics"),
+        "Info should show message statistics after messages. Output: {}",
+        combined_output
+    );
 
     // Verify performance metrics are shown
-    assert!(combined_output.contains("time") || combined_output.contains("performance") ||
-            combined_output.contains("round-trip") || combined_output.contains("ms"),
-           "Info should show performance metrics after messages. Output: {}", combined_output);
+    assert!(
+        combined_output.contains("time")
+            || combined_output.contains("performance")
+            || combined_output.contains("round-trip")
+            || combined_output.contains("ms"),
+        "Info should show performance metrics after messages. Output: {}",
+        combined_output
+    );
 
     println!("✅ Info command statistics test passed");
     println!("   - Message statistics are displayed after sending messages");
@@ -238,12 +267,11 @@ async fn test_quit_command_terminates_gracefully() {
     println!("Testing that quit command terminates session gracefully");
 
     let server_addr = "127.0.0.1:18104";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -271,17 +299,25 @@ async fn test_quit_command_terminates_gracefully() {
         .expect("Command should execute successfully");
 
     // Verify command exited successfully (exit code 0)
-    assert!(command_output.status.success(),
-           "Quit command should result in successful exit. Status: {}", command_output.status);
+    assert!(
+        command_output.status.success(),
+        "Quit command should result in successful exit. Status: {}",
+        command_output.status
+    );
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
     let combined_output = format!("{}{}", stdout, stderr);
 
     // Verify graceful termination messaging
-    assert!(combined_output.contains("session") || combined_output.contains("terminated") ||
-            combined_output.contains("goodbye") || combined_output.contains("exit"),
-           "Should show graceful termination message. Output: {}", combined_output);
+    assert!(
+        combined_output.contains("session")
+            || combined_output.contains("terminated")
+            || combined_output.contains("goodbye")
+            || combined_output.contains("exit"),
+        "Should show graceful termination message. Output: {}",
+        combined_output
+    );
 
     println!("✅ Quit command graceful termination test passed");
     println!("   - Command terminated with successful exit code");
@@ -294,12 +330,11 @@ async fn test_exit_command_terminates_gracefully() {
     println!("Testing that exit command terminates session gracefully");
 
     let server_addr = "127.0.0.1:18105";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -327,17 +362,25 @@ async fn test_exit_command_terminates_gracefully() {
         .expect("Command should execute successfully");
 
     // Verify command exited successfully
-    assert!(command_output.status.success(),
-           "Exit command should result in successful exit. Status: {}", command_output.status);
+    assert!(
+        command_output.status.success(),
+        "Exit command should result in successful exit. Status: {}",
+        command_output.status
+    );
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
     let combined_output = format!("{}{}", stdout, stderr);
 
     // Verify graceful termination
-    assert!(combined_output.contains("session") || combined_output.contains("terminated") ||
-            combined_output.contains("goodbye") || combined_output.contains("exit"),
-           "Should show graceful termination message. Output: {}", combined_output);
+    assert!(
+        combined_output.contains("session")
+            || combined_output.contains("terminated")
+            || combined_output.contains("goodbye")
+            || combined_output.contains("exit"),
+        "Should show graceful termination message. Output: {}",
+        combined_output
+    );
 
     println!("✅ Exit command graceful termination test passed");
     println!("   - Command terminated with successful exit code");
@@ -350,12 +393,11 @@ async fn test_commands_case_sensitive_exact_match() {
     println!("Testing that commands are case-sensitive and exact-match");
 
     let server_addr = "127.0.0.1:18106";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -373,32 +415,32 @@ async fn test_commands_case_sensitive_exact_match() {
         // Test various case variations that should NOT be recognized as commands
         let _ = stdin.write_all(b"HELP\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b"Help\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b"INFO\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b"Info\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b"QUIT\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b"Quit\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         // Test partial matches that should NOT be recognized as commands
         let _ = stdin.write_all(b"hel\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b"inf\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         let _ = stdin.write_all(b"qui\n").await;
         tokio::time::sleep(Duration::from_millis(200)).await;
-        
+
         // Finally send proper quit command
         let _ = stdin.write_all(b"quit\n").await;
     }
@@ -419,7 +461,7 @@ async fn test_commands_case_sensitive_exact_match() {
 
     // Count the number of "Received echo" messages - should be for all the invalid commands
     let echo_count = combined_output.matches("Received echo").count();
-    
+
     // We sent 9 invalid commands that should be treated as regular messages (and echoed back)
     // plus the final quit which should not be echoed
     assert!(echo_count >= 6,  // Allow some flexibility for implementation differences
@@ -427,8 +469,11 @@ async fn test_commands_case_sensitive_exact_match() {
            echo_count, combined_output);
 
     // Verify that only the exact "quit" command worked (no case variations)
-    assert!(command_output.status.success(),
-           "Only exact 'quit' command should terminate successfully. Status: {}", command_output.status);
+    assert!(
+        command_output.status.success(),
+        "Only exact 'quit' command should terminate successfully. Status: {}",
+        command_output.status
+    );
 
     println!("✅ Case-sensitive exact-match test passed");
     println!("   - Case variations were treated as regular messages");
@@ -442,12 +487,11 @@ async fn test_comprehensive_interactive_commands() {
     println!("Testing comprehensive interactive commands functionality");
 
     let server_addr = "127.0.0.1:18107";
-    let server = start_test_server(server_addr).await
+    let server = start_test_server(server_addr)
+        .await
         .expect("Failed to start test server");
-    
-    let server_handle = tokio::spawn(async move {
-        server.run().await
-    });
+
+    let server_handle = tokio::spawn(async move { server.run().await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -465,16 +509,16 @@ async fn test_comprehensive_interactive_commands() {
         // Test complete workflow
         let _ = stdin.write_all(b"help\n").await;
         tokio::time::sleep(Duration::from_millis(300)).await;
-        
+
         let _ = stdin.write_all(b"info\n").await;
         tokio::time::sleep(Duration::from_millis(300)).await;
-        
+
         let _ = stdin.write_all(b"test message\n").await;
         tokio::time::sleep(Duration::from_millis(500)).await;
-        
+
         let _ = stdin.write_all(b"info\n").await;
         tokio::time::sleep(Duration::from_millis(300)).await;
-        
+
         let _ = stdin.write_all(b"quit\n").await;
     }
 
@@ -494,9 +538,18 @@ async fn test_comprehensive_interactive_commands() {
 
     // Verify all command types worked
     let checks = vec![
-        ("help_worked", combined_output.contains("help") || combined_output.contains("commands")),
-        ("info_worked", combined_output.contains("connection") || combined_output.contains("session")),
-        ("message_sent", combined_output.contains("test message") || combined_output.contains("echo")),
+        (
+            "help_worked",
+            combined_output.contains("help") || combined_output.contains("commands"),
+        ),
+        (
+            "info_worked",
+            combined_output.contains("connection") || combined_output.contains("session"),
+        ),
+        (
+            "message_sent",
+            combined_output.contains("test message") || combined_output.contains("echo"),
+        ),
         ("graceful_exit", command_output.status.success()),
     ];
 
@@ -511,11 +564,18 @@ async fn test_comprehensive_interactive_commands() {
     }
 
     // Require most checks to pass
-    assert!(passed_checks >= 3,
-           "At least 3/4 command checks should pass. Passed: {}/4. Output: {}", 
-           passed_checks, combined_output);
+    assert!(
+        passed_checks >= 3,
+        "At least 3/4 command checks should pass. Passed: {}/4. Output: {}",
+        passed_checks,
+        combined_output
+    );
 
     println!("✅ Comprehensive interactive commands test passed");
-    println!("   - {}/{} command functionalities verified", passed_checks, checks.len());
+    println!(
+        "   - {}/{} command functionalities verified",
+        passed_checks,
+        checks.len()
+    );
     println!("   - Complete command workflow successful");
-} 
+}

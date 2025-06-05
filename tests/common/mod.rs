@@ -1,5 +1,5 @@
 //! Common test utilities and helper modules
-//! 
+//!
 //! This module provides shared functionality for all test files,
 //! including mock streams and test data creation utilities.
 

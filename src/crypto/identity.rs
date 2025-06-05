@@ -1,8 +1,7 @@
-use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
-use anyhow::{Result, Context};
-use base64::{Engine as _, engine::general_purpose};
+use anyhow::{Context, Result};
+use base64::{engine::general_purpose, Engine as _};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
-
 
 /// Unique identifier for a peer, derived from their public key
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -13,31 +12,32 @@ impl PeerId {
         let encoded = general_purpose::STANDARD.encode(verifying_key.to_bytes());
         Self(encoded)
     }
-    
+
     /// Create a PeerId from a string (for validation and reconstruction)
     pub fn from_string(s: String) -> Self {
         Self(s)
     }
-    
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
-    
+
     /// Convert PeerId back to VerifyingKey for signature verification
     pub fn to_verifying_key(&self) -> Result<VerifyingKey> {
-        let decoded_bytes = general_purpose::STANDARD.decode(&self.0)
+        let decoded_bytes = general_purpose::STANDARD
+            .decode(&self.0)
             .context("Failed to decode PeerId base64")?;
-        
+
         if decoded_bytes.len() != 32 {
             return Err(anyhow::anyhow!(
-                "Invalid PeerId key length: expected 32 bytes, got {}", 
+                "Invalid PeerId key length: expected 32 bytes, got {}",
                 decoded_bytes.len()
             ));
         }
-        
+
         let mut key_bytes = [0u8; 32];
         key_bytes.copy_from_slice(&decoded_bytes);
-        
+
         VerifyingKey::from_bytes(&key_bytes)
             .map_err(|e| anyhow::anyhow!("Invalid verifying key: {}", e))
     }
@@ -49,7 +49,6 @@ impl std::fmt::Display for PeerId {
     }
 }
 
-
 #[derive(Serialize, Deserialize)]
 
 struct IdentityData {
@@ -57,16 +56,13 @@ struct IdentityData {
     public_key: String,
 }
 
-
 /// Cryptographic identity using Ed25519 keys
 pub struct Identity {
     signing_key: SigningKey,
     peer_id: PeerId,
 }
 
-
 impl Identity {
-
     /// Generate a new random identity
     pub fn generate() -> Result<Self> {
         use rand::RngCore;
@@ -75,59 +71,68 @@ impl Identity {
         csprng.fill_bytes(&mut secret_bytes);
         let signing_key = SigningKey::from_bytes(&secret_bytes);
         let peer_id = PeerId::from_verifying_key(&signing_key.verifying_key());
-        Ok(Self { signing_key, peer_id })
+        Ok(Self {
+            signing_key,
+            peer_id,
+        })
     }
 
     /// Load identity from default storage location  
     pub fn from_default_storage() -> Result<Self> {
         let path = crate::crypto::storage::default_key_path()
             .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
-        
+
         // Load using secure storage
         let content = crate::crypto::storage::load_key_secure(&path)
             .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
-        
-        let content_str = String::from_utf8(content)
-            .context("Invalid UTF-8 in identity file")?;
-        
-        let data: IdentityData = serde_json::from_str(&content_str)
-            .context("Failed to parse identity file")?;
-        let secret_bytes = general_purpose::STANDARD.decode(&data.secret_key)
+
+        let content_str = String::from_utf8(content).context("Invalid UTF-8 in identity file")?;
+
+        let data: IdentityData =
+            serde_json::from_str(&content_str).context("Failed to parse identity file")?;
+        let secret_bytes = general_purpose::STANDARD
+            .decode(&data.secret_key)
             .context("Invalid secret key encoding")?;
-        
+
         // Convert Vec<u8> to [u8; 32]
         if secret_bytes.len() != 32 {
-            return Err(anyhow::anyhow!("Invalid secret key length: expected 32 bytes, got {}", secret_bytes.len()));
+            return Err(anyhow::anyhow!(
+                "Invalid secret key length: expected 32 bytes, got {}",
+                secret_bytes.len()
+            ));
         }
         let mut secret_array = [0u8; 32];
         secret_array.copy_from_slice(&secret_bytes);
-        
+
         let signing_key = SigningKey::from_bytes(&secret_array);
         let peer_id = PeerId::from_verifying_key(&signing_key.verifying_key());
-        Ok(Self { signing_key, peer_id })
+        Ok(Self {
+            signing_key,
+            peer_id,
+        })
     }
 
     /// Save identity to default storage location
     pub fn save_to_default_storage(&self) -> Result<()> {
         let path = crate::crypto::storage::default_key_path()
             .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
-        
+
         // Ensure directory exists
         crate::crypto::storage::ensure_directory_exists(&path)
             .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
-        
+
         // Serialize identity data
         let data = IdentityData {
             secret_key: general_purpose::STANDARD.encode(self.signing_key.to_bytes()),
-            public_key: general_purpose::STANDARD.encode(self.signing_key.verifying_key().to_bytes()),
+            public_key: general_purpose::STANDARD
+                .encode(self.signing_key.verifying_key().to_bytes()),
         };
-        let json = serde_json::to_string_pretty(&data)
-            .context("Failed to serialize identity")?;
-        
+        let json = serde_json::to_string_pretty(&data).context("Failed to serialize identity")?;
+
         // Save using secure storage
         crate::crypto::storage::save_key_secure(&path, json.as_bytes())
             .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
-        
+
         Ok(())
     }
 
@@ -142,8 +147,6 @@ impl Identity {
             }
         }
     }
-
-
 
     /// Get the peer ID for this identity
     pub fn peer_id(&self) -> &PeerId {

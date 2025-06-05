@@ -1,9 +1,9 @@
 use crate::messages::SignedEnvelope;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use std::time::Duration;
 use thiserror::Error;
-use tracing::{debug, error, warn, trace, instrument};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tracing::{debug, error, instrument, trace, warn};
 
 // Wire protocol constants
 pub const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16MB
@@ -181,14 +181,14 @@ impl WireConfig {
 }
 
 /// DoS Protection configuration for future rate limiting implementation
-/// 
+///
 /// TODO: Future implementation should include:
 /// - Per-connection message rate limiting (messages per second)
-/// - Per-IP address rate limiting 
+/// - Per-IP address rate limiting
 /// - Bandwidth limiting (bytes per second)
 /// - Connection attempt rate limiting
 /// - Backpressure mechanisms for high load
-/// 
+///
 /// Example future configuration:
 /// ```rust,ignore
 /// pub struct RateLimitConfig {
@@ -224,55 +224,60 @@ impl Default for DosProtectionConfig {
 pub enum WireProtocolError {
     #[error("Message too large: {size} bytes exceeds maximum of {max_size} bytes")]
     MessageTooLarge { size: usize, max_size: usize },
-    
+
     #[error("Invalid length prefix: {length} (valid range: {min}-{max})")]
     InvalidLength { length: u32, min: u32, max: u32 },
-    
+
     #[error("Suspicious message size: {size} bytes exceeds threshold of {threshold} bytes")]
     SuspiciousMessageSize { size: usize, threshold: usize },
-    
+
     #[error("Message too small: {size} bytes is below minimum of {min_size} bytes")]
     MessageTooSmall { size: usize, min_size: usize },
-    
-    #[error("Memory allocation denied: {size} bytes exceeds safe allocation limit of {limit} bytes")]
+
+    #[error(
+        "Memory allocation denied: {size} bytes exceeds safe allocation limit of {limit} bytes"
+    )]
     AllocationDenied { size: usize, limit: usize },
-    
+
     #[error("Read operation timed out after {timeout:?}")]
     ReadTimeout { timeout: Duration },
-    
+
     #[error("Write operation timed out after {timeout:?}")]
     WriteTimeout { timeout: Duration },
-    
+
     #[error("Operation timed out after {timeout:?}: {operation}")]
-    OperationTimeout { timeout: Duration, operation: String },
-    
+    OperationTimeout {
+        timeout: Duration,
+        operation: String,
+    },
+
     #[error("Corrupted data: {reason}")]
     CorruptedData { reason: String },
-    
+
     #[error("Unexpected end of file while reading {operation}")]
     UnexpectedEof { operation: String },
-    
+
     #[error("Connection closed unexpectedly during {operation}")]
     ConnectionClosed { operation: String },
-    
+
     #[error("Protocol violation: {description}")]
     ProtocolViolation { description: String },
-    
+
     #[error("Buffer overflow: attempted to write {attempted} bytes to buffer of size {capacity}")]
     BufferOverflow { attempted: usize, capacity: usize },
-    
+
     #[error("Invalid message format: {details}")]
     InvalidMessageFormat { details: String },
-    
+
     #[error("Length mismatch: expected {expected} bytes, got {actual} bytes")]
     LengthMismatch { expected: usize, actual: usize },
-    
+
     #[error("Serialization error: {0}")]
     Serialization(#[from] bincode::Error),
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("Timeout error: {0}")]
     Timeout(#[from] tokio::time::error::Elapsed),
 }
@@ -282,142 +287,158 @@ impl WireProtocolError {
     pub fn message_too_large(size: usize, max_size: usize) -> Self {
         Self::MessageTooLarge { size, max_size }
     }
-    
+
     /// Create a new InvalidLength error with valid range context
     pub fn invalid_length(length: u32) -> Self {
-        Self::InvalidLength { 
-            length, 
-            min: 1, 
-            max: MAX_MESSAGE_SIZE as u32 
+        Self::InvalidLength {
+            length,
+            min: 1,
+            max: MAX_MESSAGE_SIZE as u32,
         }
     }
-    
+
     /// Create a new InvalidLength error with custom range
     pub fn invalid_length_with_range(length: u32, min: u32, max: u32) -> Self {
         Self::InvalidLength { length, min, max }
     }
-    
+
     /// Create a new CorruptedData error with reason
     pub fn corrupted_data<S: Into<String>>(reason: S) -> Self {
-        Self::CorruptedData { reason: reason.into() }
+        Self::CorruptedData {
+            reason: reason.into(),
+        }
     }
-    
+
     /// Create a new UnexpectedEof error with operation context
     pub fn unexpected_eof<S: Into<String>>(operation: S) -> Self {
-        Self::UnexpectedEof { operation: operation.into() }
+        Self::UnexpectedEof {
+            operation: operation.into(),
+        }
     }
-    
+
     /// Create a new ConnectionClosed error with operation context
     pub fn connection_closed<S: Into<String>>(operation: S) -> Self {
-        Self::ConnectionClosed { operation: operation.into() }
+        Self::ConnectionClosed {
+            operation: operation.into(),
+        }
     }
-    
+
     /// Create a new ProtocolViolation error with description
     pub fn protocol_violation<S: Into<String>>(description: S) -> Self {
-        Self::ProtocolViolation { description: description.into() }
+        Self::ProtocolViolation {
+            description: description.into(),
+        }
     }
-    
+
     /// Create a new BufferOverflow error with capacity information
     pub fn buffer_overflow(attempted: usize, capacity: usize) -> Self {
-        Self::BufferOverflow { attempted, capacity }
+        Self::BufferOverflow {
+            attempted,
+            capacity,
+        }
     }
-    
+
     /// Create a new InvalidMessageFormat error with details
     pub fn invalid_message_format<S: Into<String>>(details: S) -> Self {
-        Self::InvalidMessageFormat { details: details.into() }
+        Self::InvalidMessageFormat {
+            details: details.into(),
+        }
     }
-    
+
     /// Create a new LengthMismatch error
     pub fn length_mismatch(expected: usize, actual: usize) -> Self {
         Self::LengthMismatch { expected, actual }
     }
-    
+
     /// Create a new OperationTimeout error with context
     pub fn operation_timeout<S: Into<String>>(timeout: Duration, operation: S) -> Self {
-        Self::OperationTimeout { timeout, operation: operation.into() }
+        Self::OperationTimeout {
+            timeout,
+            operation: operation.into(),
+        }
     }
-    
+
     /// Check if this error is recoverable (can be retried)
     pub fn is_recoverable(&self) -> bool {
         match self {
             // Timeout errors are generally recoverable
-            WireProtocolError::ReadTimeout { .. } |
-            WireProtocolError::WriteTimeout { .. } |
-            WireProtocolError::OperationTimeout { .. } |
-            WireProtocolError::Timeout(_) => true,
-            
+            WireProtocolError::ReadTimeout { .. }
+            | WireProtocolError::WriteTimeout { .. }
+            | WireProtocolError::OperationTimeout { .. }
+            | WireProtocolError::Timeout(_) => true,
+
             // Some IO errors are recoverable (e.g., interrupted operations)
-            WireProtocolError::Io(io_err) => match io_err.kind() {
-                std::io::ErrorKind::Interrupted |
-                std::io::ErrorKind::WouldBlock |
-                std::io::ErrorKind::TimedOut => true,
-                _ => false,
-            },
-            
+            WireProtocolError::Io(io_err) => matches!(
+                io_err.kind(),
+                std::io::ErrorKind::Interrupted
+                    | std::io::ErrorKind::WouldBlock
+                    | std::io::ErrorKind::TimedOut
+            ),
+
             // Connection closed might be recoverable if we can reconnect
             WireProtocolError::ConnectionClosed { .. } => true,
-            
+
             // Protocol violations and data corruption are not recoverable
-            WireProtocolError::ProtocolViolation { .. } |
-            WireProtocolError::CorruptedData { .. } |
-            WireProtocolError::InvalidMessageFormat { .. } |
-            WireProtocolError::Serialization(_) => false,
-            
+            WireProtocolError::ProtocolViolation { .. }
+            | WireProtocolError::CorruptedData { .. }
+            | WireProtocolError::InvalidMessageFormat { .. }
+            | WireProtocolError::Serialization(_) => false,
+
             // Size-related errors are configuration issues, not recoverable
-            WireProtocolError::MessageTooLarge { .. } |
-            WireProtocolError::MessageTooSmall { .. } |
-            WireProtocolError::AllocationDenied { .. } |
-            WireProtocolError::InvalidLength { .. } |
-            WireProtocolError::BufferOverflow { .. } |
-            WireProtocolError::LengthMismatch { .. } => false,
-            
+            WireProtocolError::MessageTooLarge { .. }
+            | WireProtocolError::MessageTooSmall { .. }
+            | WireProtocolError::AllocationDenied { .. }
+            | WireProtocolError::InvalidLength { .. }
+            | WireProtocolError::BufferOverflow { .. }
+            | WireProtocolError::LengthMismatch { .. } => false,
+
             // Suspicious messages may be recoverable if it's a false positive
             WireProtocolError::SuspiciousMessageSize { .. } => true,
-            
+
             // EOF is generally not recoverable
             WireProtocolError::UnexpectedEof { .. } => false,
         }
     }
-    
+
     /// Check if this error indicates a security concern
     pub fn is_security_related(&self) -> bool {
-        match self {
-            WireProtocolError::MessageTooLarge { .. } |
-            WireProtocolError::SuspiciousMessageSize { .. } |
-            WireProtocolError::AllocationDenied { .. } |
-            WireProtocolError::ProtocolViolation { .. } |
-            WireProtocolError::CorruptedData { .. } |
-            WireProtocolError::InvalidMessageFormat { .. } |
-            WireProtocolError::BufferOverflow { .. } => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            WireProtocolError::MessageTooLarge { .. }
+                | WireProtocolError::SuspiciousMessageSize { .. }
+                | WireProtocolError::AllocationDenied { .. }
+                | WireProtocolError::ProtocolViolation { .. }
+                | WireProtocolError::CorruptedData { .. }
+                | WireProtocolError::InvalidMessageFormat { .. }
+                | WireProtocolError::BufferOverflow { .. }
+        )
     }
-    
+
     /// Get a user-friendly error category
     pub fn category(&self) -> &'static str {
         match self {
-            WireProtocolError::ReadTimeout { .. } |
-            WireProtocolError::WriteTimeout { .. } |
-            WireProtocolError::OperationTimeout { .. } |
-            WireProtocolError::Timeout(_) => "Timeout",
-            
-            WireProtocolError::MessageTooLarge { .. } |
-            WireProtocolError::MessageTooSmall { .. } |
-            WireProtocolError::InvalidLength { .. } |
-            WireProtocolError::SuspiciousMessageSize { .. } => "Message Size",
-            
-            WireProtocolError::AllocationDenied { .. } |
-            WireProtocolError::BufferOverflow { .. } => "Memory",
-            
-            WireProtocolError::CorruptedData { .. } |
-            WireProtocolError::InvalidMessageFormat { .. } |
-            WireProtocolError::LengthMismatch { .. } |
-            WireProtocolError::Serialization(_) => "Data Format",
-            
-            WireProtocolError::UnexpectedEof { .. } |
-            WireProtocolError::ConnectionClosed { .. } |
-            WireProtocolError::Io(_) => "Connection",
-            
+            WireProtocolError::ReadTimeout { .. }
+            | WireProtocolError::WriteTimeout { .. }
+            | WireProtocolError::OperationTimeout { .. }
+            | WireProtocolError::Timeout(_) => "Timeout",
+
+            WireProtocolError::MessageTooLarge { .. }
+            | WireProtocolError::MessageTooSmall { .. }
+            | WireProtocolError::InvalidLength { .. }
+            | WireProtocolError::SuspiciousMessageSize { .. } => "Message Size",
+
+            WireProtocolError::AllocationDenied { .. }
+            | WireProtocolError::BufferOverflow { .. } => "Memory",
+
+            WireProtocolError::CorruptedData { .. }
+            | WireProtocolError::InvalidMessageFormat { .. }
+            | WireProtocolError::LengthMismatch { .. }
+            | WireProtocolError::Serialization(_) => "Data Format",
+
+            WireProtocolError::UnexpectedEof { .. }
+            | WireProtocolError::ConnectionClosed { .. }
+            | WireProtocolError::Io(_) => "Connection",
+
             WireProtocolError::ProtocolViolation { .. } => "Protocol",
         }
     }
@@ -430,49 +451,44 @@ impl From<anyhow::Error> for WireProtocolError {
         if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
             return WireProtocolError::Io(std::io::Error::new(io_err.kind(), format!("{}", err)));
         }
-        
+
         if let Some(_bincode_err) = err.downcast_ref::<bincode::Error>() {
             // Create a new serialization error with the context from anyhow
-            return WireProtocolError::invalid_message_format(format!("Serialization failed: {}", err));
+            return WireProtocolError::invalid_message_format(format!(
+                "Serialization failed: {}",
+                err
+            ));
         }
-        
+
         if let Some(_timeout_err) = err.downcast_ref::<tokio::time::error::Elapsed>() {
             // Create a generic timeout error since we don't have the specific timeout duration
-            return WireProtocolError::ProtocolViolation { 
-                description: format!("Operation timed out: {}", err) 
+            return WireProtocolError::ProtocolViolation {
+                description: format!("Operation timed out: {}", err),
             };
         }
-        
+
         // For other anyhow errors, create a generic protocol violation
-        WireProtocolError::ProtocolViolation { 
-            description: format!("Unexpected error: {}", err) 
+        WireProtocolError::ProtocolViolation {
+            description: format!("Unexpected error: {}", err),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FramedMessage {
     wire_config: WireConfig,
     dos_config: DosProtectionConfig,
 }
 
-impl Default for FramedMessage {
-    fn default() -> Self {
-        Self {
-            wire_config: WireConfig::default(),
-            dos_config: DosProtectionConfig::default(),
-        }
-    }
-}
-
 impl FramedMessage {
     /// Create a new FramedMessage with custom wire protocol configuration
     pub fn new(wire_config: WireConfig) -> Self {
-        let mut dos_config = DosProtectionConfig::default();
-        // Sync the max_message_size between configs
-        dos_config.max_message_size = wire_config.max_message_size;
-        
-        Self { 
+        let dos_config = DosProtectionConfig {
+            max_message_size: wire_config.max_message_size,
+            ..DosProtectionConfig::default()
+        };
+
+        Self {
             wire_config,
             dos_config,
         }
@@ -492,8 +508,8 @@ impl FramedMessage {
             max_message_size: config.max_message_size,
             ..WireConfig::default()
         };
-        
-        Self { 
+
+        Self {
             wire_config,
             dos_config: config,
         }
@@ -503,7 +519,7 @@ impl FramedMessage {
     pub fn with_timeouts(read_timeout: Duration, write_timeout: Duration) -> Self {
         let wire_config = WireConfig::with_timeouts(read_timeout, write_timeout);
         let dos_config = DosProtectionConfig::default();
-        
+
         Self {
             wire_config,
             dos_config,
@@ -514,7 +530,7 @@ impl FramedMessage {
     pub fn with_timeout(timeout: Duration) -> Self {
         let wire_config = WireConfig::with_timeout(timeout);
         let dos_config = DosProtectionConfig::default();
-        
+
         Self {
             wire_config,
             dos_config,
@@ -524,9 +540,11 @@ impl FramedMessage {
     /// Create a new FramedMessage with custom max message size and default other settings
     pub fn with_max_message_size(max_message_size: usize) -> Self {
         let wire_config = WireConfig::with_max_message_size(max_message_size);
-        let mut dos_config = DosProtectionConfig::default();
-        dos_config.max_message_size = max_message_size;
-        
+        let dos_config = DosProtectionConfig {
+            max_message_size,
+            ..DosProtectionConfig::default()
+        };
+
         Self {
             wire_config,
             dos_config,
@@ -562,14 +580,14 @@ impl FramedMessage {
     pub fn test_safe_allocate(&self, size: usize) -> Result<Vec<u8>, WireProtocolError> {
         self.safe_allocate(size)
     }
-    
+
     /// Test helper: Enhanced length validation (exposed for testing)
     pub fn test_validate_length(&self, length: u32) -> Result<usize, WireProtocolError> {
         self.validate_length(length)
     }
 
     /// Validate message size against DoS protection limits with comprehensive logging
-    /// 
+    ///
     /// This method performs multi-layered validation of message sizes to prevent
     /// denial-of-service attacks through oversized messages or memory exhaustion.
     /// All validation events are logged with structured data for security monitoring.
@@ -582,7 +600,7 @@ impl FramedMessage {
     ))]
     fn validate_message_size(&self, size: usize) -> Result<(), WireProtocolError> {
         tracing::Span::current().record("size", size);
-        
+
         // Check minimum size to prevent zero-length or malformed messages
         if size < self.dos_config.min_message_size {
             tracing::Span::current().record("validation_result", "rejected_too_small");
@@ -596,7 +614,7 @@ impl FramedMessage {
                 min_size: self.dos_config.min_message_size,
             });
         }
-        
+
         // Check maximum size to prevent memory exhaustion
         if size > self.dos_config.max_message_size {
             tracing::Span::current().record("validation_result", "rejected_too_large");
@@ -611,7 +629,7 @@ impl FramedMessage {
                 max_size: self.dos_config.max_message_size,
             });
         }
-        
+
         // Log suspicious but allowed message sizes for monitoring
         if size > self.dos_config.suspicious_threshold {
             tracing::Span::current().record("validation_result", "accepted_suspicious");
@@ -626,10 +644,11 @@ impl FramedMessage {
         } else {
             tracing::Span::current().record("validation_result", "accepted_normal");
         }
-        
+
         debug!(
             size = size,
-            utilization_pct = ((size as f64) / (self.dos_config.max_message_size as f64) * 100.0) as u32,
+            utilization_pct =
+                ((size as f64) / (self.dos_config.max_message_size as f64) * 100.0) as u32,
             "Message size validation passed"
         );
         Ok(())
@@ -639,7 +658,7 @@ impl FramedMessage {
     #[instrument(level = "trace", skip(self), fields(size, max_allocation = self.dos_config.max_allocation_size))]
     fn safe_allocate(&self, size: usize) -> Result<Vec<u8>, WireProtocolError> {
         tracing::Span::current().record("size", size);
-        
+
         // Validate allocation size against configured limits
         if size > self.dos_config.max_allocation_size {
             error!(
@@ -652,93 +671,90 @@ impl FramedMessage {
                 limit: self.dos_config.max_allocation_size,
             });
         }
-        
+
         // Additional check: ensure we don't allocate more than available memory
         // This is a conservative check - in production, you might want to check actual available memory
         if size > isize::MAX as usize / 2 {
-            error!(
-                size = size,
-                "Allocation request exceeds safe memory bounds"
-            );
+            error!(size = size, "Allocation request exceeds safe memory bounds");
             return Err(WireProtocolError::AllocationDenied {
                 size,
                 limit: isize::MAX as usize / 2,
             });
         }
-        
+
         trace!("Allocating {} bytes for message buffer", size);
-        
+
         // Attempt allocation with error handling
-        match Vec::with_capacity(size) {
-            mut vec => {
-                // Initialize the vector to the required size
-                vec.resize(size, 0);
-                debug!("Successfully allocated {} byte buffer", size);
-                Ok(vec)
-            }
-        }
+        // Initialize the vector to the required size
+        let vec = vec![0; size];
+        debug!("Successfully allocated {} byte buffer", size);
+        Ok(vec)
     }
 
     /// Serialize a SignedEnvelope to bytes with enhanced DoS protection
     #[instrument(level = "trace", skip(self, envelope), fields(envelope_size))]
     fn serialize_envelope(&self, envelope: &SignedEnvelope) -> Result<Vec<u8>, WireProtocolError> {
         trace!("Starting envelope serialization with DoS protection");
-        
+
         // Serialize the envelope using bincode
-        let serialized = bincode::serialize(envelope)
-            .map_err(|e| {
-                error!(error = %e, "Failed to serialize SignedEnvelope with bincode");
-                WireProtocolError::Serialization(e)
-            })?;
-        
+        let serialized = bincode::serialize(envelope).map_err(|e| {
+            error!(error = %e, "Failed to serialize SignedEnvelope with bincode");
+            WireProtocolError::Serialization(e)
+        })?;
+
         tracing::Span::current().record("envelope_size", serialized.len());
-        
+
         // Validate serialized message size against DoS protection
         self.validate_message_size(serialized.len())?;
-        
+
         debug!("Serialized envelope to {} bytes", serialized.len());
         trace!("Envelope serialization completed successfully with DoS validation");
         Ok(serialized)
     }
-    
+
     /// Deserialize bytes back to SignedEnvelope with enhanced DoS protection
     #[instrument(level = "trace", skip(self, data), fields(data_size = data.len()))]
     fn deserialize_envelope(&self, data: &[u8]) -> Result<SignedEnvelope, WireProtocolError> {
         trace!("Starting envelope deserialization with DoS protection");
-        
+
         // Validate data size against DoS protection
         self.validate_message_size(data.len())?;
-        
+
         // Deserialize the data using bincode
-        let envelope = bincode::deserialize(data)
-            .map_err(|e| {
-                error!(
-                    error = %e,
-                    data_size = data.len(),
-                    "Failed to deserialize data to SignedEnvelope"
-                );
-                WireProtocolError::CorruptedData {
-                    reason: format!("Failed to deserialize SignedEnvelope: {}", e),
-                }
-            })?;
-            
-        debug!("Successfully deserialized envelope from {} bytes", data.len());
+        let envelope = bincode::deserialize(data).map_err(|e| {
+            error!(
+                error = %e,
+                data_size = data.len(),
+                "Failed to deserialize data to SignedEnvelope"
+            );
+            WireProtocolError::CorruptedData {
+                reason: format!("Failed to deserialize SignedEnvelope: {}", e),
+            }
+        })?;
+
+        debug!(
+            "Successfully deserialized envelope from {} bytes",
+            data.len()
+        );
         trace!("Envelope deserialization completed successfully with DoS validation");
         Ok(envelope)
     }
-    
+
     /// Enhanced length validation with comprehensive DoS protection
     #[instrument(level = "trace", skip(self))]
     fn validate_length(&self, length: u32) -> Result<usize, WireProtocolError> {
-        trace!("Validating message length: {} with enhanced DoS protection", length);
-        
+        trace!(
+            "Validating message length: {} with enhanced DoS protection",
+            length
+        );
+
         let length_usize = length as usize;
-        
+
         // Validate against configured message size limits
         self.validate_message_size(length_usize)?;
-        
+
         // Additional sanity checks for length prefix
-        
+
         // Check for unreasonably large lengths that could indicate corruption
         // Even if within max size, extremely large lengths might be suspicious
         if length > (u32::MAX / 2) {
@@ -746,16 +762,27 @@ impl FramedMessage {
                 length = length,
                 "Length prefix is extremely large, possible corruption or attack"
             );
-            return Err(WireProtocolError::InvalidLength { length, min: 1, max: MAX_MESSAGE_SIZE as u32 });
+            return Err(WireProtocolError::InvalidLength {
+                length,
+                min: 1,
+                max: MAX_MESSAGE_SIZE as u32,
+            });
         }
-        
+
         // Check for zero length (should not happen for valid messages)
         if length == 0 {
             warn!("Received zero-length message prefix");
-            return Err(WireProtocolError::InvalidLength { length, min: 1, max: MAX_MESSAGE_SIZE as u32 });
+            return Err(WireProtocolError::InvalidLength {
+                length,
+                min: 1,
+                max: MAX_MESSAGE_SIZE as u32,
+            });
         }
-        
-        debug!("Enhanced length validation passed for {} bytes", length_usize);
+
+        debug!(
+            "Enhanced length validation passed for {} bytes",
+            length_usize
+        );
         Ok(length_usize)
     }
 
@@ -763,16 +790,16 @@ impl FramedMessage {
     #[instrument(level = "debug", skip(writer, data), fields(data_size = data.len()))]
     async fn write_all_with_recovery(
         writer: &mut (impl AsyncWrite + Unpin),
-        data: &[u8]
+        data: &[u8],
     ) -> Result<()> {
         let mut total_written = 0;
         let data_len = data.len();
-        
+
         debug!("Starting write operation for {} bytes", data_len);
-        
+
         while total_written < data_len {
             let remaining = &data[total_written..];
-            
+
             match writer.write(remaining).await {
                 Ok(0) => {
                     error!(
@@ -794,7 +821,7 @@ impl FramedMessage {
                         remaining = data_len - total_written,
                         "Partial write completed"
                     );
-                    
+
                     if written < remaining.len() {
                         debug!(
                             "Partial write: wrote {} of {} remaining bytes, continuing",
@@ -819,8 +846,11 @@ impl FramedMessage {
                 }
             }
         }
-        
-        debug!("Write operation completed successfully, {} bytes written", total_written);
+
+        debug!(
+            "Write operation completed successfully, {} bytes written",
+            total_written
+        );
         Ok(())
     }
 
@@ -828,16 +858,16 @@ impl FramedMessage {
     #[instrument(level = "debug", skip(reader, buffer), fields(buffer_size = buffer.len()))]
     async fn read_exact_with_recovery(
         reader: &mut (impl AsyncRead + Unpin),
-        buffer: &mut [u8]
+        buffer: &mut [u8],
     ) -> Result<()> {
         let mut total_read = 0;
         let buffer_len = buffer.len();
-        
+
         debug!("Starting read operation for {} bytes", buffer_len);
-        
+
         while total_read < buffer_len {
             let remaining = &mut buffer[total_read..];
-            
+
             match reader.read(remaining).await {
                 Ok(0) => {
                     error!(
@@ -860,7 +890,7 @@ impl FramedMessage {
                         remaining = buffer_len - total_read,
                         "Partial read completed"
                     );
-                    
+
                     if read < remaining.len() {
                         debug!(
                             "Partial read: got {} of {} remaining bytes, continuing",
@@ -885,25 +915,28 @@ impl FramedMessage {
                 }
             }
         }
-        
-        debug!("Read operation completed successfully, {} bytes read", total_read);
+
+        debug!(
+            "Read operation completed successfully, {} bytes read",
+            total_read
+        );
         Ok(())
     }
 
     /// Write a message with enhanced DoS protection and structured logging
-    /// 
+    ///
     /// This method serializes a `SignedEnvelope` and writes it to the provided async writer
     /// using the length-prefixed wire protocol format. The operation includes comprehensive
     /// DoS protection with configurable size limits and detailed logging for monitoring.
-    /// 
+    ///
     /// # Arguments
     /// * `writer` - The async writer to write the message to
     /// * `envelope` - The SignedEnvelope to serialize and send
-    /// 
+    ///
     /// # Returns
     /// * `Ok(())` - Message was successfully written
     /// * `Err(anyhow::Error)` - Serialization, validation, or IO error occurred
-    /// 
+    ///
     /// # Wire Protocol Format
     /// ```text
     /// [4 bytes: message length (big-endian u32)][message bytes: serialized SignedEnvelope]
@@ -916,36 +949,51 @@ impl FramedMessage {
     pub async fn write_message(
         &self,
         writer: &mut (impl AsyncWrite + Unpin),
-        envelope: &SignedEnvelope
+        envelope: &SignedEnvelope,
     ) -> Result<()> {
         let start_time = std::time::Instant::now();
         debug!("Starting message write operation with DoS protection");
-        
+
         // Serialize the envelope to bytes with enhanced validation
-        let message_bytes = self.serialize_envelope(envelope)
+        let message_bytes = self
+            .serialize_envelope(envelope)
             .with_context(|| "Failed to serialize envelope for writing")?;
-        
+
         // Record message size for metrics
         let message_length = message_bytes.len() as u32;
         tracing::Span::current().record("message_size", message_length);
-        
-        debug!("Prepared message: {} bytes with length prefix", message_length);
-        
+
+        debug!(
+            "Prepared message: {} bytes with length prefix",
+            message_length
+        );
+
         // Create the 4-byte length prefix (big-endian)
         let length_prefix = message_length.to_be_bytes();
-        
+
         // Write the length prefix first with recovery logic
-        Self::write_all_with_recovery(writer, &length_prefix).await
-            .with_context(|| format!("Failed to write 4-byte length prefix ({})", message_length))?;
-        
+        Self::write_all_with_recovery(writer, &length_prefix)
+            .await
+            .with_context(|| {
+                format!("Failed to write 4-byte length prefix ({})", message_length)
+            })?;
+
         // Write the message bytes with recovery logic
-        Self::write_all_with_recovery(writer, &message_bytes).await
-            .with_context(|| format!("Failed to write message data ({} bytes)", message_bytes.len()))?;
-        
+        Self::write_all_with_recovery(writer, &message_bytes)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to write message data ({} bytes)",
+                    message_bytes.len()
+                )
+            })?;
+
         // Ensure all data is flushed to the underlying writer
-        writer.flush().await
+        writer
+            .flush()
+            .await
             .with_context(|| "Failed to flush writer after message write")?;
-        
+
         let elapsed = start_time.elapsed();
         debug!(
             message_size = message_length,
@@ -954,64 +1002,75 @@ impl FramedMessage {
         );
         Ok(())
     }
-    
+
     #[instrument(level = "debug", skip(self, reader))]
     pub async fn read_message(
         &self,
-        reader: &mut (impl AsyncRead + Unpin)
+        reader: &mut (impl AsyncRead + Unpin),
     ) -> Result<SignedEnvelope> {
         debug!("Starting message read operation with DoS protection");
-        
+
         // Read the 4-byte length prefix with recovery logic
         let mut length_buffer = [0u8; LENGTH_PREFIX_SIZE];
-        Self::read_exact_with_recovery(reader, &mut length_buffer).await
+        Self::read_exact_with_recovery(reader, &mut length_buffer)
+            .await
             .with_context(|| "Failed to read 4-byte length prefix")?;
-        
+
         // Parse the length as big-endian u32
         let message_length = u32::from_be_bytes(length_buffer);
         debug!("Read length prefix: {} bytes expected", message_length);
-        
+
         // Validate the length with enhanced DoS protection
-        let validated_length = self.validate_length(message_length)
+        let validated_length = self
+            .validate_length(message_length)
             .with_context(|| format!("Invalid message length received: {}", message_length))?;
-        
+
         // Safe allocation with DoS protection
-        let mut message_buffer = self.safe_allocate(validated_length)
+        let mut message_buffer = self
+            .safe_allocate(validated_length)
             .with_context(|| format!("Failed to allocate {} byte buffer", validated_length))?;
-        debug!("Safely allocated buffer for {} byte message", validated_length);
-        
+        debug!(
+            "Safely allocated buffer for {} byte message",
+            validated_length
+        );
+
         // Read exactly the specified number of bytes for the message with recovery logic
-        Self::read_exact_with_recovery(reader, &mut message_buffer).await
+        Self::read_exact_with_recovery(reader, &mut message_buffer)
+            .await
             .with_context(|| {
-                format!("Failed to read message data: expected {} bytes", validated_length)
+                format!(
+                    "Failed to read message data: expected {} bytes",
+                    validated_length
+                )
             })?;
-        
+
         // Deserialize the message bytes back to SignedEnvelope with enhanced validation
-        let envelope = self.deserialize_envelope(&message_buffer)
+        let envelope = self
+            .deserialize_envelope(&message_buffer)
             .with_context(|| format!("Failed to deserialize {} byte message", validated_length))?;
-        
+
         debug!("Message read operation completed successfully with DoS protection");
         Ok(envelope)
     }
 
     /// Read a message with a timeout using enhanced DoS protection
-    /// 
+    ///
     /// This method wraps the standard `read_message` operation with a timeout to prevent
     /// hanging operations. If the timeout expires before the message is fully read,
     /// a `WireProtocolError::ReadTimeout` error is returned.
-    /// 
+    ///
     /// # Arguments
     /// * `reader` - The async reader to read from
     /// * `timeout_duration` - Maximum time to wait for the read operation
-    /// 
+    ///
     /// # Returns
     /// * `Ok(SignedEnvelope)` - Successfully read and deserialized message
     /// * `Err(anyhow::Error)` - Read timeout, IO error, or deserialization error
-    /// 
+    ///
     /// # Examples
     /// ```rust,ignore
     /// use std::time::Duration;
-    /// 
+    ///
     /// let framed = FramedMessage::default();
     /// let timeout = Duration::from_secs(10);
     /// let envelope = framed.read_message_with_timeout(&mut reader, timeout).await?;
@@ -1020,16 +1079,22 @@ impl FramedMessage {
     pub async fn read_message_with_timeout(
         &self,
         reader: &mut (impl AsyncRead + Unpin),
-        timeout_duration: Duration
+        timeout_duration: Duration,
     ) -> Result<SignedEnvelope> {
-        debug!("Starting timed message read operation with {:?} timeout and DoS protection", timeout_duration);
-        
+        debug!(
+            "Starting timed message read operation with {:?} timeout and DoS protection",
+            timeout_duration
+        );
+
         let start_time = std::time::Instant::now();
-        
+
         match tokio::time::timeout(timeout_duration, self.read_message(reader)).await {
             Ok(result) => {
                 let elapsed = start_time.elapsed();
-                debug!("Timed read operation with DoS protection completed in {:?}", elapsed);
+                debug!(
+                    "Timed read operation with DoS protection completed in {:?}",
+                    elapsed
+                );
                 result
             }
             Err(elapsed_err) => {
@@ -1046,24 +1111,24 @@ impl FramedMessage {
     }
 
     /// Write a message with a timeout using enhanced DoS protection
-    /// 
+    ///
     /// This method wraps the standard `write_message` operation with a timeout to prevent
     /// hanging operations. If the timeout expires before the message is fully written,
     /// a `WireProtocolError::WriteTimeout` error is returned.
-    /// 
+    ///
     /// # Arguments
     /// * `writer` - The async writer to write to
     /// * `envelope` - The SignedEnvelope to serialize and send
     /// * `timeout_duration` - Maximum time to wait for the write operation
-    /// 
+    ///
     /// # Returns
     /// * `Ok(())` - Successfully serialized and written message
     /// * `Err(anyhow::Error)` - Write timeout, IO error, or serialization error
-    /// 
+    ///
     /// # Examples
     /// ```rust,ignore
     /// use std::time::Duration;
-    /// 
+    ///
     /// let framed = FramedMessage::default();
     /// let timeout = Duration::from_secs(10);
     /// framed.write_message_with_timeout(&mut writer, &envelope, timeout).await?;
@@ -1073,16 +1138,22 @@ impl FramedMessage {
         &self,
         writer: &mut (impl AsyncWrite + Unpin),
         envelope: &SignedEnvelope,
-        timeout_duration: Duration
+        timeout_duration: Duration,
     ) -> Result<()> {
-        debug!("Starting timed message write operation with {:?} timeout and DoS protection", timeout_duration);
-        
+        debug!(
+            "Starting timed message write operation with {:?} timeout and DoS protection",
+            timeout_duration
+        );
+
         let start_time = std::time::Instant::now();
-        
+
         match tokio::time::timeout(timeout_duration, self.write_message(writer, envelope)).await {
             Ok(result) => {
                 let elapsed = start_time.elapsed();
-                debug!("Timed write operation with DoS protection completed in {:?}", elapsed);
+                debug!(
+                    "Timed write operation with DoS protection completed in {:?}",
+                    elapsed
+                );
                 result
             }
             Err(elapsed_err) => {
@@ -1099,56 +1170,63 @@ impl FramedMessage {
     }
 
     /// Read a message using the configured default timeout and DoS protection
-    /// 
+    ///
     /// Convenience method that uses the read timeout from the wire configuration.
     #[instrument(level = "debug", skip(self, reader), fields(timeout_secs = self.wire_config.read_timeout.as_secs()))]
     pub async fn read_message_with_default_timeout(
         &self,
-        reader: &mut (impl AsyncRead + Unpin)
+        reader: &mut (impl AsyncRead + Unpin),
     ) -> Result<SignedEnvelope> {
         let timeout = self.wire_config.read_timeout;
-        debug!("Starting read operation with configured default timeout ({:?}) and DoS protection", timeout);
+        debug!(
+            "Starting read operation with configured default timeout ({:?}) and DoS protection",
+            timeout
+        );
         self.read_message_with_timeout(reader, timeout).await
     }
 
     /// Write a message using the configured default timeout and DoS protection
-    /// 
+    ///
     /// Convenience method that uses the write timeout from the wire configuration.
     #[instrument(level = "debug", skip(self, writer, envelope), fields(timeout_secs = self.wire_config.write_timeout.as_secs()))]
     pub async fn write_message_with_default_timeout(
         &self,
         writer: &mut (impl AsyncWrite + Unpin),
-        envelope: &SignedEnvelope
+        envelope: &SignedEnvelope,
     ) -> Result<()> {
         let timeout = self.wire_config.write_timeout;
-        debug!("Starting write operation with configured default timeout ({:?}) and DoS protection", timeout);
-        self.write_message_with_timeout(writer, envelope, timeout).await
+        debug!(
+            "Starting write operation with configured default timeout ({:?}) and DoS protection",
+            timeout
+        );
+        self.write_message_with_timeout(writer, envelope, timeout)
+            .await
     }
 
     // Static convenience methods for backward compatibility and ease of use
-    
+
     /// Static convenience method for writing a message with default DoS protection
-    /// 
+    ///
     /// This method creates a default FramedMessage instance and uses it to write the message.
     /// For performance-critical applications or custom DoS protection settings,
     /// prefer creating a FramedMessage instance and reusing it.
     #[instrument(level = "debug", skip(writer, envelope))]
     pub async fn write_message_static(
         writer: &mut (impl AsyncWrite + Unpin),
-        envelope: &SignedEnvelope
+        envelope: &SignedEnvelope,
     ) -> Result<()> {
         let framed = FramedMessage::default();
         framed.write_message(writer, envelope).await
     }
-    
+
     /// Static convenience method for reading a message with default DoS protection
-    /// 
+    ///
     /// This method creates a default FramedMessage instance and uses it to read the message.
     /// For performance-critical applications or custom DoS protection settings,
     /// prefer creating a FramedMessage instance and reusing it.
     #[instrument(level = "debug", skip(reader))]
     pub async fn read_message_static(
-        reader: &mut (impl AsyncRead + Unpin)
+        reader: &mut (impl AsyncRead + Unpin),
     ) -> Result<SignedEnvelope> {
         let framed = FramedMessage::default();
         framed.read_message(reader).await
@@ -1158,10 +1236,12 @@ impl FramedMessage {
     #[instrument(level = "debug", skip(reader), fields(timeout_secs = timeout_duration.as_secs()))]
     pub async fn read_message_with_timeout_static(
         reader: &mut (impl AsyncRead + Unpin),
-        timeout_duration: Duration
+        timeout_duration: Duration,
     ) -> Result<SignedEnvelope> {
         let framed = FramedMessage::default();
-        framed.read_message_with_timeout(reader, timeout_duration).await
+        framed
+            .read_message_with_timeout(reader, timeout_duration)
+            .await
     }
 
     /// Static convenience method for writing a message with timeout and default DoS protection
@@ -1169,16 +1249,18 @@ impl FramedMessage {
     pub async fn write_message_with_timeout_static(
         writer: &mut (impl AsyncWrite + Unpin),
         envelope: &SignedEnvelope,
-        timeout_duration: Duration
+        timeout_duration: Duration,
     ) -> Result<()> {
         let framed = FramedMessage::default();
-        framed.write_message_with_timeout(writer, envelope, timeout_duration).await
+        framed
+            .write_message_with_timeout(writer, envelope, timeout_duration)
+            .await
     }
 
     /// Static convenience method for reading a message with default timeout and DoS protection
     #[instrument(level = "debug", skip(reader))]
     pub async fn read_message_with_default_timeout_static(
-        reader: &mut (impl AsyncRead + Unpin)
+        reader: &mut (impl AsyncRead + Unpin),
     ) -> Result<SignedEnvelope> {
         let framed = FramedMessage::default();
         framed.read_message_with_default_timeout(reader).await
@@ -1188,10 +1270,12 @@ impl FramedMessage {
     #[instrument(level = "debug", skip(writer, envelope))]
     pub async fn write_message_with_default_timeout_static(
         writer: &mut (impl AsyncWrite + Unpin),
-        envelope: &SignedEnvelope
+        envelope: &SignedEnvelope,
     ) -> Result<()> {
         let framed = FramedMessage::default();
-        framed.write_message_with_default_timeout(writer, envelope).await
+        framed
+            .write_message_with_default_timeout(writer, envelope)
+            .await
     }
 
     // Step 5.1: Network-specific FramedMessage constructors for appropriate defaults
@@ -1246,17 +1330,17 @@ impl FramedMessage {
     }
 
     /// Read a message with graceful degradation and retry logic (Step 4.3)
-    /// 
+    ///
     /// This method provides enhanced resilience for message reading operations by:
     /// - Implementing exponential backoff retry logic for transient failures
     /// - Tracking connection state and degrading gracefully on repeated errors
     /// - Providing detailed logging and monitoring of retry attempts
-    /// 
+    ///
     /// # Arguments
     /// * `reader` - The async reader to read from
     /// * `retry_config` - Configuration for retry behavior
     /// * `connection_state` - Mutable reference to track connection health
-    /// 
+    ///
     /// # Returns
     /// * `Ok(SignedEnvelope)` - Successfully read and validated message
     /// * `Err(WireProtocolError)` - Operation failed after all retry attempts
@@ -1271,7 +1355,7 @@ impl FramedMessage {
         connection_state: &mut ConnectionState,
     ) -> Result<SignedEnvelope, WireProtocolError> {
         let mut last_error = None;
-        
+
         for attempt in 1..=retry_config.max_attempts {
             // Check if connection state allows operations
             if !connection_state.can_attempt_operation() {
@@ -1281,13 +1365,14 @@ impl FramedMessage {
                     connection_state = ?connection_state,
                     "Aborting operation due to connection state"
                 );
-                
+
                 if let Some(err) = last_error {
                     return Err(err);
                 } else {
-                    return Err(WireProtocolError::connection_closed(
-                        format!("read_message - connection in unusable state: {:?}", connection_state)
-                    ));
+                    return Err(WireProtocolError::connection_closed(format!(
+                        "read_message - connection in unusable state: {:?}",
+                        connection_state
+                    )));
                 }
             }
 
@@ -1307,7 +1392,7 @@ impl FramedMessage {
                 Ok(result) => {
                     // Operation succeeded - update connection state
                     connection_state.update_on_success();
-                    
+
                     if attempt > 1 {
                         debug!(
                             operation = "read_message",
@@ -1315,22 +1400,22 @@ impl FramedMessage {
                             "Operation succeeded after retry"
                         );
                     }
-                    
+
                     return Ok(result);
                 }
                 Err(error) => {
                     let wire_error = WireProtocolError::from(error);
-                    
+
                     // Update connection state based on error
                     connection_state.update_on_error(&wire_error);
-                    
+
                     // Check if we should retry this error
                     let should_retry = retry_config.should_retry(&wire_error);
                     let is_last_attempt = attempt >= retry_config.max_attempts;
-                    
+
                     if should_retry && !is_last_attempt {
                         let delay = retry_config.calculate_delay(attempt);
-                        
+
                         warn!(
                             operation = "read_message",
                             attempt = attempt,
@@ -1340,12 +1425,12 @@ impl FramedMessage {
                             connection_state = ?connection_state,
                             "Operation failed, will retry after delay"
                         );
-                        
+
                         // Wait before retrying
                         if delay > Duration::from_millis(0) {
                             tokio::time::sleep(delay).await;
                         }
-                        
+
                         last_error = Some(wire_error);
                     } else {
                         // Either not retryable or last attempt
@@ -1359,37 +1444,37 @@ impl FramedMessage {
                             connection_state = ?connection_state,
                             "Operation failed permanently"
                         );
-                        
+
                         return Err(wire_error);
                     }
                 }
             }
         }
-        
+
         // This should never be reached, but handle it gracefully
         if let Some(err) = last_error {
             Err(err)
         } else {
             Err(WireProtocolError::operation_timeout(
                 Duration::from_secs(0),
-                "read_message - max retry attempts reached".to_string()
+                "read_message - max retry attempts reached".to_string(),
             ))
         }
     }
 
     /// Write a message with graceful degradation and retry logic (Step 4.3)
-    /// 
+    ///
     /// This method provides enhanced resilience for message writing operations by:
     /// - Implementing exponential backoff retry logic for transient failures
     /// - Tracking connection state and degrading gracefully on repeated errors
     /// - Providing detailed logging and monitoring of retry attempts
-    /// 
+    ///
     /// # Arguments
     /// * `writer` - The async writer to write to
     /// * `envelope` - The message to send
     /// * `retry_config` - Configuration for retry behavior
     /// * `connection_state` - Mutable reference to track connection health
-    /// 
+    ///
     /// # Returns
     /// * `Ok(())` - Message was successfully written
     /// * `Err(WireProtocolError)` - Operation failed after all retry attempts
@@ -1405,7 +1490,7 @@ impl FramedMessage {
         connection_state: &mut ConnectionState,
     ) -> Result<(), WireProtocolError> {
         let mut last_error = None;
-        
+
         for attempt in 1..=retry_config.max_attempts {
             // Check if connection state allows operations
             if !connection_state.can_attempt_operation() {
@@ -1415,13 +1500,14 @@ impl FramedMessage {
                     connection_state = ?connection_state,
                     "Aborting operation due to connection state"
                 );
-                
+
                 if let Some(err) = last_error {
                     return Err(err);
                 } else {
-                    return Err(WireProtocolError::connection_closed(
-                        format!("write_message - connection in unusable state: {:?}", connection_state)
-                    ));
+                    return Err(WireProtocolError::connection_closed(format!(
+                        "write_message - connection in unusable state: {:?}",
+                        connection_state
+                    )));
                 }
             }
 
@@ -1441,7 +1527,7 @@ impl FramedMessage {
                 Ok(result) => {
                     // Operation succeeded - update connection state
                     connection_state.update_on_success();
-                    
+
                     if attempt > 1 {
                         debug!(
                             operation = "write_message",
@@ -1449,22 +1535,22 @@ impl FramedMessage {
                             "Operation succeeded after retry"
                         );
                     }
-                    
+
                     return Ok(result);
                 }
                 Err(error) => {
                     let wire_error = WireProtocolError::from(error);
-                    
+
                     // Update connection state based on error
                     connection_state.update_on_error(&wire_error);
-                    
+
                     // Check if we should retry this error
                     let should_retry = retry_config.should_retry(&wire_error);
                     let is_last_attempt = attempt >= retry_config.max_attempts;
-                    
+
                     if should_retry && !is_last_attempt {
                         let delay = retry_config.calculate_delay(attempt);
-                        
+
                         warn!(
                             operation = "write_message",
                             attempt = attempt,
@@ -1474,12 +1560,12 @@ impl FramedMessage {
                             connection_state = ?connection_state,
                             "Operation failed, will retry after delay"
                         );
-                        
+
                         // Wait before retrying
                         if delay > Duration::from_millis(0) {
                             tokio::time::sleep(delay).await;
                         }
-                        
+
                         last_error = Some(wire_error);
                     } else {
                         // Either not retryable or last attempt
@@ -1493,26 +1579,26 @@ impl FramedMessage {
                             connection_state = ?connection_state,
                             "Operation failed permanently"
                         );
-                        
+
                         return Err(wire_error);
                     }
                 }
             }
         }
-        
+
         // This should never be reached, but handle it gracefully
         if let Some(err) = last_error {
             Err(err)
         } else {
             Err(WireProtocolError::operation_timeout(
                 Duration::from_secs(0),
-                "write_message - max retry attempts reached".to_string()
+                "write_message - max retry attempts reached".to_string(),
             ))
         }
     }
 
     /// Read a message with timeout and graceful degradation (Step 4.3)
-    /// 
+    ///
     /// Combines timeout handling with retry logic for maximum resilience.
     /// This is the recommended method for production network operations.
     #[instrument(level = "debug", skip(self, reader, connection_state), fields(
@@ -1528,7 +1614,7 @@ impl FramedMessage {
         connection_state: &mut ConnectionState,
     ) -> Result<SignedEnvelope, WireProtocolError> {
         let mut last_error = None;
-        
+
         for attempt in 1..=retry_config.max_attempts {
             // Check if connection state allows operations
             if !connection_state.can_attempt_operation() {
@@ -1538,13 +1624,14 @@ impl FramedMessage {
                     connection_state = ?connection_state,
                     "Aborting operation due to connection state"
                 );
-                
+
                 if let Some(err) = last_error {
                     return Err(err);
                 } else {
-                    return Err(WireProtocolError::connection_closed(
-                        format!("read_message_with_timeout - connection in unusable state: {:?}", connection_state)
-                    ));
+                    return Err(WireProtocolError::connection_closed(format!(
+                        "read_message_with_timeout - connection in unusable state: {:?}",
+                        connection_state
+                    )));
                 }
             }
 
@@ -1560,11 +1647,14 @@ impl FramedMessage {
             }
 
             // Execute the operation with timeout
-            match self.read_message_with_timeout(reader, timeout_duration).await {
+            match self
+                .read_message_with_timeout(reader, timeout_duration)
+                .await
+            {
                 Ok(result) => {
                     // Operation succeeded - update connection state
                     connection_state.update_on_success();
-                    
+
                     if attempt > 1 {
                         debug!(
                             operation = "read_message_with_timeout",
@@ -1572,22 +1662,22 @@ impl FramedMessage {
                             "Operation succeeded after retry"
                         );
                     }
-                    
+
                     return Ok(result);
                 }
                 Err(error) => {
                     let wire_error = WireProtocolError::from(error);
-                    
+
                     // Update connection state based on error
                     connection_state.update_on_error(&wire_error);
-                    
+
                     // Check if we should retry this error
                     let should_retry = retry_config.should_retry(&wire_error);
                     let is_last_attempt = attempt >= retry_config.max_attempts;
-                    
+
                     if should_retry && !is_last_attempt {
                         let delay = retry_config.calculate_delay(attempt);
-                        
+
                         warn!(
                             operation = "read_message_with_timeout",
                             attempt = attempt,
@@ -1597,12 +1687,12 @@ impl FramedMessage {
                             connection_state = ?connection_state,
                             "Operation failed, will retry after delay"
                         );
-                        
+
                         // Wait before retrying
                         if delay > Duration::from_millis(0) {
                             tokio::time::sleep(delay).await;
                         }
-                        
+
                         last_error = Some(wire_error);
                     } else {
                         // Either not retryable or last attempt
@@ -1616,26 +1706,26 @@ impl FramedMessage {
                             connection_state = ?connection_state,
                             "Operation failed permanently"
                         );
-                        
+
                         return Err(wire_error);
                     }
                 }
             }
         }
-        
+
         // This should never be reached, but handle it gracefully
         if let Some(err) = last_error {
             Err(err)
         } else {
             Err(WireProtocolError::operation_timeout(
                 Duration::from_secs(0),
-                "read_message_with_timeout - max retry attempts reached".to_string()
+                "read_message_with_timeout - max retry attempts reached".to_string(),
             ))
         }
     }
 
     /// Write a message with timeout and graceful degradation (Step 4.3)
-    /// 
+    ///
     /// Combines timeout handling with retry logic for maximum resilience.
     /// This is the recommended method for production network operations.
     #[instrument(level = "debug", skip(self, writer, envelope, connection_state), fields(
@@ -1652,7 +1742,7 @@ impl FramedMessage {
         connection_state: &mut ConnectionState,
     ) -> Result<(), WireProtocolError> {
         let mut last_error = None;
-        
+
         for attempt in 1..=retry_config.max_attempts {
             // Check if connection state allows operations
             if !connection_state.can_attempt_operation() {
@@ -1662,13 +1752,14 @@ impl FramedMessage {
                     connection_state = ?connection_state,
                     "Aborting operation due to connection state"
                 );
-                
+
                 if let Some(err) = last_error {
                     return Err(err);
                 } else {
-                    return Err(WireProtocolError::connection_closed(
-                        format!("write_message_with_timeout - connection in unusable state: {:?}", connection_state)
-                    ));
+                    return Err(WireProtocolError::connection_closed(format!(
+                        "write_message_with_timeout - connection in unusable state: {:?}",
+                        connection_state
+                    )));
                 }
             }
 
@@ -1684,11 +1775,14 @@ impl FramedMessage {
             }
 
             // Execute the operation with timeout
-            match self.write_message_with_timeout(writer, envelope, timeout_duration).await {
+            match self
+                .write_message_with_timeout(writer, envelope, timeout_duration)
+                .await
+            {
                 Ok(result) => {
                     // Operation succeeded - update connection state
                     connection_state.update_on_success();
-                    
+
                     if attempt > 1 {
                         debug!(
                             operation = "write_message_with_timeout",
@@ -1696,22 +1790,22 @@ impl FramedMessage {
                             "Operation succeeded after retry"
                         );
                     }
-                    
+
                     return Ok(result);
                 }
                 Err(error) => {
                     let wire_error = WireProtocolError::from(error);
-                    
+
                     // Update connection state based on error
                     connection_state.update_on_error(&wire_error);
-                    
+
                     // Check if we should retry this error
                     let should_retry = retry_config.should_retry(&wire_error);
                     let is_last_attempt = attempt >= retry_config.max_attempts;
-                    
+
                     if should_retry && !is_last_attempt {
                         let delay = retry_config.calculate_delay(attempt);
-                        
+
                         warn!(
                             operation = "write_message_with_timeout",
                             attempt = attempt,
@@ -1721,12 +1815,12 @@ impl FramedMessage {
                             connection_state = ?connection_state,
                             "Operation failed, will retry after delay"
                         );
-                        
+
                         // Wait before retrying
                         if delay > Duration::from_millis(0) {
                             tokio::time::sleep(delay).await;
                         }
-                        
+
                         last_error = Some(wire_error);
                     } else {
                         // Either not retryable or last attempt
@@ -1740,30 +1834,30 @@ impl FramedMessage {
                             connection_state = ?connection_state,
                             "Operation failed permanently"
                         );
-                        
+
                         return Err(wire_error);
                     }
                 }
             }
         }
-        
+
         // This should never be reached, but handle it gracefully
         if let Some(err) = last_error {
             Err(err)
         } else {
             Err(WireProtocolError::operation_timeout(
                 Duration::from_secs(0),
-                "write_message_with_timeout - max retry attempts reached".to_string()
+                "write_message_with_timeout - max retry attempts reached".to_string(),
             ))
         }
     }
 
     /// Perform a connection health check with graceful degradation (Step 4.3)
-    /// 
+    ///
     /// This method can be used to verify connection health and update connection state
     /// without performing actual message operations. Useful for connection pooling
     /// and maintenance tasks.
-    /// 
+    ///
     /// # Implementation Note
     /// This is a placeholder implementation that tests basic I/O capability.
     /// Real implementations should consider sending ping/pong messages or similar.
@@ -1776,7 +1870,7 @@ impl FramedMessage {
         connection_state: &mut ConnectionState,
     ) -> Result<(), WireProtocolError> {
         let mut last_error = None;
-        
+
         for attempt in 1..=retry_config.max_attempts {
             // Check if connection state allows operations
             if !connection_state.can_attempt_operation() {
@@ -1786,13 +1880,14 @@ impl FramedMessage {
                     connection_state = ?connection_state,
                     "Aborting operation due to connection state"
                 );
-                
+
                 if let Some(err) = last_error {
                     return Err(err);
                 } else {
-                    return Err(WireProtocolError::connection_closed(
-                        format!("health_check - connection in unusable state: {:?}", connection_state)
-                    ));
+                    return Err(WireProtocolError::connection_closed(format!(
+                        "health_check - connection in unusable state: {:?}",
+                        connection_state
+                    )));
                 }
             }
 
@@ -1812,7 +1907,7 @@ impl FramedMessage {
                 Ok(_) => {
                     // Operation succeeded - update connection state
                     connection_state.update_on_success();
-                    
+
                     if attempt > 1 {
                         debug!(
                             operation = "health_check",
@@ -1820,23 +1915,23 @@ impl FramedMessage {
                             "Operation succeeded after retry"
                         );
                     }
-                    
+
                     debug!("Health check: connection appears healthy");
                     return Ok(());
                 }
                 Err(error) => {
                     let wire_error = WireProtocolError::Io(error);
-                    
+
                     // Update connection state based on error
                     connection_state.update_on_error(&wire_error);
-                    
+
                     // Check if we should retry this error
                     let should_retry = retry_config.should_retry(&wire_error);
                     let is_last_attempt = attempt >= retry_config.max_attempts;
-                    
+
                     if should_retry && !is_last_attempt {
                         let delay = retry_config.calculate_delay(attempt);
-                        
+
                         warn!(
                             operation = "health_check",
                             attempt = attempt,
@@ -1846,12 +1941,12 @@ impl FramedMessage {
                             connection_state = ?connection_state,
                             "Operation failed, will retry after delay"
                         );
-                        
+
                         // Wait before retrying
                         if delay > Duration::from_millis(0) {
                             tokio::time::sleep(delay).await;
                         }
-                        
+
                         last_error = Some(wire_error);
                     } else {
                         // Either not retryable or last attempt
@@ -1865,32 +1960,29 @@ impl FramedMessage {
                             connection_state = ?connection_state,
                             "Operation failed permanently"
                         );
-                        
+
                         return Err(wire_error);
                     }
                 }
             }
         }
-        
+
         // This should never be reached, but handle it gracefully
         if let Some(err) = last_error {
             Err(err)
         } else {
             Err(WireProtocolError::operation_timeout(
                 Duration::from_secs(0),
-                "health_check - max retry attempts reached".to_string()
+                "health_check - max retry attempts reached".to_string(),
             ))
         }
     }
 
     /// Create a resilient message exchange session (Step 4.3)
-    /// 
+    ///
     /// This helper method creates a reusable context for message operations with
     /// consistent retry configuration and connection state tracking.
-    pub fn create_resilient_session(
-        &self,
-        retry_config: RetryConfig,
-    ) -> ResilientSession {
+    pub fn create_resilient_session(&self, retry_config: RetryConfig) -> ResilientSession {
         ResilientSession {
             framed_message: self.clone(),
             retry_config,
@@ -1974,7 +2066,7 @@ impl RetryConfig {
         let multiplier = self.backoff_multiplier.powi((attempt - 1) as i32);
         let delay_ms = (self.base_delay.as_millis() as f64 * multiplier) as u64;
         let delay = Duration::from_millis(delay_ms);
-        
+
         // Cap at max_delay
         if delay > self.max_delay {
             self.max_delay
@@ -1987,25 +2079,25 @@ impl RetryConfig {
     pub fn should_retry(&self, error: &WireProtocolError) -> bool {
         match error {
             // Timeout errors
-            WireProtocolError::ReadTimeout { .. } |
-            WireProtocolError::WriteTimeout { .. } |
-            WireProtocolError::OperationTimeout { .. } |
-            WireProtocolError::Timeout(_) => self.retry_on_timeout,
+            WireProtocolError::ReadTimeout { .. }
+            | WireProtocolError::WriteTimeout { .. }
+            | WireProtocolError::OperationTimeout { .. }
+            | WireProtocolError::Timeout(_) => self.retry_on_timeout,
 
-            // Connection errors  
+            // Connection errors
             WireProtocolError::ConnectionClosed { .. } => self.retry_on_connection_errors,
 
             // Transient IO errors
             WireProtocolError::Io(io_err) => match io_err.kind() {
-                std::io::ErrorKind::Interrupted |
-                std::io::ErrorKind::WouldBlock |
-                std::io::ErrorKind::TimedOut => self.retry_on_transient_io_errors,
-                
+                std::io::ErrorKind::Interrupted
+                | std::io::ErrorKind::WouldBlock
+                | std::io::ErrorKind::TimedOut => self.retry_on_transient_io_errors,
+
                 // Connection-related IO errors
-                std::io::ErrorKind::ConnectionAborted |
-                std::io::ErrorKind::ConnectionReset |
-                std::io::ErrorKind::BrokenPipe => self.retry_on_connection_errors,
-                
+                std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::BrokenPipe => self.retry_on_connection_errors,
+
                 _ => false,
             },
 
@@ -2013,17 +2105,17 @@ impl RetryConfig {
             WireProtocolError::SuspiciousMessageSize { .. } => self.retry_on_transient_io_errors,
 
             // These errors should never be retried
-            WireProtocolError::MessageTooLarge { .. } |
-            WireProtocolError::MessageTooSmall { .. } |
-            WireProtocolError::InvalidLength { .. } |
-            WireProtocolError::AllocationDenied { .. } |
-            WireProtocolError::ProtocolViolation { .. } |
-            WireProtocolError::CorruptedData { .. } |
-            WireProtocolError::InvalidMessageFormat { .. } |
-            WireProtocolError::BufferOverflow { .. } |
-            WireProtocolError::LengthMismatch { .. } |
-            WireProtocolError::Serialization(_) |
-            WireProtocolError::UnexpectedEof { .. } => false,
+            WireProtocolError::MessageTooLarge { .. }
+            | WireProtocolError::MessageTooSmall { .. }
+            | WireProtocolError::InvalidLength { .. }
+            | WireProtocolError::AllocationDenied { .. }
+            | WireProtocolError::ProtocolViolation { .. }
+            | WireProtocolError::CorruptedData { .. }
+            | WireProtocolError::InvalidMessageFormat { .. }
+            | WireProtocolError::BufferOverflow { .. }
+            | WireProtocolError::LengthMismatch { .. }
+            | WireProtocolError::Serialization(_)
+            | WireProtocolError::UnexpectedEof { .. } => false,
         }
     }
 }
@@ -2034,7 +2126,10 @@ pub enum ConnectionState {
     /// Connection is healthy and operational
     Healthy,
     /// Connection experienced a recoverable error but may still be usable
-    Degraded { error_count: u32, last_error: String },
+    Degraded {
+        error_count: u32,
+        last_error: String,
+    },
     /// Connection is suspected to be broken and should be replaced
     Broken { reason: String },
     /// Connection is being recovered/reconnected
@@ -2067,11 +2162,14 @@ impl ConnectionState {
                     };
                 }
             }
-            ConnectionState::Degraded { error_count, last_error } => {
+            ConnectionState::Degraded {
+                error_count,
+                last_error,
+            } => {
                 if error.is_recoverable() {
                     *error_count += 1;
                     *last_error = error.to_string();
-                    
+
                     if *error_count >= 3 {
                         *self = ConnectionState::Broken {
                             reason: format!("Too many recoverable errors: {}", last_error),
