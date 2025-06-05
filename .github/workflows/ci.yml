@@ -58,16 +58,16 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Run unit tests - crypto
-      run: cargo test --test mod unit::crypto:: --verbose
+      run: "cargo test --test mod unit::crypto:: --verbose"
 
     - name: Run unit tests - messages
-      run: cargo test --test mod unit::messages:: --verbose
+      run: "cargo test --test mod unit::messages:: --verbose"
 
     - name: Run unit tests - network
-      run: cargo test --test mod unit::network:: --verbose
+      run: "cargo test --test mod unit::network:: --verbose"
 
     - name: Run unit tests - display
-      run: cargo test --test mod unit::display:: --verbose
+      run: "cargo test --test mod unit::display:: --verbose"
 
   # Integration Tests
   integration-tests:
@@ -85,7 +85,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Run integration tests
-      run: cargo test --test mod integration:: --verbose
+      run: "cargo test --test mod integration:: --verbose"
       timeout-minutes: 10
 
   # Security Tests
@@ -103,10 +103,10 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Run DoS protection tests
-      run: cargo test --test mod security::dos_protection:: --verbose
+      run: "cargo test --test mod security::dos_protection:: --verbose"
 
     - name: Run error handling tests
-      run: cargo test --test mod security::error_handling:: --verbose
+      run: "cargo test --test mod security::error_handling:: --verbose"
 
     - name: Run security audit
       run: |
@@ -128,7 +128,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
 
     - name: Run performance tests
-      run: cargo test --test mod performance:: --verbose --release
+      run: "cargo test --test mod performance:: --verbose --release"
       timeout-minutes: 15
 
   # Cross-platform Testing
