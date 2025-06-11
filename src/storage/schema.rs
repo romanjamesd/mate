@@ -62,11 +62,13 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
     // Enable important SQLite features
     conn.pragma_update(None, "foreign_keys", &true)
         .map_err(|e| {
-            StorageError::MigrationFailed(format!("Failed to enable foreign keys: {}", e))
+            StorageError::migration_failed(0, format!("Failed to enable foreign keys: {}", e))
         })?;
 
     conn.pragma_update(None, "journal_mode", &"WAL")
-        .map_err(|e| StorageError::MigrationFailed(format!("Failed to enable WAL mode: {}", e)))?;
+        .map_err(|e| {
+            StorageError::migration_failed(0, format!("Failed to enable WAL mode: {}", e))
+        })?;
 
     // Check if schema_migrations table exists
     let migrations_exist = conn
@@ -88,7 +90,7 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
 /// Run all migrations from scratch
 fn run_all_migrations(conn: &Connection) -> Result<()> {
     let tx = conn.unchecked_transaction().map_err(|e| {
-        StorageError::MigrationFailed(format!("Failed to start transaction: {}", e))
+        StorageError::migration_failed(-1, format!("Failed to start transaction: {}", e))
     })?;
 
     for migration in MIGRATIONS {
@@ -96,7 +98,7 @@ fn run_all_migrations(conn: &Connection) -> Result<()> {
     }
 
     tx.commit().map_err(|e| {
-        StorageError::MigrationFailed(format!("Failed to commit migrations: {}", e))
+        StorageError::migration_failed(-1, format!("Failed to commit migrations: {}", e))
     })?;
 
     Ok(())
@@ -116,7 +118,7 @@ fn run_pending_migrations(conn: &Connection) -> Result<()> {
     }
 
     let tx = conn.unchecked_transaction().map_err(|e| {
-        StorageError::MigrationFailed(format!("Failed to start transaction: {}", e))
+        StorageError::migration_failed(-1, format!("Failed to start transaction: {}", e))
     })?;
 
     for migration in pending_migrations {
@@ -124,7 +126,7 @@ fn run_pending_migrations(conn: &Connection) -> Result<()> {
     }
 
     tx.commit().map_err(|e| {
-        StorageError::MigrationFailed(format!("Failed to commit migrations: {}", e))
+        StorageError::migration_failed(-1, format!("Failed to commit migrations: {}", e))
     })?;
 
     Ok(())
@@ -133,10 +135,10 @@ fn run_pending_migrations(conn: &Connection) -> Result<()> {
 /// Execute a single migration
 fn execute_migration(conn: &Connection, migration: &Migration) -> Result<()> {
     conn.execute_batch(migration.sql).map_err(|e| {
-        StorageError::MigrationFailed(format!(
-            "Failed to execute migration {}: {}",
-            migration.version, e
-        ))
+        StorageError::migration_failed(
+            migration.version,
+            format!("Failed to execute migration {}: {}", migration.version, e),
+        )
     })?;
 
     // Record the migration
@@ -149,10 +151,10 @@ fn execute_migration(conn: &Connection, migration: &Migration) -> Result<()> {
         ),
     )
     .map_err(|e| {
-        StorageError::MigrationFailed(format!(
-            "Failed to record migration {}: {}",
-            migration.version, e
-        ))
+        StorageError::migration_failed(
+            migration.version,
+            format!("Failed to record migration {}: {}", migration.version, e),
+        )
     })?;
 
     Ok(())
@@ -165,7 +167,7 @@ fn get_current_version(conn: &Connection) -> Result<i32> {
             row.get::<_, Option<i32>>(0)
         })
         .map_err(|e| {
-            StorageError::MigrationFailed(format!("Failed to get current version: {}", e))
+            StorageError::migration_failed(-1, format!("Failed to get current version: {}", e))
         })?
         .unwrap_or(0);
 

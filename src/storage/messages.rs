@@ -62,7 +62,7 @@ impl Database {
             )
             .map_err(|e| match e {
                 rusqlite::Error::QueryReturnedNoRows => {
-                    StorageError::MessageNotFound(message_id.to_string())
+                    StorageError::message_not_found(message_id.to_string())
                 }
                 _ => StorageError::ConnectionFailed(e),
             })
@@ -200,7 +200,7 @@ impl Database {
             let rows_affected = conn.execute("DELETE FROM messages WHERE id = ?1", [message_id])?;
 
             if rows_affected == 0 {
-                return Err(StorageError::MessageNotFound(message_id.to_string()));
+                return Err(StorageError::message_not_found(message_id.to_string()));
             }
 
             Ok(())

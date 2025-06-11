@@ -46,7 +46,7 @@ impl Database {
                     ":updated_at": game.updated_at,
                     ":completed_at": game.completed_at,
                     ":result": game.result.as_ref().map(|r| r.as_str()),
-                    ":metadata": game.metadata.as_ref().map(|m| serde_json::to_string(m)).transpose()?,
+                    ":metadata": game.metadata.as_ref().map(|m| serde_json::to_string(m).map_err(|e| StorageError::serialization_error("game metadata", e))).transpose()?,
                 },
             )?;
             Ok(game)
@@ -67,9 +67,7 @@ impl Database {
                 game_from_row,
             )
             .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => {
-                    StorageError::GameNotFound(game_id.to_string())
-                }
+                rusqlite::Error::QueryReturnedNoRows => StorageError::game_not_found(game_id),
                 _ => StorageError::ConnectionFailed(e),
             })
         })
@@ -95,7 +93,7 @@ impl Database {
             )?;
 
             if rows_affected == 0 {
-                return Err(StorageError::GameNotFound(game_id.to_string()));
+                return Err(StorageError::game_not_found(game_id));
             }
 
             Ok(())
@@ -123,7 +121,7 @@ impl Database {
             )?;
 
             if rows_affected == 0 {
-                return Err(StorageError::GameNotFound(game_id.to_string()));
+                return Err(StorageError::game_not_found(game_id));
             }
 
             Ok(())
@@ -193,7 +191,7 @@ impl Database {
             let rows_affected = conn.execute("DELETE FROM games WHERE id = ?1", [game_id])?;
 
             if rows_affected == 0 {
-                return Err(StorageError::GameNotFound(game_id.to_string()));
+                return Err(StorageError::game_not_found(game_id));
             }
 
             Ok(())
