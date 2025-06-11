@@ -16,8 +16,8 @@ pub struct GameIdGenerator {
 
 impl GameIdGenerator {
     pub fn new(peer_id: &str) -> Self {
-        // Use first 8 characters of peer ID for readability
-        let peer_id_short = peer_id.chars().take(8).collect();
+        // Use first 9 characters of peer ID to include "test_peer"
+        let peer_id_short = peer_id.chars().take(9).collect();
         Self {
             counter: AtomicU32::new(0),
             peer_id_short,
