@@ -60,12 +60,12 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
 /// Initialize the database schema and run any pending migrations
 pub fn initialize_schema(conn: &Connection) -> Result<()> {
     // Enable important SQLite features
-    conn.pragma_update(None, "foreign_keys", &true)
+    conn.pragma_update(None, "foreign_keys", true)
         .map_err(|e| {
             StorageError::migration_failed(0, format!("Failed to enable foreign keys: {}", e))
         })?;
 
-    conn.pragma_update(None, "journal_mode", &"WAL")
+    conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| {
             StorageError::migration_failed(0, format!("Failed to enable WAL mode: {}", e))
         })?;

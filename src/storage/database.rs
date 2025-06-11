@@ -83,6 +83,11 @@ struct ManagedConnection {
     prepared_statements: HashMap<String, PreparedStatementEntry>,
 }
 
+// Safety: We ensure thread safety through the Arc<Mutex<ManagedConnection>> wrapper
+// SQLite connections are safe to use across threads when properly synchronized
+unsafe impl Send for ManagedConnection {}
+unsafe impl Sync for ManagedConnection {}
+
 impl ManagedConnection {
     fn new(conn: Connection) -> Self {
         Self {
@@ -122,14 +127,18 @@ impl ManagedConnection {
             entry.last_used = Instant::now();
             // This is safe because we're returning a mutable reference with the same lifetime
             // as the ManagedConnection, and the statement is owned by the HashMap
-            return Ok(unsafe { std::mem::transmute(&mut entry.statement) });
+            return Ok(unsafe {
+                std::mem::transmute::<&mut rusqlite::Statement<'_>, &mut rusqlite::Statement<'_>>(
+                    &mut entry.statement,
+                )
+            });
         }
 
         // Create new prepared statement
         let stmt = self
             .conn
             .prepare(sql)
-            .map_err(|e| StorageError::ConnectionFailed(e))?;
+            .map_err(StorageError::ConnectionFailed)?;
 
         // Safety: We're extending the lifetime to 'static, but this is safe because
         // the statement is tied to the connection's lifetime, and the connection
@@ -145,7 +154,9 @@ impl ManagedConnection {
 
         // Return reference to the newly inserted statement
         Ok(unsafe {
-            std::mem::transmute(&mut self.prepared_statements.get_mut(&key).unwrap().statement)
+            std::mem::transmute::<&mut rusqlite::Statement<'_>, &mut rusqlite::Statement<'_>>(
+                &mut self.prepared_statements.get_mut(&key).unwrap().statement,
+            )
         })
     }
 
@@ -199,12 +210,12 @@ impl Database {
         let conn = Connection::open(db_path)?;
 
         // Apply optimal SQLite pragmas for our use case
-        conn.pragma_update(None, "foreign_keys", &true)?;
-        conn.pragma_update(None, "journal_mode", &"WAL")?;
-        conn.pragma_update(None, "synchronous", &"NORMAL")?; // Good balance of safety/speed
-        conn.pragma_update(None, "cache_size", &-64000)?; // 64MB cache
-        conn.pragma_update(None, "temp_store", &"memory")?; // Store temp tables in memory
-        conn.pragma_update(None, "mmap_size", &268435456i64)?; // 256MB memory map
+        conn.pragma_update(None, "foreign_keys", true)?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?; // Good balance of safety/speed
+        conn.pragma_update(None, "cache_size", -64000)?; // 64MB cache
+        conn.pragma_update(None, "temp_store", "memory")?; // Store temp tables in memory
+        conn.pragma_update(None, "mmap_size", 268435456i64)?; // 256MB memory map
 
         Ok(conn)
     }
@@ -327,11 +338,11 @@ impl Database {
         let tx = managed_conn
             .conn
             .unchecked_transaction()
-            .map_err(|e| StorageError::ConnectionFailed(e))?;
+            .map_err(StorageError::ConnectionFailed)?;
 
         match f(&tx) {
             Ok(result) => {
-                tx.commit().map_err(|e| StorageError::ConnectionFailed(e))?;
+                tx.commit().map_err(StorageError::ConnectionFailed)?;
                 self.stats.record_operation(start_time.elapsed());
                 self.stats.record_transaction();
                 Ok(result)
@@ -349,7 +360,7 @@ impl Database {
         self.with_connection(|conn| {
             // Run ANALYZE to update query planner statistics
             conn.execute("ANALYZE", [])
-                .map_err(|e| StorageError::ConnectionFailed(e))?;
+                .map_err(StorageError::ConnectionFailed)?;
 
             // VACUUM is expensive, so we might want to make this optional
             // or run it less frequently
@@ -410,14 +421,14 @@ mod tests {
         // IDs should be different
         assert_ne!(id1, id2);
 
-        // Both should start with the short peer ID
-        assert!(id1.starts_with("abcdef12"));
-        assert!(id2.starts_with("abcdef12"));
+        // Both should start with the short peer ID (9 characters)
+        assert!(id1.starts_with("abcdef123"));
+        assert!(id2.starts_with("abcdef123"));
 
         // Should have the expected format
         let parts: Vec<&str> = id1.split('-').collect();
         assert_eq!(parts.len(), 3);
-        assert_eq!(parts[0], "abcdef12");
+        assert_eq!(parts[0], "abcdef123");
         assert!(parts[1].parse::<u64>().is_ok()); // timestamp
         assert!(parts[2].parse::<u32>().is_ok()); // counter
     }

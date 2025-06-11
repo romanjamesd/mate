@@ -214,18 +214,18 @@ fn game_from_row(row: &Row) -> rusqlite::Result<Game> {
     };
 
     let my_color_str: String = row.get("my_color")?;
-    let my_color = PlayerColor::from_str(&my_color_str).ok_or_else(|| {
+    let my_color = my_color_str.parse::<PlayerColor>().map_err(|_e| {
         rusqlite::Error::InvalidColumnType(0, "my_color".to_string(), rusqlite::types::Type::Text)
     })?;
 
     let status_str: String = row.get("status")?;
-    let status = GameStatus::from_str(&status_str).ok_or_else(|| {
+    let status = status_str.parse::<GameStatus>().map_err(|_e| {
         rusqlite::Error::InvalidColumnType(0, "status".to_string(), rusqlite::types::Type::Text)
     })?;
 
     let result_str: Option<String> = row.get("result")?;
     let result = match result_str {
-        Some(s) => Some(GameResult::from_str(&s).ok_or_else(|| {
+        Some(s) => Some(s.parse::<GameResult>().map_err(|_e| {
             rusqlite::Error::InvalidColumnType(0, "result".to_string(), rusqlite::types::Type::Text)
         })?),
         None => None,

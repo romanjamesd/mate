@@ -641,10 +641,10 @@ fn test_player_color_functionality() {
     assert_eq!(PlayerColor::Black.as_str(), "black");
 
     // Test from string conversion
-    assert_eq!(PlayerColor::from_str("white"), Some(PlayerColor::White));
-    assert_eq!(PlayerColor::from_str("black"), Some(PlayerColor::Black));
-    assert_eq!(PlayerColor::from_str("WHITE"), Some(PlayerColor::White));
-    assert_eq!(PlayerColor::from_str("invalid"), None);
+    assert_eq!("white".parse::<PlayerColor>(), Ok(PlayerColor::White));
+    assert_eq!("black".parse::<PlayerColor>(), Ok(PlayerColor::Black));
+    assert_eq!("WHITE".parse::<PlayerColor>(), Ok(PlayerColor::White));
+    assert!("invalid".parse::<PlayerColor>().is_err());
 
     // Test serialization round-trip
     let color = PlayerColor::White;
@@ -663,9 +663,9 @@ fn test_game_status_functionality() {
     assert_eq!(GameStatus::Abandoned.as_str(), "abandoned");
 
     // Test from string conversion
-    assert_eq!(GameStatus::from_str("pending"), Some(GameStatus::Pending));
-    assert_eq!(GameStatus::from_str("ACTIVE"), Some(GameStatus::Active));
-    assert_eq!(GameStatus::from_str("invalid"), None);
+    assert_eq!("pending".parse::<GameStatus>(), Ok(GameStatus::Pending));
+    assert_eq!("ACTIVE".parse::<GameStatus>(), Ok(GameStatus::Active));
+    assert!("invalid".parse::<GameStatus>().is_err());
 
     // Test serialization round-trip
     let status = GameStatus::Active;
@@ -686,9 +686,9 @@ fn test_game_result_functionality() {
     assert_eq!(GameResult::Abandoned.as_str(), "abandoned");
 
     // Test from string conversion
-    assert_eq!(GameResult::from_str("win"), Some(GameResult::Win));
-    assert_eq!(GameResult::from_str("DRAW"), Some(GameResult::Draw));
-    assert_eq!(GameResult::from_str("invalid"), None);
+    assert_eq!("win".parse::<GameResult>(), Ok(GameResult::Win));
+    assert_eq!("DRAW".parse::<GameResult>(), Ok(GameResult::Draw));
+    assert!("invalid".parse::<GameResult>().is_err());
 
     // Test serialization round-trip
     let result = GameResult::Win;

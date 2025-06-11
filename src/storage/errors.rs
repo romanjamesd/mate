@@ -180,10 +180,10 @@ impl StorageError {
         match self {
             // Connection issues are often recoverable
             StorageError::ConnectionFailed(rusqlite_err) => match rusqlite_err {
-                rusqlite::Error::SqliteFailure(err, _) => match err.code {
-                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked => true,
-                    _ => false,
-                },
+                rusqlite::Error::SqliteFailure(err, _) => matches!(
+                    err.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                ),
                 _ => false,
             },
 
@@ -223,12 +223,12 @@ impl StorageError {
 
     /// Determine if this error indicates a critical system problem
     pub fn is_critical(&self) -> bool {
-        match self {
+        matches!(
+            self,
             StorageError::DatabaseCorruption { .. }
-            | StorageError::SchemaVersionMismatch { .. }
-            | StorageError::MigrationFailed { .. } => true,
-            _ => false,
-        }
+                | StorageError::SchemaVersionMismatch { .. }
+                | StorageError::MigrationFailed { .. }
+        )
     }
 
     /// Get the error category for logging and monitoring

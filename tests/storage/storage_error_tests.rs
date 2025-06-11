@@ -682,38 +682,29 @@ fn test_concurrent_query_and_modification() {
 
 #[test]
 fn test_enum_parsing_errors() {
-    // Test PlayerColor parsing
-    assert_eq!(PlayerColor::from_str("white"), Some(PlayerColor::White));
-    assert_eq!(PlayerColor::from_str("black"), Some(PlayerColor::Black));
-    assert_eq!(PlayerColor::from_str("invalid"), None);
-    assert_eq!(PlayerColor::from_str(""), None);
-    assert_eq!(PlayerColor::from_str("INVALID"), None);
+    // Test PlayerColor from_str
+    assert_eq!("white".parse::<PlayerColor>(), Ok(PlayerColor::White));
+    assert_eq!("black".parse::<PlayerColor>(), Ok(PlayerColor::Black));
+    assert!("invalid".parse::<PlayerColor>().is_err());
+    assert!("".parse::<PlayerColor>().is_err());
+    assert!("INVALID".parse::<PlayerColor>().is_err());
 
-    // Test GameStatus parsing
-    assert_eq!(GameStatus::from_str("pending"), Some(GameStatus::Pending));
-    assert_eq!(GameStatus::from_str("active"), Some(GameStatus::Active));
-    assert_eq!(
-        GameStatus::from_str("completed"),
-        Some(GameStatus::Completed)
-    );
-    assert_eq!(
-        GameStatus::from_str("abandoned"),
-        Some(GameStatus::Abandoned)
-    );
-    assert_eq!(GameStatus::from_str("invalid"), None);
-    assert_eq!(GameStatus::from_str(""), None);
+    // Test GameStatus from_str
+    assert_eq!("pending".parse::<GameStatus>(), Ok(GameStatus::Pending));
+    assert_eq!("active".parse::<GameStatus>(), Ok(GameStatus::Active));
+    assert_eq!("completed".parse::<GameStatus>(), Ok(GameStatus::Completed));
+    assert_eq!("abandoned".parse::<GameStatus>(), Ok(GameStatus::Abandoned));
+    assert!("invalid".parse::<GameStatus>().is_err());
+    assert!("".parse::<GameStatus>().is_err());
 
-    // Test GameResult parsing
+    // Test GameResult from_str
     use mate::storage::models::GameResult;
-    assert_eq!(GameResult::from_str("win"), Some(GameResult::Win));
-    assert_eq!(GameResult::from_str("loss"), Some(GameResult::Loss));
-    assert_eq!(GameResult::from_str("draw"), Some(GameResult::Draw));
-    assert_eq!(
-        GameResult::from_str("abandoned"),
-        Some(GameResult::Abandoned)
-    );
-    assert_eq!(GameResult::from_str("invalid"), None);
-    assert_eq!(GameResult::from_str(""), None);
+    assert_eq!("win".parse::<GameResult>(), Ok(GameResult::Win));
+    assert_eq!("loss".parse::<GameResult>(), Ok(GameResult::Loss));
+    assert_eq!("draw".parse::<GameResult>(), Ok(GameResult::Draw));
+    assert_eq!("abandoned".parse::<GameResult>(), Ok(GameResult::Abandoned));
+    assert!("invalid".parse::<GameResult>().is_err());
+    assert!("".parse::<GameResult>().is_err());
 }
 
 #[test]

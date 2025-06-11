@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlayerColor {
@@ -13,12 +14,16 @@ impl PlayerColor {
             PlayerColor::Black => "black",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for PlayerColor {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "white" => Some(PlayerColor::White),
-            "black" => Some(PlayerColor::Black),
-            _ => None,
+            "white" => Ok(PlayerColor::White),
+            "black" => Ok(PlayerColor::Black),
+            _ => Err(()),
         }
     }
 }
@@ -40,14 +45,18 @@ impl GameStatus {
             GameStatus::Abandoned => "abandoned",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for GameStatus {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "pending" => Some(GameStatus::Pending),
-            "active" => Some(GameStatus::Active),
-            "completed" => Some(GameStatus::Completed),
-            "abandoned" => Some(GameStatus::Abandoned),
-            _ => None,
+            "pending" => Ok(GameStatus::Pending),
+            "active" => Ok(GameStatus::Active),
+            "completed" => Ok(GameStatus::Completed),
+            "abandoned" => Ok(GameStatus::Abandoned),
+            _ => Err(()),
         }
     }
 }
@@ -69,14 +78,18 @@ impl GameResult {
             GameResult::Abandoned => "abandoned",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for GameResult {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "win" => Some(GameResult::Win),
-            "loss" => Some(GameResult::Loss),
-            "draw" => Some(GameResult::Draw),
-            "abandoned" => Some(GameResult::Abandoned),
-            _ => None,
+            "win" => Ok(GameResult::Win),
+            "loss" => Ok(GameResult::Loss),
+            "draw" => Ok(GameResult::Draw),
+            "abandoned" => Ok(GameResult::Abandoned),
+            _ => Err(()),
         }
     }
 }
