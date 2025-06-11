@@ -371,6 +371,12 @@ impl Database {
 
 /// Get the appropriate database path for the current platform
 pub fn get_database_path() -> Result<PathBuf> {
+    // Check for test override environment variable first
+    if let Ok(custom_data_dir) = std::env::var("MATE_DATA_DIR") {
+        let data_dir = PathBuf::from(custom_data_dir);
+        return Ok(data_dir.join("database.sqlite"));
+    }
+
     let project_dirs = ProjectDirs::from("dev", "mate", "mate").ok_or_else(|| {
         StorageError::database_path_error("Failed to determine application data directory")
     })?;
