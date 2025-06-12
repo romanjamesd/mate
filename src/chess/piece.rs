@@ -122,3 +122,41 @@ impl FromStr for PieceType {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Piece {
+    pub piece_type: PieceType,
+    pub color: Color,
+}
+
+impl Piece {
+    pub fn new(piece_type: PieceType, color: Color) -> Self {
+        Self { piece_type, color }
+    }
+
+    /// Get the piece's relative value
+    pub fn value(&self) -> u32 {
+        self.piece_type.value()
+    }
+}
+
+// Implement Display trait with Unicode chess symbols
+impl fmt::Display for Piece {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let symbol = match (self.color, self.piece_type) {
+            (Color::White, PieceType::Pawn) => "♙",
+            (Color::White, PieceType::Rook) => "♖",
+            (Color::White, PieceType::Knight) => "♘",
+            (Color::White, PieceType::Bishop) => "♗",
+            (Color::White, PieceType::Queen) => "♕",
+            (Color::White, PieceType::King) => "♔",
+            (Color::Black, PieceType::Pawn) => "♟",
+            (Color::Black, PieceType::Rook) => "♜",
+            (Color::Black, PieceType::Knight) => "♞",
+            (Color::Black, PieceType::Bishop) => "♝",
+            (Color::Black, PieceType::Queen) => "♛",
+            (Color::Black, PieceType::King) => "♚",
+        };
+        write!(f, "{}", symbol)
+    }
+}
