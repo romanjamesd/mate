@@ -27,8 +27,13 @@ impl Database {
         };
 
         // Serialize metadata outside the named_params! macro
-        let serialized_metadata = game.metadata.as_ref()
-            .map(|m| serde_json::to_string(m).map_err(|e| StorageError::serialization_error("game metadata", e)))
+        let serialized_metadata = game
+            .metadata
+            .as_ref()
+            .map(|m| {
+                serde_json::to_string(m)
+                    .map_err(|e| StorageError::serialization_error("game metadata", e))
+            })
             .transpose()?;
 
         self.with_connection(|conn| {

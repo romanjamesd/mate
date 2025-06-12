@@ -46,7 +46,7 @@ async fn test_session_duration_calculated_and_displayed() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -133,7 +133,7 @@ async fn test_message_count_accurately_reported() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -214,7 +214,7 @@ async fn test_performance_statistics_summarized() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -318,7 +318,7 @@ async fn test_appropriate_summary_no_messages_sent() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -409,7 +409,7 @@ async fn test_clear_session_termination_indication() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -499,7 +499,7 @@ async fn test_summary_information_well_formatted() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -617,7 +617,7 @@ async fn test_comprehensive_session_summary() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

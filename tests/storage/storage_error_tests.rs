@@ -649,7 +649,7 @@ fn test_concurrent_query_and_modification() {
             format!("sig_{}", i),
             "sender".to_string(),
         )
-        .expect(&format!("Failed to store message {}", i));
+        .unwrap_or_else(|_| panic!("Failed to store message {}", i));
     }
 
     // Get initial message count

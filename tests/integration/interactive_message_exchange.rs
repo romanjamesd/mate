@@ -47,7 +47,7 @@ async fn test_successful_message_send_and_echo_response() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -130,7 +130,7 @@ async fn test_response_timing_measured() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -214,7 +214,7 @@ async fn test_message_statistics_tracked() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -302,7 +302,7 @@ async fn test_performance_metrics_accumulate() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -399,7 +399,7 @@ async fn test_clear_indication_of_received_responses() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -489,7 +489,7 @@ async fn test_multiple_exchanges_maintain_accurate_statistics() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -603,7 +603,7 @@ async fn test_comprehensive_interactive_message_exchange() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -661,7 +661,7 @@ async fn test_comprehensive_interactive_message_exchange() {
     );
 
     // Verify all message exchange features worked
-    let checks = vec![
+    let checks = [
         (
             "messages_sent",
             combined_output.matches("Sending Ping message").count() >= 4,

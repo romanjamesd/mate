@@ -275,7 +275,7 @@ async fn test_multiple_sequential_connections() {
         let mut connection = client
             .connect(&server_addr)
             .await
-            .expect(&format!("Connection {} should succeed", i + 1));
+            .unwrap_or_else(|_| panic!("Connection {} should succeed", i + 1));
 
         // Verify each connection is independent and functional
         assert!(
@@ -332,10 +332,10 @@ async fn test_multiple_client_identities() {
         let _expected_peer_id = client_identity.peer_id().to_string();
         let client = Client::new(client_identity);
 
-        let mut connection = client.connect(&server_addr).await.expect(&format!(
-            "Connection with identity {} should succeed",
-            i + 1
-        ));
+        let mut connection = client
+            .connect(&server_addr)
+            .await
+            .unwrap_or_else(|_| panic!("Connection with identity {} should succeed", i + 1));
 
         // Verify connection uses the correct identity
         assert!(

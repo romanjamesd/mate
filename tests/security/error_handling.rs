@@ -176,10 +176,7 @@ async fn test_corrupted_length_prefix_handling() {
                         );
                     }
                     Some(WireProtocolError::MessageTooLarge { size, .. }) => {
-                        assert_eq!(
-                            *size, 0x80000000 as usize,
-                            "Error should report correct size"
-                        );
+                        assert_eq!(*size, 0x80000000_usize, "Error should report correct size");
                         println!("    ✓ MessageTooLarge error for size={}", size);
                     }
                     Some(other_error) => {

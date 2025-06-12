@@ -498,7 +498,7 @@ fn test_message_pagination() {
             format!("sig_{}", i),
             "sender".to_string(),
         )
-        .expect(&format!("Failed to store message {}", i));
+        .unwrap_or_else(|_| panic!("Failed to store message {}", i));
     }
 
     // Test pagination

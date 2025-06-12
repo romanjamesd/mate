@@ -46,7 +46,7 @@ async fn test_user_communications_clear_and_informative() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -182,7 +182,7 @@ async fn test_connection_state_changes_clearly_indicated() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -298,7 +298,7 @@ async fn test_consistent_visual_formatting_throughout_session() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -467,7 +467,7 @@ async fn test_timing_information_consistently_presented() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -562,7 +562,7 @@ async fn test_timing_information_consistently_presented() {
         .collect::<Vec<_>>();
 
     assert!(
-        timing_values.len() > 0,
+        !timing_values.is_empty(),
         "Should display actual timing values. Output: {}",
         combined_output
     );
@@ -606,7 +606,7 @@ async fn test_session_flow_intuitive_and_responsive() {
     let start_time = std::time::Instant::now();
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -776,7 +776,7 @@ async fn test_error_recovery_doesnt_create_user_confusion() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -868,7 +868,7 @@ async fn test_error_recovery_doesnt_create_user_confusion() {
     let has_clear_guidance = combined_output.contains("Failed to send")
         || combined_output.contains("Failed to connect")
         || combined_output.contains("Connection")
-        || user_facing_error_lines.len() > 0
+        || user_facing_error_lines.is_empty()
         || combined_output.contains("ERROR");
 
     assert!(
@@ -935,7 +935,7 @@ async fn test_comprehensive_user_experience() {
     let session_start = std::time::Instant::now();
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

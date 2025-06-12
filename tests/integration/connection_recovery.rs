@@ -46,7 +46,7 @@ async fn test_reconnection_behavior_when_sending_fails() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -147,7 +147,7 @@ async fn test_reconnection_behavior_when_receiving_fails() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -252,7 +252,7 @@ async fn test_connection_status_changes_communicated() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -365,7 +365,7 @@ async fn test_reconnection_preserves_session_state() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -474,7 +474,7 @@ async fn test_multiple_reconnection_failures_handled() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -591,7 +591,7 @@ async fn test_comprehensive_connection_recovery() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -655,7 +655,7 @@ async fn test_comprehensive_connection_recovery() {
     );
 
     // Verify all connection recovery features worked
-    let checks = vec![
+    let checks = [
         (
             "normal_operation",
             combined_output.contains("Normal operation message"),

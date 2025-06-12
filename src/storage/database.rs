@@ -108,8 +108,6 @@ impl ManagedConnection {
 
         healthy
     }
-
-
 }
 
 /// Main database interface with enhanced connection management
@@ -189,8 +187,6 @@ impl Database {
             return Ok(false);
         }
 
-
-
         Ok(true)
     }
 
@@ -246,7 +242,9 @@ impl Database {
         }
 
         // Create statement on-demand - this is safer than caching with unsound lifetimes
-        let mut stmt = managed_conn.conn.prepare(sql)
+        let mut stmt = managed_conn
+            .conn
+            .prepare(sql)
             .map_err(StorageError::ConnectionFailed)?;
 
         match f(&mut stmt) {

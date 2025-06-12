@@ -52,7 +52,7 @@ async fn test_partial_read_recovery() {
         let received_envelope = framed_message
             .read_message(&mut controlled_stream)
             .await
-            .expect(&format!("Failed to read message with {}", description));
+            .unwrap_or_else(|_| panic!("Failed to read message with {}", description));
 
         // Verify the message was reconstructed correctly
         assert_eq!(
@@ -120,9 +120,7 @@ async fn test_partial_read_recovery() {
         // For single-byte reads, we need to repeat until we've read the entire message
         if read_sizes.len() > 1 && read_sizes[1] == 1 {
             // Add enough 1-byte reads to cover the entire message body
-            for _ in 1..message_body_size {
-                read_sizes.push(1);
-            }
+            read_sizes.extend(std::iter::repeat_n(1, message_body_size - 1));
         } else if read_sizes.len() > 1 {
             // For larger chunks, calculate how many reads we need
             let chunk_size = read_sizes[1];
@@ -139,7 +137,7 @@ async fn test_partial_read_recovery() {
         let received_envelope = framed_message
             .read_message(&mut controlled_stream)
             .await
-            .expect(&format!("Failed to read message with {}", description));
+            .unwrap_or_else(|_| panic!("Failed to read message with {}", description));
 
         // Verify final reconstructed message matches original exactly
         assert_eq!(
@@ -249,10 +247,12 @@ async fn test_partial_read_recovery() {
         let received_envelope = framed_message
             .read_message(&mut complex_stream)
             .await
-            .expect(&format!(
-                "Failed to read message with complex pattern {}",
-                pattern_index + 1
-            ));
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Failed to read message with complex pattern {}",
+                    pattern_index + 1
+                )
+            });
 
         // Verify final reconstructed message matches original exactly
         let received_message = received_envelope
@@ -330,10 +330,12 @@ async fn test_interrupted_read_completion() {
         let received_envelope = framed_message
             .read_message(&mut interrupted_stream)
             .await
-            .expect(&format!(
-                "Failed to read message with length prefix partial read at {} bytes",
-                prefix_bytes_before_interrupt
-            ));
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Failed to read message with length prefix partial read at {} bytes",
+                    prefix_bytes_before_interrupt
+                )
+            });
 
         // Verify protocol can resume from partial read point without data loss
         assert_eq!(
@@ -395,10 +397,12 @@ async fn test_interrupted_read_completion() {
         let received_envelope = framed_message
             .read_message(&mut interrupted_stream)
             .await
-            .expect(&format!(
-                "Failed to read message with partial read at {}",
-                description
-            ));
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Failed to read message with partial read at {}",
+                    description
+                )
+            });
 
         // Verify protocol state consistency after resumption
         assert_eq!(
@@ -487,10 +491,12 @@ async fn test_interrupted_read_completion() {
         let received_envelope = framed_message
             .read_message(&mut interrupted_stream)
             .await
-            .expect(&format!(
-                "Failed to read message with multi-partial-read scenario: {}",
-                description
-            ));
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Failed to read message with multi-partial-read scenario: {}",
+                    description
+                )
+            });
 
         // Verify protocol maintains correct state through multiple partial reads
         let received_message = received_envelope
@@ -584,7 +590,7 @@ async fn test_partial_write_recovery() {
         framed_message
             .write_message(&mut controlled_stream, &original_envelope)
             .await
-            .expect(&format!("Failed to write message with {}", description));
+            .unwrap_or_else(|_| panic!("Failed to write message with {}", description));
 
         // Verify the written data matches the expected complete data
         let written_data = controlled_stream.get_written_data();
@@ -647,9 +653,7 @@ async fn test_partial_write_recovery() {
         // For single-byte writes, we need to repeat until we've written the entire message
         if write_sizes.len() > 1 && write_sizes[1] == 1 {
             // Add enough 1-byte writes to cover the entire message body
-            for _ in 1..message_body_size {
-                write_sizes.push(1);
-            }
+            write_sizes.extend(std::iter::repeat_n(1, message_body_size - 1));
         } else if write_sizes.len() > 1 {
             // For larger chunks, calculate how many writes we need
             let chunk_size = write_sizes[1];
@@ -666,7 +670,7 @@ async fn test_partial_write_recovery() {
         framed_message
             .write_message(&mut controlled_stream, &original_envelope)
             .await
-            .expect(&format!("Failed to write message with {}", description));
+            .unwrap_or_else(|_| panic!("Failed to write message with {}", description));
 
         // Verify the written data matches the expected complete data
         let written_data = controlled_stream.get_written_data();

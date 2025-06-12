@@ -47,7 +47,7 @@ async fn test_connection_information_display() {
 
     // Start mate in interactive mode (no --message flag)
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -112,7 +112,7 @@ async fn test_connection_status_communication() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -174,7 +174,7 @@ async fn test_available_functionality_explanation() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -242,7 +242,7 @@ async fn test_usage_instructions_provided() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -309,7 +309,7 @@ async fn test_visual_separation_between_sections() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -379,7 +379,7 @@ async fn test_session_tracking_initialization() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -447,7 +447,7 @@ async fn test_comprehensive_interactive_initialization() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -476,7 +476,7 @@ async fn test_comprehensive_interactive_initialization() {
     println!("Full initialization output:\n{}", combined_output);
 
     // Verify all initialization components are present
-    let checks = vec![
+    let checks = [
         (
             "connection_info",
             combined_output.contains("Connected") || combined_output.contains("connection"),

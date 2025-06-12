@@ -116,7 +116,7 @@ fn test_complete_game_lifecycle_with_messages() {
             format!("move_sig_{}", move_notation),
             sender.to_string(),
         )
-        .expect(&format!("Failed to store move: {}", move_notation));
+        .unwrap_or_else(|_| panic!("Failed to store move: {}", move_notation));
     }
 
     // Phase 5: Chat Messages
@@ -296,7 +296,7 @@ fn test_game_with_extensive_message_history() {
             format!("move_sig_{}", i),
             sender.to_string(),
         )
-        .expect(&format!("Failed to store move {}", i));
+        .unwrap_or_else(|_| panic!("Failed to store move {}", i));
 
         move_count += 1;
 
@@ -309,7 +309,7 @@ fn test_game_with_extensive_message_history() {
                 format!("chat_sig_{}", chat_count),
                 sender.to_string(),
             )
-            .expect(&format!("Failed to store chat {}", chat_count));
+            .unwrap_or_else(|_| panic!("Failed to store chat {}", chat_count));
 
             chat_count += 1;
         }
@@ -416,7 +416,7 @@ fn test_database_connection_management() {
                 },
                 None,
             )
-            .expect(&format!("Failed to create game {}", i));
+            .unwrap_or_else(|_| panic!("Failed to create game {}", i));
 
         db.store_message(
             game.id,
@@ -425,7 +425,7 @@ fn test_database_connection_management() {
             format!("sig_{}", i),
             "test_sender".to_string(),
         )
-        .expect(&format!("Failed to store message {}", i));
+        .unwrap_or_else(|_| panic!("Failed to store message {}", i));
     }
 
     let final_stats = db.get_connection_stats();
@@ -601,7 +601,7 @@ fn test_database_indexes_and_performance() {
                 },
                 None,
             )
-            .expect(&format!("Failed to create game {}", i));
+            .unwrap_or_else(|_| panic!("Failed to create game {}", i));
 
         game_ids.push(game.id);
 
@@ -614,7 +614,7 @@ fn test_database_indexes_and_performance() {
                 format!("sig_{}_{}", i, j),
                 format!("sender_{}", j % 2),
             )
-            .expect(&format!("Failed to store message {} for game {}", j, i));
+            .unwrap_or_else(|_| panic!("Failed to store message {} for game {}", j, i));
         }
     }
 
@@ -626,7 +626,7 @@ fn test_database_indexes_and_performance() {
         .get_games_with_opponent("opponent_0")
         .expect("Failed to query games by opponent");
     assert!(
-        opponent_0_games.len() > 0,
+        !opponent_0_games.is_empty(),
         "Should find games for opponent_0"
     );
 
@@ -746,7 +746,7 @@ fn test_data_integrity_and_consistency() {
                 format!("timing_sig_{}", i),
                 "timing_sender".to_string(),
             )
-            .expect(&format!("Failed to store timing message {}", i));
+            .unwrap_or_else(|_| panic!("Failed to store timing message {}", i));
 
         message_times.push(msg.created_at);
     }

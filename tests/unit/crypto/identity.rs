@@ -21,7 +21,8 @@ fn test_identity_generation_and_uniqueness() {
     // Test multiple identity generation for uniqueness verification
     let mut peer_ids = HashSet::new();
     for i in 0..10 {
-        let identity = Identity::generate().expect(&format!("Failed to generate identity {}", i));
+        let identity =
+            Identity::generate().unwrap_or_else(|_| panic!("Failed to generate identity {}", i));
         let peer_id = identity.peer_id().as_str().to_string();
         assert!(
             peer_ids.insert(peer_id),
@@ -212,7 +213,7 @@ fn test_peer_id_invalid_input_handling() {
     );
 
     // Test wrong key length handling (too short)
-    let short_key = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &[1, 2, 3]);
+    let short_key = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [1, 2, 3]);
     let short_peer_id = PeerId::from_string(short_key);
     assert!(
         short_peer_id.to_verifying_key().is_err(),
@@ -220,7 +221,7 @@ fn test_peer_id_invalid_input_handling() {
     );
 
     // Test wrong key length handling (too long)
-    let long_key = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &[0u8; 64]);
+    let long_key = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [0u8; 64]);
     let long_peer_id = PeerId::from_string(long_key);
     assert!(
         long_peer_id.to_verifying_key().is_err(),
@@ -348,7 +349,7 @@ fn test_identity_serialization_errors() {
     // Create PeerId with corrupted base64 (valid base64 but wrong length after decode)
     let short_bytes = [1u8; 16]; // Only 16 bytes instead of 32
     let corrupted_base64 =
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &short_bytes);
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, short_bytes);
     let corrupted_peer_id = PeerId::from_string(corrupted_base64);
 
     let result = corrupted_peer_id.to_verifying_key();
