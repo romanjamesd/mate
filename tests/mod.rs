@@ -6,9 +6,11 @@
 //! - `integration`: Integration tests for full system behavior
 //! - `security`: Security-focused tests including DoS protection
 //! - `performance`: Performance and resource usage tests
+//! - `storage`: Storage layer tests for SQLite operations
 
 pub mod common;
 pub mod integration;
 pub mod performance;
 pub mod security;
+pub mod storage;
 pub mod unit;

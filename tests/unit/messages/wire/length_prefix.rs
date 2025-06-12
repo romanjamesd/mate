@@ -240,7 +240,7 @@ async fn test_length_prefix_accuracy() {
         framed_message
             .write_message(&mut stream, &envelope)
             .await
-            .expect(&format!("Failed to write {} message", description));
+            .unwrap_or_else(|_| panic!("Failed to write {} message", description));
 
         let written_data = stream.get_written_data();
 
@@ -278,7 +278,7 @@ async fn test_length_prefix_accuracy() {
         let received_envelope = framed_message
             .read_message(&mut read_stream)
             .await
-            .expect(&format!("Failed to read back {} message", description));
+            .unwrap_or_else(|_| panic!("Failed to read back {} message", description));
 
         // Verify the received message has the same payload size
         let received_message = received_envelope

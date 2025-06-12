@@ -186,7 +186,7 @@ async fn test_message_ordering_preservation() {
         let received_envelope = framed_message
             .read_message(&mut read_stream)
             .await
-            .expect(&format!("Failed to read message {}", i + 1));
+            .unwrap_or_else(|_| panic!("Failed to read message {}", i + 1));
 
         // Verify signature is still valid
         assert!(
@@ -198,7 +198,7 @@ async fn test_message_ordering_preservation() {
         // Deserialize the message to check content
         let received_message = received_envelope
             .get_message()
-            .expect(&format!("Failed to deserialize message {}", i + 1));
+            .unwrap_or_else(|_| panic!("Failed to deserialize message {}", i + 1));
 
         received_messages.push((received_envelope, received_message));
         println!(
@@ -526,7 +526,7 @@ async fn test_empty_and_minimal_messages() {
         framed_message
             .write_message(&mut edge_stream, &edge_envelope)
             .await
-            .expect(&format!("Failed to write {} message", description));
+            .unwrap_or_else(|_| panic!("Failed to write {} message", description));
 
         let edge_data = edge_stream.get_written_data().to_vec();
         let mut edge_read_stream = MockStream::with_data(edge_data);
@@ -534,7 +534,7 @@ async fn test_empty_and_minimal_messages() {
         let received_edge = framed_message
             .read_message(&mut edge_read_stream)
             .await
-            .expect(&format!("Failed to read {} message", description));
+            .unwrap_or_else(|_| panic!("Failed to read {} message", description));
 
         assert!(
             received_edge.verify_signature(),
@@ -543,7 +543,7 @@ async fn test_empty_and_minimal_messages() {
         );
         let received_edge_msg = received_edge
             .get_message()
-            .expect(&format!("Failed to deserialize {} message", description));
+            .unwrap_or_else(|_| panic!("Failed to deserialize {} message", description));
         assert_eq!(
             received_edge_msg.get_nonce(),
             nonce,

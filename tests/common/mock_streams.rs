@@ -12,6 +12,12 @@ pub struct MockStream {
     write_buffer: Vec<u8>,
 }
 
+impl Default for MockStream {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockStream {
     pub fn new() -> Self {
         Self {

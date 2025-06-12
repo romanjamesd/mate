@@ -46,7 +46,7 @@ async fn test_very_long_message_content_handling() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -167,7 +167,7 @@ async fn test_rapid_consecutive_message_sending() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -303,7 +303,7 @@ async fn test_statistics_accuracy_with_minimal_message_counts() {
     println!("Test Case 1: Zero messages sent");
     {
         let mut child = Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr])
+            .args(["connect", server_addr])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -353,7 +353,7 @@ async fn test_statistics_accuracy_with_minimal_message_counts() {
     println!("Test Case 2: Single message sent");
     {
         let mut child = Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr])
+            .args(["connect", server_addr])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -405,7 +405,7 @@ async fn test_statistics_accuracy_with_minimal_message_counts() {
     println!("Test Case 3: Two messages sent");
     {
         let mut child = Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr])
+            .args(["connect", server_addr])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -482,7 +482,7 @@ async fn test_session_duration_calculation_edge_cases() {
     println!("Test Case 1: Very short session duration");
     {
         let mut child = Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr])
+            .args(["connect", server_addr])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -528,7 +528,7 @@ async fn test_session_duration_calculation_edge_cases() {
     println!("Test Case 2: Session with intermediate duration checks");
     {
         let mut child = Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr])
+            .args(["connect", server_addr])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -620,7 +620,7 @@ async fn test_unusual_peer_identification_scenarios() {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let mut child = Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr])
+            .args(["connect", server_addr])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -735,7 +735,7 @@ async fn test_reconnection_during_various_phases() {
     {
         let server_addr = "127.0.0.1:18508";
         let mut child = Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr]) // No server running yet
+            .args(["connect", server_addr]) // No server running yet
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -800,7 +800,7 @@ async fn test_reconnection_during_various_phases() {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let mut child = Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr])
+            .args(["connect", server_addr])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -883,7 +883,7 @@ async fn test_reconnection_during_various_phases() {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let mut child = Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr])
+            .args(["connect", server_addr])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -924,7 +924,7 @@ async fn test_reconnection_during_various_phases() {
         // Verify graceful termination despite disruption
         let exit_code = command_output.status.code().unwrap_or(-1);
         assert!(
-            exit_code >= 0 && exit_code <= 1,
+            (0..=1).contains(&exit_code),
             "Should terminate gracefully despite disruption. Exit code: {}",
             exit_code
         );
@@ -954,7 +954,7 @@ async fn test_comprehensive_edge_cases_and_boundaries() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1009,7 +1009,7 @@ async fn test_comprehensive_edge_cases_and_boundaries() {
     println!("Comprehensive edge cases test output:\n{}", combined_output);
 
     // Comprehensive checks for all edge case aspects
-    let checks = vec![
+    let checks = [
         (
             "long_message_handling",
             combined_output.contains("EdgeCase"),

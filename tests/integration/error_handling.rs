@@ -37,7 +37,7 @@ async fn test_graceful_connection_establishment_failure_handling() {
     println!("Testing graceful handling of connection establishment failures");
 
     // Test invalid address format
-    let invalid_addresses = vec![
+    let invalid_addresses = [
         "invalid-address",      // Missing port
         "192.168.1.999:8080",   // Invalid IP
         "localhost:999999",     // Invalid port
@@ -56,7 +56,7 @@ async fn test_graceful_connection_establishment_failure_handling() {
         let output = timeout(
             Duration::from_secs(15), // Allow extra time for DNS resolution timeouts
             Command::new(get_mate_binary_path())
-                .args(&["connect", invalid_addr, "--message", "test"])
+                .args(["connect", invalid_addr, "--message", "test"])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output(),
@@ -126,7 +126,7 @@ async fn test_appropriate_program_exit_behavior_on_connection_failure() {
         let output = timeout(
             Duration::from_secs(10),
             Command::new(get_mate_binary_path())
-                .args(&["connect", non_existent_server, "--message", "test message"])
+                .args(["connect", non_existent_server, "--message", "test message"])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output(),
@@ -184,7 +184,7 @@ async fn test_appropriate_program_exit_behavior_on_connection_failure() {
         let output = timeout(
             Duration::from_secs(10),
             Command::new(get_mate_binary_path())
-                .args(&["connect", non_existent_server])
+                .args(["connect", non_existent_server])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output(),
@@ -248,7 +248,7 @@ async fn test_errors_logged_at_appropriate_levels() {
         let output = timeout(
             Duration::from_secs(8),
             Command::new(get_mate_binary_path())
-                .args(&["connect", non_existent_server, "--message", "test"])
+                .args(["connect", non_existent_server, "--message", "test"])
                 .env("RUST_LOG", log_level)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -332,7 +332,7 @@ async fn test_user_friendly_error_communication() {
         let output = timeout(
             Duration::from_secs(10),
             Command::new(get_mate_binary_path())
-                .args(&["connect", addr, "--message", "test"])
+                .args(["connect", addr, "--message", "test"])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output(),
@@ -415,7 +415,7 @@ async fn test_cleanup_failures_dont_prevent_termination() {
 
     // Start interactive session that will experience cleanup issues
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -512,7 +512,7 @@ async fn test_errors_dont_cause_crashes_or_undefined_behavior() {
         let output = timeout(
             Duration::from_secs(8),
             Command::new(get_mate_binary_path())
-                .args(&["connect", addr, "--message", "crash test"])
+                .args(["connect", addr, "--message", "crash test"])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output(),
@@ -523,8 +523,8 @@ async fn test_errors_dont_cause_crashes_or_undefined_behavior() {
 
         // Command should complete (not hang or crash)
         let command_output = output
-            .expect(&format!("Command should complete for {}", description))
-            .expect(&format!("Command should execute for {}", description));
+            .unwrap_or_else(|_| panic!("Command should complete for {}", description))
+            .unwrap_or_else(|_| panic!("Command should execute for {}", description));
 
         // Verify program terminates promptly (no infinite loops)
         assert!(
@@ -553,7 +553,7 @@ async fn test_errors_dont_cause_crashes_or_undefined_behavior() {
         // Verify we get a reasonable exit code (not -1, 128+signal, etc.)
         let exit_code = command_output.status.code().unwrap_or(-1);
         assert!(
-            exit_code >= 0 && exit_code <= 2,
+            (0..=2).contains(&exit_code),
             "Should have reasonable exit code for {}, got: {}",
             description,
             exit_code
@@ -594,7 +594,7 @@ async fn test_comprehensive_error_handling() {
     let output = timeout(
         Duration::from_secs(10),
         Command::new(get_mate_binary_path())
-            .args(&[
+            .args([
                 "connect",
                 non_existent_server,
                 "--message",

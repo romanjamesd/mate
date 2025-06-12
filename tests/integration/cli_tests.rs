@@ -55,7 +55,7 @@ async fn test_successful_message_send_with_timing() {
     let output = timeout(
         Duration::from_secs(10),
         Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr, "--message", test_message])
+            .args(["connect", server_addr, "--message", test_message])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output(),
@@ -132,7 +132,7 @@ async fn test_message_content_echo_correctness() {
         let output = timeout(
             Duration::from_secs(10),
             Command::new(get_mate_binary_path())
-                .args(&["connect", server_addr, "--message", test_message])
+                .args(["connect", server_addr, "--message", test_message])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output(),
@@ -202,7 +202,7 @@ async fn test_response_timing_measurement() {
     let output = timeout(
         Duration::from_secs(10),
         Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr, "--message", test_message])
+            .args(["connect", server_addr, "--message", test_message])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output(),
@@ -225,7 +225,7 @@ async fn test_response_timing_measurement() {
     let combined_output = format!("{}{}", stdout, stderr);
 
     // Verify timing format is correct (should match our format_round_trip_time function)
-    let timing_patterns = vec![
+    let timing_patterns = [
         r"round-trip: \d+μs",     // microseconds
         r"round-trip: \d+ms",     // milliseconds
         r"round-trip: \d+\.\d+s", // seconds with decimals
@@ -267,7 +267,7 @@ async fn test_error_handling_send_failure() {
     let output = timeout(
         Duration::from_secs(10),
         Command::new(get_mate_binary_path())
-            .args(&["connect", invalid_addr, "--message", test_message])
+            .args(["connect", invalid_addr, "--message", test_message])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output(),
@@ -336,7 +336,7 @@ async fn test_error_handling_receive_failure() {
     let output = timeout(
         Duration::from_secs(10),
         Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr, "--message", test_message])
+            .args(["connect", server_addr, "--message", test_message])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output(),
@@ -396,7 +396,7 @@ async fn test_program_exits_after_single_exchange() {
     let output = timeout(
         Duration::from_secs(10),
         Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr, "--message", test_message])
+            .args(["connect", server_addr, "--message", test_message])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output(),
@@ -468,7 +468,7 @@ async fn test_appropriate_logging() {
     let output = timeout(
         Duration::from_secs(10),
         Command::new(get_mate_binary_path())
-            .args(&["connect", server_addr, "--message", test_message])
+            .args(["connect", server_addr, "--message", test_message])
             .env("RUST_LOG", "info")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -544,7 +544,7 @@ async fn test_one_shot_mode_comprehensive() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Test multiple consecutive one-shot messages
-    let test_messages = vec![
+    let test_messages = [
         "First one-shot message",
         "Second one-shot message",
         "Third one-shot message with numbers 12345",
@@ -557,7 +557,7 @@ async fn test_one_shot_mode_comprehensive() {
         let output = timeout(
             Duration::from_secs(10),
             Command::new(get_mate_binary_path())
-                .args(&["connect", server_addr, "--message", test_message])
+                .args(["connect", server_addr, "--message", test_message])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output(),

@@ -48,7 +48,7 @@ async fn test_clear_prompt_displayed() {
 
     // Start mate in interactive mode
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -116,7 +116,7 @@ async fn test_empty_input_ignored() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -202,7 +202,7 @@ async fn test_whitespace_only_input_treated_as_empty() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -290,7 +290,7 @@ async fn test_end_of_input_graceful_termination() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -359,7 +359,7 @@ async fn test_input_reading_error_handling() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -428,7 +428,7 @@ async fn test_non_command_input_sent_as_messages() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -497,7 +497,7 @@ async fn test_non_command_input_sent_as_messages() {
     let user_message_sending = combined_output.matches("Sending Ping message").count();
     // Should have handshake ping + one ping for each test message
     assert!(
-        user_message_sending >= test_messages.len() + 1,
+        user_message_sending > test_messages.len(),
         "Should send all non-command messages. Expected at least: {}, Got: {}, Output: {}",
         test_messages.len() + 1,
         user_message_sending,
@@ -525,7 +525,7 @@ async fn test_comprehensive_interactive_input_handling() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -583,7 +583,7 @@ async fn test_comprehensive_interactive_input_handling() {
     println!("Comprehensive input handling output:\n{}", combined_output);
 
     // Verify all input handling features worked
-    let checks = vec![
+    let checks = [
         (
             "prompt_displayed",
             combined_output.contains(">")

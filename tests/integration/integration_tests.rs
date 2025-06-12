@@ -47,7 +47,7 @@ async fn test_complete_workflow_connection_to_termination() {
     let session_start = std::time::Instant::now();
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -204,7 +204,7 @@ async fn test_combinations_commands_messages_single_session() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -382,7 +382,7 @@ async fn test_reconnection_followed_by_continued_operation() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -550,7 +550,7 @@ async fn test_appropriate_information_logged_throughout_session() {
 
     // Set environment to ensure detailed logging
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .env("RUST_LOG", "info") // Enable info-level logging
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -611,7 +611,7 @@ async fn test_appropriate_information_logged_throughout_session() {
     println!("Comprehensive logging test output:\n{}", combined_output);
 
     // Analyze different types of information that should be logged
-    let logging_categories = vec![
+    let logging_categories = [
         (
             "connection_info",
             combined_output.contains("Connected to peer") || combined_output.contains("Peer ID"),
@@ -662,7 +662,7 @@ async fn test_appropriate_information_logged_throughout_session() {
     // Verify appropriate detail level (not too verbose, not too sparse)
     let total_lines = combined_output.lines().count();
     assert!(
-        total_lines >= 20 && total_lines <= 200,
+        (20..=200).contains(&total_lines),
         "Logging should have appropriate detail level. Found: {} lines",
         total_lines
     );
@@ -675,7 +675,7 @@ async fn test_appropriate_information_logged_throughout_session() {
     );
 
     // Verify session lifecycle is tracked
-    let lifecycle_events = vec!["connected", "session", "duration", "summary", "goodbye"];
+    let lifecycle_events = ["connected", "session", "duration", "summary", "goodbye"];
     let lifecycle_found = lifecycle_events
         .iter()
         .filter(|event| {
@@ -765,7 +765,7 @@ async fn test_behavior_consistency_across_terminal_environments() {
         println!("Testing {}", description);
 
         let mut cmd = Command::new(get_mate_binary_path());
-        cmd.args(&["connect", server_addr])
+        cmd.args(["connect", server_addr])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -777,7 +777,7 @@ async fn test_behavior_consistency_across_terminal_environments() {
 
         let mut child = cmd
             .spawn()
-            .expect(&format!("Failed to start mate command for {}", description));
+            .unwrap_or_else(|_| panic!("Failed to start mate command for {}", description));
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -798,14 +798,10 @@ async fn test_behavior_consistency_across_terminal_environments() {
         let output = timeout(Duration::from_secs(8), child.wait_with_output()).await;
 
         let command_output = output
-            .expect(&format!(
-                "Command should complete within timeout for {}",
-                description
-            ))
-            .expect(&format!(
-                "Command should execute successfully for {}",
-                description
-            ));
+            .unwrap_or_else(|_| {
+                panic!("Command should complete within timeout for {}", description)
+            })
+            .unwrap_or_else(|_| panic!("Command should execute successfully for {}", description));
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
@@ -922,6 +918,7 @@ async fn test_behavior_consistency_across_terminal_environments() {
 
 /// Helper struct for environment test analysis
 #[derive(Debug)]
+#[allow(dead_code)]
 struct EnvironmentTestResult {
     description: String,
     exit_code: i32,
@@ -950,7 +947,7 @@ async fn test_comprehensive_integration_functionality() {
     let integration_start = std::time::Instant::now();
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(&["connect", server_addr])
+        .args(["connect", server_addr])
         .env("RUST_LOG", "info")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -971,7 +968,7 @@ async fn test_comprehensive_integration_functionality() {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // 2. Message exchange with varied content
-        let test_messages = vec![
+        let test_messages = [
             "Integration test message 1",
             "Message with unicode: 测试 🚀 ñáéíóú",
             "Longer integration message to test various content handling capabilities",
