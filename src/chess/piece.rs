@@ -64,3 +64,61 @@ impl FromStr for Color {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PieceType {
+    Pawn,
+    Rook,
+    Knight,
+    Bishop,
+    Queen,
+    King,
+}
+
+impl PieceType {
+    /// Get the piece's relative value (for basic evaluation)
+    pub fn value(&self) -> u32 {
+        match self {
+            PieceType::Pawn => 1,
+            PieceType::Knight => 3,
+            PieceType::Bishop => 3,
+            PieceType::Rook => 5,
+            PieceType::Queen => 9,
+            PieceType::King => 0, // King is invaluable
+        }
+    }
+}
+
+// Implement Display trait
+impl fmt::Display for PieceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PieceType::Pawn => write!(f, "P"),
+            PieceType::Rook => write!(f, "R"),
+            PieceType::Knight => write!(f, "N"),
+            PieceType::Bishop => write!(f, "B"),
+            PieceType::Queen => write!(f, "Q"),
+            PieceType::King => write!(f, "K"),
+        }
+    }
+}
+
+// Implement FromStr for parsing with consistent error handling
+impl FromStr for PieceType {
+    type Err = ChessError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_uppercase().as_str() {
+            "P" | "PAWN" => Ok(PieceType::Pawn),
+            "R" | "ROOK" => Ok(PieceType::Rook),
+            "N" | "KNIGHT" => Ok(PieceType::Knight),
+            "B" | "BISHOP" => Ok(PieceType::Bishop),
+            "Q" | "QUEEN" => Ok(PieceType::Queen),
+            "K" | "KING" => Ok(PieceType::King),
+            _ => Err(ChessError::InvalidPieceType(format!(
+                "Expected one of: P, R, N, B, Q, K, got '{}'",
+                s
+            ))),
+        }
+    }
+}
