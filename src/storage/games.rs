@@ -26,6 +26,11 @@ impl Database {
             metadata,
         };
 
+        // Serialize metadata outside the named_params! macro
+        let serialized_metadata = game.metadata.as_ref()
+            .map(|m| serde_json::to_string(m).map_err(|e| StorageError::serialization_error("game metadata", e)))
+            .transpose()?;
+
         self.with_connection(|conn| {
             conn.execute(
                 r#"
@@ -46,7 +51,7 @@ impl Database {
                     ":updated_at": game.updated_at,
                     ":completed_at": game.completed_at,
                     ":result": game.result.as_ref().map(|r| r.as_str()),
-                    ":metadata": game.metadata.as_ref().map(|m| serde_json::to_string(m).map_err(|e| StorageError::serialization_error("game metadata", e))).transpose()?,
+                    ":metadata": serialized_metadata,
                 },
             )?;
             Ok(game)
