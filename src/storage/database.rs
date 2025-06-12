@@ -2,7 +2,6 @@ use crate::storage::errors::{Result, StorageError};
 use crate::storage::schema;
 use directories::ProjectDirs;
 use rusqlite::{Connection, Statement};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -70,17 +69,10 @@ impl ConnectionStats {
     }
 }
 
-/// Prepared statement cache entry
-struct PreparedStatementEntry {
-    statement: Statement<'static>,
-    last_used: Instant,
-}
-
-/// Connection wrapper with health monitoring and prepared statement cache
+/// Connection wrapper with health monitoring
 struct ManagedConnection {
     conn: Connection,
     last_health_check: Instant,
-    prepared_statements: HashMap<String, PreparedStatementEntry>,
 }
 
 // Safety: We ensure thread safety through the Arc<Mutex<ManagedConnection>> wrapper
@@ -93,7 +85,6 @@ impl ManagedConnection {
         Self {
             conn,
             last_health_check: Instant::now(),
-            prepared_statements: HashMap::new(),
         }
     }
 
@@ -118,54 +109,7 @@ impl ManagedConnection {
         healthy
     }
 
-    /// Get a prepared statement, creating and caching it if needed
-    fn get_prepared_statement(&mut self, sql: &str) -> Result<&mut Statement<'static>> {
-        let key = sql.to_string();
 
-        // Check if we already have this statement cached
-        if let Some(entry) = self.prepared_statements.get_mut(&key) {
-            entry.last_used = Instant::now();
-            // This is safe because we're returning a mutable reference with the same lifetime
-            // as the ManagedConnection, and the statement is owned by the HashMap
-            return Ok(unsafe {
-                std::mem::transmute::<&mut rusqlite::Statement<'_>, &mut rusqlite::Statement<'_>>(
-                    &mut entry.statement,
-                )
-            });
-        }
-
-        // Create new prepared statement
-        let stmt = self
-            .conn
-            .prepare(sql)
-            .map_err(StorageError::ConnectionFailed)?;
-
-        // Safety: We're extending the lifetime to 'static, but this is safe because
-        // the statement is tied to the connection's lifetime, and the connection
-        // is managed by the Arc<Mutex<ManagedConnection>>
-        let static_stmt: Statement<'static> = unsafe { std::mem::transmute(stmt) };
-
-        let entry = PreparedStatementEntry {
-            statement: static_stmt,
-            last_used: Instant::now(),
-        };
-
-        self.prepared_statements.insert(key.clone(), entry);
-
-        // Return reference to the newly inserted statement
-        Ok(unsafe {
-            std::mem::transmute::<&mut rusqlite::Statement<'_>, &mut rusqlite::Statement<'_>>(
-                &mut self.prepared_statements.get_mut(&key).unwrap().statement,
-            )
-        })
-    }
-
-    /// Clean up old prepared statements to prevent memory leaks
-    fn cleanup_old_statements(&mut self) {
-        let cutoff = Instant::now() - Duration::from_secs(300); // 5 minutes
-        self.prepared_statements
-            .retain(|_, entry| entry.last_used > cutoff);
-    }
 }
 
 /// Main database interface with enhanced connection management
@@ -245,8 +189,7 @@ impl Database {
             return Ok(false);
         }
 
-        // Clean up old prepared statements while we have the lock
-        managed_conn.cleanup_old_statements();
+
 
         Ok(true)
     }
@@ -302,9 +245,11 @@ impl Database {
             ));
         }
 
-        let stmt = managed_conn.get_prepared_statement(sql)?;
+        // Create statement on-demand - this is safer than caching with unsound lifetimes
+        let mut stmt = managed_conn.conn.prepare(sql)
+            .map_err(StorageError::ConnectionFailed)?;
 
-        match f(stmt) {
+        match f(&mut stmt) {
             Ok(result) => {
                 self.stats.record_operation(start_time.elapsed());
                 Ok(result)
