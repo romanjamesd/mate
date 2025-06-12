@@ -561,7 +561,7 @@ async fn test_unexpected_connection_closure() {
     println!("Test 5: Testing resource cleanup during connection closure scenarios");
     {
         // Run multiple scenarios in sequence to verify no resource leaks
-        let scenarios = vec![
+        let scenarios = [
             vec![],                 // Empty
             vec![0x00],             // 1 byte
             vec![0x00, 0x01],       // 2 bytes
@@ -747,7 +747,7 @@ async fn test_protocol_violation_detection() {
     // Test 4: Sequence of protocol violations
     println!("Test 4: Testing multiple consecutive protocol violations");
     {
-        let violations = vec![
+        let violations = [
             vec![0x00, 0x00, 0x00, 0x00],                   // Zero length
             vec![0xFF, 0xFF, 0xFF, 0xFF],                   // Max length
             vec![0x00, 0x00, 0x00, 0x01, 0xFF],             // Length 1 with invalid data

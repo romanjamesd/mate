@@ -675,7 +675,7 @@ async fn test_appropriate_information_logged_throughout_session() {
     );
 
     // Verify session lifecycle is tracked
-    let lifecycle_events = vec!["connected", "session", "duration", "summary", "goodbye"];
+    let lifecycle_events = ["connected", "session", "duration", "summary", "goodbye"];
     let lifecycle_found = lifecycle_events
         .iter()
         .filter(|event| {
@@ -971,7 +971,7 @@ async fn test_comprehensive_integration_functionality() {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // 2. Message exchange with varied content
-        let test_messages = vec![
+        let test_messages = [
             "Integration test message 1",
             "Message with unicode: 测试 🚀 ñáéíóú",
             "Longer integration message to test various content handling capabilities",
