@@ -118,6 +118,322 @@ impl Board {
             self.squares[6][file] = Some(Piece::new(PieceType::Pawn, Color::Black));
         }
     }
+
+    /// Create a board from a FEN (Forsyth-Edwards Notation) string
+    /// FEN format: piece_placement active_color castling_rights en_passant halfmove fullmove
+    /// Example: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    pub fn from_fen(fen: &str) -> Result<Board, ChessError> {
+        // Handle empty or whitespace-only FEN strings
+        let fen = fen.trim();
+        if fen.is_empty() {
+            return Err(ChessError::InvalidFen(
+                "FEN string cannot be empty".to_string(),
+            ));
+        }
+
+        // Step 4.2: Split and validate FEN fields
+        let parts: Vec<&str> = fen.split_whitespace().collect();
+
+        // Validate exactly 6 fields are present
+        if parts.len() != 6 {
+            return Err(ChessError::InvalidFen(format!(
+                "FEN must have exactly 6 fields (piece_placement active_color castling_rights en_passant halfmove fullmove), found {}",
+                parts.len()
+            )));
+        }
+
+        // Extract each field into named variables
+        let [piece_placement, active_color, castling_rights, en_passant, halfmove_str, fullmove_str] =
+            parts.as_slice()
+        else {
+            unreachable!()
+        };
+
+        // Validate that no field is empty
+        if piece_placement.is_empty() {
+            return Err(ChessError::InvalidFen(
+                "Piece placement field cannot be empty".to_string(),
+            ));
+        }
+        if active_color.is_empty() {
+            return Err(ChessError::InvalidFen(
+                "Active color field cannot be empty".to_string(),
+            ));
+        }
+        if castling_rights.is_empty() {
+            return Err(ChessError::InvalidFen(
+                "Castling rights field cannot be empty".to_string(),
+            ));
+        }
+        if en_passant.is_empty() {
+            return Err(ChessError::InvalidFen(
+                "En passant field cannot be empty".to_string(),
+            ));
+        }
+        if halfmove_str.is_empty() {
+            return Err(ChessError::InvalidFen(
+                "Halfmove clock field cannot be empty".to_string(),
+            ));
+        }
+        if fullmove_str.is_empty() {
+            return Err(ChessError::InvalidFen(
+                "Fullmove number field cannot be empty".to_string(),
+            ));
+        }
+
+        // Step 4.3: Parse Piece Placement (Field 1)
+        let ranks: Vec<&str> = piece_placement.split('/').collect();
+        if ranks.len() != 8 {
+            return Err(ChessError::InvalidFen(format!(
+                "Piece placement must have exactly 8 ranks separated by '/', found {}",
+                ranks.len()
+            )));
+        }
+
+        // Initialize empty board
+        let mut squares = [[None; 8]; 8];
+
+        // Parse each rank (iterate from rank 8 to rank 1)
+        for (rank_idx, rank_str) in ranks.iter().enumerate() {
+            let board_rank = 7 - rank_idx; // FEN rank 8 = board_rank 7
+            let fen_rank_number = 8 - rank_idx; // For error messages
+
+            if rank_str.is_empty() {
+                return Err(ChessError::InvalidFen(format!(
+                    "Rank {} cannot be empty",
+                    fen_rank_number
+                )));
+            }
+
+            let mut file = 0;
+
+            for c in rank_str.chars() {
+                if file >= 8 {
+                    return Err(ChessError::InvalidFen(format!(
+                        "Rank {} has more than 8 squares (found character '{}' at position {})",
+                        fen_rank_number,
+                        c,
+                        file + 1
+                    )));
+                }
+
+                if c.is_ascii_digit() {
+                    // Skip empty squares
+                    let empty_squares = c.to_digit(10).unwrap() as usize;
+                    if empty_squares == 0 || empty_squares > 8 {
+                        return Err(ChessError::InvalidFen(format!(
+                            "Invalid empty square count '{}' in rank {} (must be 1-8)",
+                            c, fen_rank_number
+                        )));
+                    }
+                    if file + empty_squares > 8 {
+                        return Err(ChessError::InvalidFen(format!(
+                            "Empty square count '{}' in rank {} would exceed 8 squares (current position: {})",
+                            c, fen_rank_number, file + 1
+                        )));
+                    }
+                    file += empty_squares;
+                } else {
+                    // Place piece - validate character first
+                    if !c.is_ascii_alphabetic() {
+                        return Err(ChessError::InvalidFen(format!(
+                            "Invalid character '{}' in rank {} at position {} (expected piece letter or digit 1-8)",
+                            c, fen_rank_number, file + 1
+                        )));
+                    }
+                    let piece = Self::char_to_piece(c).map_err(|_| {
+                        ChessError::InvalidFen(format!(
+                            "Invalid piece character '{}' in rank {} at position {} (valid pieces: KQRBNPkqrbnp)",
+                            c, fen_rank_number, file + 1
+                        ))
+                    })?;
+                    squares[board_rank][file] = Some(piece);
+                    file += 1;
+                }
+            }
+
+            // Validate that we have exactly 8 squares per rank
+            if file != 8 {
+                return Err(ChessError::InvalidFen(format!(
+                    "Rank {} must represent exactly 8 squares, found {} (check piece placement and empty square counts)",
+                    fen_rank_number,
+                    file
+                )));
+            }
+        }
+
+        // Step 4.4: Parse Active Color (Field 2)
+        let parsed_active_color = match *active_color {
+            "w" => Color::White,
+            "b" => Color::Black,
+            _ => {
+                return Err(ChessError::InvalidFen(format!(
+                    "Invalid active color '{}' (must be 'w' for White or 'b' for Black)",
+                    active_color
+                )))
+            }
+        };
+
+        // Step 4.5: Parse Castling Rights (Field 3)
+        // Validate castling rights format more thoroughly
+        if *castling_rights != "-" {
+            // Check for invalid characters
+            for c in castling_rights.chars() {
+                if !"KQkq".contains(c) {
+                    return Err(ChessError::InvalidFen(format!(
+                        "Invalid character '{}' in castling rights '{}' (valid characters: K, Q, k, q, or '-' for none)",
+                        c, castling_rights
+                    )));
+                }
+            }
+
+            // Check for duplicate characters
+            let mut seen_chars = std::collections::HashSet::new();
+            for c in castling_rights.chars() {
+                if !seen_chars.insert(c) {
+                    return Err(ChessError::InvalidFen(format!(
+                        "Duplicate character '{}' in castling rights '{}'",
+                        c, castling_rights
+                    )));
+                }
+            }
+
+            // Check if castling rights are in conventional order
+            let chars: Vec<char> = castling_rights.chars().collect();
+            let expected_order = ['K', 'Q', 'k', 'q'];
+            let mut last_valid_index = -1i32;
+
+            for &c in &chars {
+                if let Some(pos) = expected_order.iter().position(|&x| x == c) {
+                    if (pos as i32) < last_valid_index {
+                        return Err(ChessError::InvalidFen(format!(
+                            "Castling rights '{}' not in conventional order (expected order: KQkq)",
+                            castling_rights
+                        )));
+                    }
+                    last_valid_index = pos as i32;
+                }
+            }
+        } else if castling_rights.len() != 1 {
+            return Err(ChessError::InvalidFen(format!(
+                "Invalid castling rights '{}' (use '-' for no castling rights)",
+                castling_rights
+            )));
+        }
+        // TODO: Store castling rights when castling is implemented
+
+        // Step 4.6: Parse En Passant Target (Field 4)
+        if *en_passant != "-" {
+            // Validate it's a valid square notation (e.g., "e3", "d6")
+            if en_passant.len() != 2 {
+                return Err(ChessError::InvalidFen(format!(
+                    "Invalid en passant target '{}' (must be 2 characters like 'e3' or '-' for none)",
+                    en_passant
+                )));
+            }
+            let file_char = en_passant.chars().nth(0).unwrap();
+            let rank_char = en_passant.chars().nth(1).unwrap();
+
+            if !('a'..='h').contains(&file_char) {
+                return Err(ChessError::InvalidFen(format!(
+                    "Invalid file '{}' in en passant target '{}' (must be a-h)",
+                    file_char, en_passant
+                )));
+            }
+            if !('1'..='8').contains(&rank_char) {
+                return Err(ChessError::InvalidFen(format!(
+                    "Invalid rank '{}' in en passant target '{}' (must be 1-8)",
+                    rank_char, en_passant
+                )));
+            }
+
+            // Additional validation: en passant target should be on rank 3 or 6
+            let rank_num = rank_char.to_digit(10).unwrap() as u8;
+            if rank_num != 3 && rank_num != 6 {
+                return Err(ChessError::InvalidFen(format!(
+                    "Invalid en passant target '{}' (en passant squares must be on rank 3 or 6)",
+                    en_passant
+                )));
+            }
+        } else if en_passant.len() != 1 {
+            return Err(ChessError::InvalidFen(format!(
+                "Invalid en passant field '{}' (use '-' for no en passant)",
+                en_passant
+            )));
+        }
+        // TODO: Store en passant target when en passant is implemented
+
+        // Step 4.7: Parse Halfmove Clock (Field 5)
+        let halfmove_clock = halfmove_str.parse::<u16>().map_err(|e| {
+            ChessError::InvalidFen(format!(
+                "Invalid halfmove clock '{}' (must be a non-negative integer): {}",
+                halfmove_str, e
+            ))
+        })?;
+
+        // Validate reasonable range for halfmove clock (0-100 is typical)
+        if halfmove_clock > 100 {
+            return Err(ChessError::InvalidFen(format!(
+                "Halfmove clock {} is unusually high (typically 0-100, max 50 for 50-move rule)",
+                halfmove_clock
+            )));
+        }
+
+        // Step 4.8: Parse Fullmove Number (Field 6)
+        let fullmove_number = fullmove_str.parse::<u16>().map_err(|e| {
+            ChessError::InvalidFen(format!(
+                "Invalid fullmove number '{}' (must be a positive integer): {}",
+                fullmove_str, e
+            ))
+        })?;
+
+        if fullmove_number == 0 {
+            return Err(ChessError::InvalidFen(
+                "Fullmove number must be at least 1".to_string(),
+            ));
+        }
+
+        // Validate reasonable range for fullmove number
+        if fullmove_number > 9999 {
+            return Err(ChessError::InvalidFen(format!(
+                "Fullmove number {} is unusually high (games rarely exceed 200 moves)",
+                fullmove_number
+            )));
+        }
+
+        // Step 4.9: Create and Return Board
+        Ok(Board {
+            squares,
+            active_color: parsed_active_color,
+            halfmove_clock,
+            fullmove_number,
+        })
+    }
+
+    /// Helper function to convert FEN piece character to Piece
+    fn char_to_piece(c: char) -> Result<Piece, ChessError> {
+        let (piece_type, color) = match c {
+            'K' => (PieceType::King, Color::White),
+            'Q' => (PieceType::Queen, Color::White),
+            'R' => (PieceType::Rook, Color::White),
+            'B' => (PieceType::Bishop, Color::White),
+            'N' => (PieceType::Knight, Color::White),
+            'P' => (PieceType::Pawn, Color::White),
+            'k' => (PieceType::King, Color::Black),
+            'q' => (PieceType::Queen, Color::Black),
+            'r' => (PieceType::Rook, Color::Black),
+            'b' => (PieceType::Bishop, Color::Black),
+            'n' => (PieceType::Knight, Color::Black),
+            'p' => (PieceType::Pawn, Color::Black),
+            _ => {
+                return Err(ChessError::InvalidFen(format!(
+                    "Invalid piece character '{}'",
+                    c
+                )))
+            }
+        };
+        Ok(Piece::new(piece_type, color))
+    }
 }
 
 impl Default for Board {
