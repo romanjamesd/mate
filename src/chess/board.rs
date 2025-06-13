@@ -502,6 +502,37 @@ impl Board {
         }
     }
 
+    /// Optimize consecutive empty squares in a rank string by replacing them with numbers
+    /// Example: "...P...." becomes "3P4"
+    /// This helper method scans the rank string for consecutive dots/empty indicators
+    /// and replaces sequences of empty squares with their count (1-8)
+    fn optimize_empty_squares(rank_str: &str) -> String {
+        let mut result = String::new();
+        let mut empty_count = 0;
+
+        for c in rank_str.chars() {
+            if c == '.' {
+                // Count consecutive empty squares
+                empty_count += 1;
+            } else {
+                // We hit a piece, so first add any accumulated empty squares
+                if empty_count > 0 {
+                    result.push_str(&empty_count.to_string());
+                    empty_count = 0;
+                }
+                // Add the piece character
+                result.push(c);
+            }
+        }
+
+        // Add any remaining empty squares at the end of the rank
+        if empty_count > 0 {
+            result.push_str(&empty_count.to_string());
+        }
+
+        result
+    }
+
     /// Helper function to convert FEN piece character to Piece
     fn char_to_piece(c: char) -> Result<Piece, ChessError> {
         let (piece_type, color) = match c {
@@ -533,5 +564,3 @@ impl Default for Board {
         Self::new()
     }
 }
-
-
