@@ -82,7 +82,7 @@ fn test_position_algebraic_notation_parsing() {
             let algebraic = format!("{}{}", file_char, rank_char);
             let pos = algebraic
                 .parse::<Position>()
-                .expect(&format!("Should parse {}", algebraic));
+                .unwrap_or_else(|_| panic!("Should parse {}", algebraic));
 
             assert_eq!(pos.file, file_idx as u8);
             assert_eq!(pos.rank, rank_idx as u8);
@@ -142,7 +142,7 @@ fn test_position_fromstr_display_roundtrip() {
     for pos_str in &test_positions {
         let parsed = pos_str
             .parse::<Position>()
-            .expect(&format!("Should parse {}", pos_str));
+            .unwrap_or_else(|_| panic!("Should parse {}", pos_str));
         let displayed = parsed.to_string();
         assert_eq!(*pos_str, displayed, "Parse -> display should be consistent");
 
@@ -396,7 +396,7 @@ fn test_position_parsing_roundtrip_property() {
             let pos_string = pos.to_string();
             let parsed_pos = pos_string
                 .parse::<Position>()
-                .expect(&format!("Should parse {}", pos_string));
+                .unwrap_or_else(|_| panic!("Should parse {}", pos_string));
 
             assert_eq!(
                 pos, parsed_pos,
@@ -420,7 +420,7 @@ fn test_position_trait_implementations() {
     assert!(debug_str.contains("rank"));
 
     // Test Clone
-    let a1_clone = a1.clone();
+    let a1_clone = a1;
     assert_eq!(a1, a1_clone);
 
     // Test Copy (implicit test - should compile)

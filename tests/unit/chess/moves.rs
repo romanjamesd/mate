@@ -185,7 +185,7 @@ fn test_move_parsing_basic() {
     for (move_str, expected_from, expected_to, expected_promotion) in &test_moves {
         let parsed_move = move_str
             .parse::<Move>()
-            .expect(&format!("Should parse {}", move_str));
+            .unwrap_or_else(|_| panic!("Should parse {}", move_str));
         assert_eq!(
             parsed_move.from, *expected_from,
             "From position mismatch for {}",
@@ -250,7 +250,7 @@ fn test_move_parsing_promotion() {
     for (move_str, expected_from, expected_to, expected_piece) in &promotion_moves {
         let parsed_move = move_str
             .parse::<Move>()
-            .expect(&format!("Should parse promotion {}", move_str));
+            .unwrap_or_else(|_| panic!("Should parse promotion {}", move_str));
         assert_eq!(
             parsed_move.from, *expected_from,
             "From position mismatch for {}",
@@ -278,7 +278,7 @@ fn test_move_parsing_castling() {
     for variant in &kingside_variants {
         let parsed_move = variant
             .parse::<Move>()
-            .expect(&format!("Should parse kingside castling {}", variant));
+            .unwrap_or_else(|_| panic!("Should parse kingside castling {}", variant));
         assert_eq!(
             parsed_move.from,
             Position::new(4, 0).unwrap(),
@@ -300,7 +300,7 @@ fn test_move_parsing_castling() {
     for variant in &queenside_variants {
         let parsed_move = variant
             .parse::<Move>()
-            .expect(&format!("Should parse queenside castling {}", variant));
+            .unwrap_or_else(|_| panic!("Should parse queenside castling {}", variant));
         assert_eq!(
             parsed_move.from,
             Position::new(4, 0).unwrap(),
@@ -777,7 +777,7 @@ fn test_move_trait_implementations() {
     assert!(debug_str.contains("to"));
 
     // Test Clone
-    let move1_clone = move1.clone();
+    let move1_clone = move1;
     assert_eq!(move1, move1_clone);
 
     // Test Copy (implicit test - should compile)
@@ -843,7 +843,7 @@ fn test_move_parsing_roundtrip_property() {
         let move_string = original_move.to_string();
         let parsed_move = move_string
             .parse::<Move>()
-            .expect(&format!("Should parse {}", move_string));
+            .unwrap_or_else(|_| panic!("Should parse {}", move_string));
         assert_eq!(
             *original_move, parsed_move,
             "move.to_string().parse() should equal original move for {:?}",

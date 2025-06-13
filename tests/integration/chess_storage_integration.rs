@@ -4,7 +4,6 @@ use serde_json::json;
 
 /// Storage Integration Tests
 /// Tests the integration between chess data structures and storage system
-
 #[cfg(test)]
 mod storage_integration_tests {
     use super::*;
@@ -55,14 +54,14 @@ mod storage_integration_tests {
 
         let player_colors = [PlayerColor::White, PlayerColor::Black];
 
-        for original_player_color in player_colors {
+        for player_color in &player_colors {
             // PlayerColor -> Color -> PlayerColor
-            let color: Color = original_player_color.clone().into();
+            let color: Color = player_color.clone().into();
             let converted_back: PlayerColor = color.into();
             assert_eq!(
-                original_player_color, converted_back,
+                *player_color, converted_back,
                 "PlayerColor roundtrip failed for {:?}",
-                original_player_color
+                player_color
             );
         }
     }

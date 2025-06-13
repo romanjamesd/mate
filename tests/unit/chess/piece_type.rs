@@ -127,7 +127,7 @@ fn test_piece_type_trait_implementations() {
     assert!(format!("{:?}", queen).contains("Queen"));
 
     // Test Clone
-    let pawn_clone = pawn.clone();
+    let pawn_clone = pawn;
     assert_eq!(pawn, pawn_clone);
 
     // Test Copy (implicit test - should compile)

@@ -131,7 +131,7 @@ fn test_color_trait_implementations() {
     assert!(format!("{:?}", black).contains("Black"));
 
     // Test Clone
-    let white_clone = white.clone();
+    let white_clone = white;
     assert_eq!(white, white_clone);
 
     // Test Copy (implicit test - should compile)
