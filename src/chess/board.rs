@@ -1,3 +1,4 @@
+use super::moves::Move;
 use super::{ChessError, Color, Piece, PieceType, Position};
 
 /// Represents a chess board with piece positions and game state
@@ -584,6 +585,286 @@ impl Board {
         result.push_str("  a b c d e f g h");
 
         result
+    }
+
+    /// Apply a move to the board, updating the board state
+    /// This method handles basic move application including:
+    /// - Moving pieces from source to destination
+    /// - Handling captures
+    /// - Updating active color and move counters
+    /// - Basic validation and special move detection
+    pub fn make_move(&mut self, mv: Move) -> Result<(), ChessError> {
+        // Basic move validation
+        let source_piece = self.get_piece(mv.from).ok_or_else(|| {
+            ChessError::InvalidMove(format!("No piece at source position {}", mv.from))
+        })?;
+
+        // Ensure piece belongs to active player
+        if source_piece.color != self.active_color {
+            return Err(ChessError::InvalidMove(format!(
+                "Cannot move {} piece when it's {}'s turn",
+                source_piece.color, self.active_color
+            )));
+        }
+
+        // Validate destination position bounds
+        if mv.to.file > 7 || mv.to.rank > 7 {
+            return Err(ChessError::InvalidMove(format!(
+                "Destination position {} is out of bounds",
+                mv.to
+            )));
+        }
+
+        // Check for friendly fire (can't capture own pieces)
+        if let Some(dest_piece) = self.get_piece(mv.to) {
+            if dest_piece.color == self.active_color {
+                return Err(ChessError::InvalidMove(format!(
+                    "Cannot capture own piece at {}",
+                    mv.to
+                )));
+            }
+        }
+
+        // Handle special moves detection and validation
+        let is_capture = self.get_piece(mv.to).is_some();
+        let is_pawn_move = source_piece.piece_type == PieceType::Pawn;
+        let is_castling = self.detect_castling_move(&mv, &source_piece)?;
+        let is_en_passant = self.detect_en_passant_move(&mv, &source_piece)?;
+
+        // Handle pawn promotion validation
+        if let Some(_promotion_piece) = mv.promotion {
+            if !is_pawn_move {
+                return Err(ChessError::InvalidMove(
+                    "Only pawns can be promoted".to_string(),
+                ));
+            }
+
+            // Check if pawn is reaching the promotion rank
+            let promotion_rank = match self.active_color {
+                Color::White => 7, // rank 8
+                Color::Black => 0, // rank 1
+            };
+
+            if mv.to.rank != promotion_rank {
+                return Err(ChessError::InvalidMove(format!(
+                    "Pawn promotion only allowed when reaching rank {}",
+                    promotion_rank + 1
+                )));
+            }
+        } else if is_pawn_move {
+            // Check if promotion is required but not provided
+            let promotion_rank = match self.active_color {
+                Color::White => 7, // rank 8
+                Color::Black => 0, // rank 1
+            };
+
+            if mv.to.rank == promotion_rank {
+                return Err(ChessError::InvalidMove(
+                    "Pawn promotion required when reaching the last rank".to_string(),
+                ));
+            }
+        }
+
+        // Apply the move
+        if is_castling {
+            self.apply_castling_move(&mv)?;
+        } else if is_en_passant {
+            self.apply_en_passant_move(&mv)?;
+        } else {
+            // Standard move application
+            self.apply_standard_move(&mv)?;
+        }
+
+        // Update move counters
+        self.update_move_counters(is_pawn_move, is_capture);
+
+        // Switch active color
+        self.active_color = match self.active_color {
+            Color::White => Color::Black,
+            Color::Black => Color::White,
+        };
+
+        Ok(())
+    }
+
+    /// Placeholder for legal move validation
+    /// Returns true for all moves (to be implemented in future phases)
+    pub fn is_legal_move(&self, _mv: Move) -> bool {
+        // TODO: Implement comprehensive legal move validation including:
+        // - Piece-specific movement rules
+        // - Check detection and prevention
+        // - Castling legality (king/rook not moved, no pieces between, not in check)
+        // - En passant legality (pawn just moved two squares)
+        // - Pin detection and handling
+        true
+    }
+
+    /// Detect if a move is a castling move
+    fn detect_castling_move(&self, mv: &Move, piece: &Piece) -> Result<bool, ChessError> {
+        if piece.piece_type != PieceType::King {
+            return Ok(false);
+        }
+
+        // Check if king moves exactly 2 squares horizontally
+        if mv.from.rank == mv.to.rank && mv.from.file.abs_diff(mv.to.file) == 2 {
+            // Validate castling move is on the correct rank
+            let expected_rank = match self.active_color {
+                Color::White => 0, // rank 1
+                Color::Black => 7, // rank 8
+            };
+
+            if mv.from.rank != expected_rank {
+                return Err(ChessError::InvalidMove(format!(
+                    "Castling must be performed on rank {} for {}",
+                    expected_rank + 1,
+                    self.active_color
+                )));
+            }
+
+            // Validate king starts from e-file
+            if mv.from.file != 4 {
+                return Err(ChessError::InvalidMove(
+                    "Castling king must start from e-file".to_string(),
+                ));
+            }
+
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    /// Detect if a move is an en passant move
+    fn detect_en_passant_move(&self, mv: &Move, piece: &Piece) -> Result<bool, ChessError> {
+        if piece.piece_type != PieceType::Pawn {
+            return Ok(false);
+        }
+
+        // Check if pawn moves diagonally to an empty square
+        if mv.from.file != mv.to.file && mv.from.rank.abs_diff(mv.to.rank) == 1 {
+            if self.get_piece(mv.to).is_none() {
+                // This could be en passant - validate the move direction
+                let expected_direction = match self.active_color {
+                    Color::White => 1,  // white pawns move up (increasing rank)
+                    Color::Black => -1, // black pawns move down (decreasing rank)
+                };
+
+                let actual_direction = (mv.to.rank as i8) - (mv.from.rank as i8);
+                if actual_direction != expected_direction {
+                    return Err(ChessError::InvalidMove(
+                        "Pawn moving in wrong direction".to_string(),
+                    ));
+                }
+
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    /// Apply a standard (non-special) move
+    fn apply_standard_move(&mut self, mv: &Move) -> Result<(), ChessError> {
+        let piece = self.get_piece(mv.from).unwrap(); // Already validated in make_move
+
+        // Handle promotion
+        let final_piece = if let Some(promotion_type) = mv.promotion {
+            Piece::new(promotion_type, piece.color)
+        } else {
+            piece
+        };
+
+        // Remove piece from source
+        self.set_piece(mv.from, None)?;
+
+        // Place piece at destination (handles captures automatically)
+        self.set_piece(mv.to, Some(final_piece))?;
+
+        Ok(())
+    }
+
+    /// Apply a castling move (king and rook movement)
+    fn apply_castling_move(&mut self, mv: &Move) -> Result<(), ChessError> {
+        // Move the king
+        let king = self.get_piece(mv.from).unwrap(); // Already validated
+        self.set_piece(mv.from, None)?;
+        self.set_piece(mv.to, Some(king))?;
+
+        // Determine rook positions and move the rook
+        let (rook_from_file, rook_to_file) = if mv.to.file == 6 {
+            // Kingside castling (O-O): rook moves from h-file to f-file
+            (7, 5)
+        } else if mv.to.file == 2 {
+            // Queenside castling (O-O-O): rook moves from a-file to d-file
+            (0, 3)
+        } else {
+            return Err(ChessError::InvalidMove(
+                "Invalid castling destination".to_string(),
+            ));
+        };
+
+        let rook_from = Position::new_unchecked(rook_from_file, mv.from.rank);
+        let rook_to = Position::new_unchecked(rook_to_file, mv.from.rank);
+
+        // Validate rook exists
+        let rook = self.get_piece(rook_from).ok_or_else(|| {
+            ChessError::InvalidMove(format!("No rook found at {} for castling", rook_from))
+        })?;
+
+        if rook.piece_type != PieceType::Rook || rook.color != self.active_color {
+            return Err(ChessError::InvalidMove(
+                "Invalid rook for castling".to_string(),
+            ));
+        }
+
+        // Move the rook
+        self.set_piece(rook_from, None)?;
+        self.set_piece(rook_to, Some(rook))?;
+
+        Ok(())
+    }
+
+    /// Apply an en passant move (pawn capture and removal of captured pawn)
+    fn apply_en_passant_move(&mut self, mv: &Move) -> Result<(), ChessError> {
+        let pawn = self.get_piece(mv.from).unwrap(); // Already validated
+
+        // Move the pawn to the destination
+        self.set_piece(mv.from, None)?;
+        self.set_piece(mv.to, Some(pawn))?;
+
+        // Remove the captured pawn (which is on the same rank as the source)
+        let captured_pawn_pos = Position::new_unchecked(mv.to.file, mv.from.rank);
+        let captured_pawn = self.get_piece(captured_pawn_pos).ok_or_else(|| {
+            ChessError::InvalidMove("No pawn to capture for en passant".to_string())
+        })?;
+
+        // Validate the captured piece is an enemy pawn
+        if captured_pawn.piece_type != PieceType::Pawn || captured_pawn.color == self.active_color {
+            return Err(ChessError::InvalidMove(
+                "Invalid piece for en passant capture".to_string(),
+            ));
+        }
+
+        self.set_piece(captured_pawn_pos, None)?;
+
+        Ok(())
+    }
+
+    /// Update move counters based on the move type
+    fn update_move_counters(&mut self, is_pawn_move: bool, is_capture: bool) {
+        // Update halfmove clock (50-move rule)
+        if is_pawn_move || is_capture {
+            // Reset halfmove clock on pawn moves and captures
+            self.halfmove_clock = 0;
+        } else {
+            // Increment halfmove clock
+            self.halfmove_clock += 1;
+        }
+
+        // Update fullmove number (increments after Black's move)
+        if self.active_color == Color::Black {
+            self.fullmove_number += 1;
+        }
     }
 }
 
