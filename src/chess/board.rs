@@ -410,6 +410,98 @@ impl Board {
         })
     }
 
+    /// Converts the current board state to FEN notation
+    /// Returns a string in standard FEN format with 6 space-separated fields
+    pub fn to_fen(&self) -> String {
+        let mut fen_parts = Vec::with_capacity(6);
+
+        // 1. Piece placement
+        fen_parts.push(self.generate_piece_placement());
+
+        // 2. Active color
+        fen_parts.push(
+            match self.active_color {
+                Color::White => "w",
+                Color::Black => "b",
+            }
+            .to_string(),
+        );
+
+        // 3. Castling rights (placeholder)
+        fen_parts.push("KQkq".to_string()); // TODO: Implement proper castling tracking
+
+        // 4. En passant target (placeholder)
+        fen_parts.push("-".to_string()); // TODO: Implement en passant tracking
+
+        // 5. Halfmove clock
+        fen_parts.push(self.halfmove_clock.to_string());
+
+        // 6. Fullmove number
+        fen_parts.push(self.fullmove_number.to_string());
+
+        fen_parts.join(" ")
+    }
+
+    /// Generate the piece placement portion of FEN notation
+    /// Iterates through ranks 8 down to 1, converting pieces to FEN characters
+    /// and optimizing consecutive empty squares into numbers
+    fn generate_piece_placement(&self) -> String {
+        let mut ranks = Vec::with_capacity(8);
+
+        // Iterate through ranks 8 down to 1 (board indices 7 down to 0)
+        for rank_idx in (0..8).rev() {
+            let mut rank_string = String::new();
+            let mut empty_count = 0;
+
+            // Iterate through files a-h (columns 0-7)
+            for file_idx in 0..8 {
+                match self.squares[rank_idx][file_idx] {
+                    Some(piece) => {
+                        // If we have accumulated empty squares, add the count first
+                        if empty_count > 0 {
+                            rank_string.push_str(&empty_count.to_string());
+                            empty_count = 0;
+                        }
+                        // Add the piece character
+                        rank_string.push(self.piece_to_fen_char(&piece));
+                    }
+                    None => {
+                        // Count consecutive empty squares
+                        empty_count += 1;
+                    }
+                }
+            }
+
+            // Add any remaining empty squares at the end of the rank
+            if empty_count > 0 {
+                rank_string.push_str(&empty_count.to_string());
+            }
+
+            ranks.push(rank_string);
+        }
+
+        ranks.join("/")
+    }
+
+    /// Convert a piece to its FEN character representation
+    /// White pieces: uppercase letters (PRNBQK)
+    /// Black pieces: lowercase letters (prnbqk)
+    fn piece_to_fen_char(&self, piece: &Piece) -> char {
+        let base_char = match piece.piece_type {
+            PieceType::Pawn => 'P',
+            PieceType::Rook => 'R',
+            PieceType::Knight => 'N',
+            PieceType::Bishop => 'B',
+            PieceType::Queen => 'Q',
+            PieceType::King => 'K',
+        };
+
+        match piece.color {
+            Color::White => base_char,
+            Color::Black => base_char.to_ascii_lowercase(),
+        }
+    }
+
     /// Helper function to convert FEN piece character to Piece
     fn char_to_piece(c: char) -> Result<Piece, ChessError> {
         let (piece_type, color) = match c {
@@ -441,3 +533,5 @@ impl Default for Board {
         Self::new()
     }
 }
+
+
