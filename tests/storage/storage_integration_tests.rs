@@ -1,10 +1,12 @@
 use mate::storage::{Database, GameStatus, PlayerColor};
+use rand;
 use tempfile::TempDir;
 
 /// Test helper that ensures proper environment cleanup
 struct TestEnvironment {
     _temp_dir: TempDir,
     original_data_dir: Option<String>,
+    test_data_dir: std::path::PathBuf,
 }
 
 impl TestEnvironment {
@@ -14,14 +16,18 @@ impl TestEnvironment {
 
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
-        // Use a unique directory for each test to avoid pollution
+        // Use multiple sources of uniqueness to prevent race conditions
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("Time went backwards")
             .as_nanos();
-        let unique_temp_dir = temp_dir
-            .path()
-            .join(format!("test_integration_{}", timestamp));
+        let random_id: u64 = rand::random();
+        let thread_id = std::thread::current().id();
+        let process_id = std::process::id();
+        let unique_temp_dir = temp_dir.path().join(format!(
+            "test_integration_{}_{:x}_{:?}_{}",
+            timestamp, random_id, thread_id, process_id
+        ));
         std::fs::create_dir_all(&unique_temp_dir).expect("Failed to create unique test dir");
 
         // Override the database path for testing
@@ -32,6 +38,7 @@ impl TestEnvironment {
         let env = TestEnvironment {
             _temp_dir: temp_dir,
             original_data_dir,
+            test_data_dir: unique_temp_dir,
         };
 
         (db, env)
@@ -40,6 +47,15 @@ impl TestEnvironment {
 
 impl Drop for TestEnvironment {
     fn drop(&mut self) {
+        // Clean up WAL and SHM files that might be left behind
+        let db_path = self.test_data_dir.join("database.sqlite");
+        let wal_path = db_path.with_extension("sqlite-wal");
+        let shm_path = db_path.with_extension("sqlite-shm");
+
+        // Remove WAL files if they exist (ignore errors as they might not exist)
+        let _ = std::fs::remove_file(&wal_path);
+        let _ = std::fs::remove_file(&shm_path);
+
         // Restore original environment variable
         match &self.original_data_dir {
             Some(original) => std::env::set_var("MATE_DATA_DIR", original),

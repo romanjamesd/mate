@@ -43,3 +43,9 @@ pub mod edge_cases_boundaries;
 
 // Comprehensive integration tests
 pub mod integration_tests;
+
+// Chess error consistency tests
+pub mod chess_error_consistency;
+
+// Chess storage integration tests
+pub mod chess_storage_integration;
