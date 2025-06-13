@@ -413,33 +413,20 @@ impl Board {
     /// Converts the current board state to FEN notation
     /// Returns a string in standard FEN format with 6 space-separated fields
     pub fn to_fen(&self) -> String {
-        let mut fen_parts = Vec::with_capacity(6);
+        let piece_placement = self.generate_piece_placement();
+        let active_color = match self.active_color {
+            Color::White => "w",
+            Color::Black => "b",
+        };
+        let castling_rights = "KQkq"; // Placeholder - will be implemented later
+        let en_passant = "-"; // Placeholder - will be implemented later
+        let halfmove = self.halfmove_clock;
+        let fullmove = self.fullmove_number;
 
-        // 1. Piece placement
-        fen_parts.push(self.generate_piece_placement());
-
-        // 2. Active color
-        fen_parts.push(
-            match self.active_color {
-                Color::White => "w",
-                Color::Black => "b",
-            }
-            .to_string(),
-        );
-
-        // 3. Castling rights (placeholder)
-        fen_parts.push("KQkq".to_string()); // TODO: Implement proper castling tracking
-
-        // 4. En passant target (placeholder)
-        fen_parts.push("-".to_string()); // TODO: Implement en passant tracking
-
-        // 5. Halfmove clock
-        fen_parts.push(self.halfmove_clock.to_string());
-
-        // 6. Fullmove number
-        fen_parts.push(self.fullmove_number.to_string());
-
-        fen_parts.join(" ")
+        format!(
+            "{} {} {} {} {} {}",
+            piece_placement, active_color, castling_rights, en_passant, halfmove, fullmove
+        )
     }
 
     /// Generate the piece placement portion of FEN notation
@@ -556,6 +543,47 @@ impl Board {
             }
         };
         Ok(Piece::new(piece_type, color))
+    }
+
+    /// Display the board as ASCII art from White's perspective
+    /// Shows rank 8 at the top, rank 1 at the bottom
+    /// Includes coordinate labels (a-h files, 1-8 ranks)
+    pub fn to_ascii(&self) -> String {
+        let mut result = String::new();
+
+        // Top file labels
+        result.push_str("  a b c d e f g h\n");
+
+        // Display each rank from 8 down to 1 (White's perspective)
+        for display_rank in (0..8).rev() {
+            let rank_number = display_rank + 1;
+
+            // Left rank label
+            result.push_str(&format!("{} ", rank_number));
+
+            // Display each file from a to h
+            for file in 0..8 {
+                let piece = self.squares[display_rank][file];
+                let symbol = match piece {
+                    Some(piece) => piece.to_string(),
+                    None => ".".to_string(),
+                };
+                result.push_str(&symbol);
+
+                // Add space between squares (except after the last square)
+                if file < 7 {
+                    result.push(' ');
+                }
+            }
+
+            // Right rank label
+            result.push_str(&format!(" {}\n", rank_number));
+        }
+
+        // Bottom file labels
+        result.push_str("  a b c d e f g h");
+
+        result
     }
 }
 
