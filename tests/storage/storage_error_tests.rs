@@ -1,4 +1,5 @@
 use mate::storage::{Database, GameStatus, PlayerColor, StorageError};
+use rand;
 use std::fs;
 use tempfile::TempDir;
 
@@ -6,6 +7,7 @@ use tempfile::TempDir;
 struct TestEnvironment {
     _temp_dir: TempDir,
     original_data_dir: Option<String>,
+    test_data_dir: std::path::PathBuf,
 }
 
 impl TestEnvironment {
@@ -15,30 +17,79 @@ impl TestEnvironment {
 
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
-        // Use a unique directory for each test to avoid pollution
+        // Add a small random delay to spread out database creation times
+        // This helps prevent race conditions in high-parallelism scenarios
+        let delay_ms = rand::random::<u8>() as u64 % 50; // 0-49ms
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+
+        // Use multiple sources of uniqueness to prevent race conditions
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("Time went backwards")
             .as_nanos();
-        let unique_temp_dir = temp_dir.path().join(format!("test_errors_{}", timestamp));
+        let random_id: u64 = rand::random();
+        let thread_id = std::thread::current().id();
+        let process_id = std::process::id();
+
+        // Include the test function name or a unique identifier in the path
+        let unique_temp_dir = temp_dir.path().join(format!(
+            "test_errors_{}_{:x}_{:?}_{}_{}",
+            timestamp, random_id, thread_id, process_id, delay_ms
+        ));
         std::fs::create_dir_all(&unique_temp_dir).expect("Failed to create unique test dir");
 
         // Override the database path for testing
         std::env::set_var("MATE_DATA_DIR", &unique_temp_dir);
 
-        let db = Database::new("test_peer_errors").expect("Failed to create test database");
+        // Retry database creation with exponential backoff to handle potential race conditions
+        let db = Self::create_database_with_retry("test_peer_errors", 3)
+            .expect("Failed to create test database after retries");
 
         let env = TestEnvironment {
             _temp_dir: temp_dir,
             original_data_dir,
+            test_data_dir: unique_temp_dir,
         };
 
         (db, env)
+    }
+
+    fn create_database_with_retry(
+        peer_id: &str,
+        max_retries: u32,
+    ) -> Result<Database, mate::storage::StorageError> {
+        let mut retries = 0;
+        loop {
+            match Database::new(peer_id) {
+                Ok(db) => return Ok(db),
+                Err(e) => {
+                    if retries >= max_retries {
+                        return Err(e);
+                    }
+                    retries += 1;
+                    // Exponential backoff with jitter
+                    let delay_ms = (2_u64.pow(retries) * 10) + (rand::random::<u8>() as u64 % 20);
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                }
+            }
+        }
     }
 }
 
 impl Drop for TestEnvironment {
     fn drop(&mut self) {
+        // Force close any database connections by dropping the Database instance
+        // This helps ensure WAL files are properly cleaned up
+
+        // Clean up WAL and SHM files that might be left behind
+        let db_path = self.test_data_dir.join("database.sqlite");
+        let wal_path = db_path.with_extension("sqlite-wal");
+        let shm_path = db_path.with_extension("sqlite-shm");
+
+        // Remove WAL files if they exist (ignore errors as they might not exist)
+        let _ = fs::remove_file(&wal_path);
+        let _ = fs::remove_file(&shm_path);
+
         // Restore original environment variable
         match &self.original_data_dir {
             Some(original) => std::env::set_var("MATE_DATA_DIR", original),
@@ -55,22 +106,36 @@ fn create_test_database() -> (Database, TestEnvironment) {
 /// Environment cleanup helper for tests that need to modify environment
 struct EnvironmentGuard {
     original_data_dir: Option<String>,
+    test_data_dir: Option<std::path::PathBuf>,
 }
 
 impl EnvironmentGuard {
     fn new() -> Self {
         Self {
             original_data_dir: std::env::var("MATE_DATA_DIR").ok(),
+            test_data_dir: None,
         }
     }
 
-    fn set_data_dir<P: AsRef<std::path::Path>>(&self, path: P) {
-        std::env::set_var("MATE_DATA_DIR", path.as_ref());
+    fn set_data_dir<P: AsRef<std::path::Path>>(&mut self, path: P) {
+        let path_buf = path.as_ref().to_path_buf();
+        self.test_data_dir = Some(path_buf.clone());
+        std::env::set_var("MATE_DATA_DIR", &path_buf);
     }
 }
 
 impl Drop for EnvironmentGuard {
     fn drop(&mut self) {
+        // Clean up WAL files if a test directory was set
+        if let Some(test_dir) = &self.test_data_dir {
+            let db_path = test_dir.join("database.sqlite");
+            let wal_path = db_path.with_extension("sqlite-wal");
+            let shm_path = db_path.with_extension("sqlite-shm");
+
+            let _ = fs::remove_file(&wal_path);
+            let _ = fs::remove_file(&shm_path);
+        }
+
         // Restore original environment variable
         match &self.original_data_dir {
             Some(original) => std::env::set_var("MATE_DATA_DIR", original),
@@ -84,7 +149,7 @@ impl Drop for EnvironmentGuard {
 
 #[test]
 fn test_database_path_errors() {
-    let _env_guard = EnvironmentGuard::new();
+    let mut _env_guard = EnvironmentGuard::new();
 
     // Test with invalid directory path
     let invalid_path = "/root/nonexistent/deeply/nested/path";
@@ -105,7 +170,7 @@ fn test_database_path_errors() {
 
 #[test]
 fn test_corrupted_database_handling() {
-    let _env_guard = EnvironmentGuard::new();
+    let mut _env_guard = EnvironmentGuard::new();
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
     // Use a unique directory for this test
@@ -155,7 +220,7 @@ fn test_corrupted_database_handling() {
 
 #[test]
 fn test_database_permission_errors() {
-    let _env_guard = EnvironmentGuard::new();
+    let mut _env_guard = EnvironmentGuard::new();
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
     // Create a read-only directory to simulate permission issues
