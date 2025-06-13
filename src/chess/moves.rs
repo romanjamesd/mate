@@ -1,5 +1,5 @@
 use super::error::ChessError;
-use super::piece::PieceType;
+use super::piece::{Color, PieceType};
 use super::position::Position;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -122,41 +122,34 @@ impl Move {
 
         Self::new(from, to, promotion)
     }
-}
 
-// Implement Display for algebraic notation
-impl fmt::Display for Move {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}", self.from, self.to)?;
-        if let Some(promotion) = self.promotion {
-            write!(f, "{}", promotion)?;
-        }
-        Ok(())
-    }
-}
-
-// Implement FromStr for parsing algebraic move notation
-impl FromStr for Move {
-    type Err = ChessError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    /// Parse move string with color context for proper castling disambiguation
+    pub fn from_str_with_color(s: &str, color: Color) -> Result<Self, ChessError> {
         let s = s.trim();
 
-        // Handle special castling moves first
+        // Handle special castling moves with color context
         match s.to_uppercase().as_str() {
             "O-O" | "0-0" => {
-                // Kingside castling (assumes white, context needed for black)
+                // Kingside castling with proper color-based rank
+                let rank = match color {
+                    Color::White => 0, // rank 1 (e1, g1)
+                    Color::Black => 7, // rank 8 (e8, g8)
+                };
                 return Ok(Move::new_unchecked(
-                    Position::new_unchecked(4, 0), // e1
-                    Position::new_unchecked(6, 0), // g1
+                    Position::new_unchecked(4, rank), // e1 or e8
+                    Position::new_unchecked(6, rank), // g1 or g8
                     None,
                 ));
             }
             "O-O-O" | "0-0-0" => {
-                // Queenside castling (assumes white, context needed for black)
+                // Queenside castling with proper color-based rank
+                let rank = match color {
+                    Color::White => 0, // rank 1 (e1, c1)
+                    Color::Black => 7, // rank 8 (e8, c8)
+                };
                 return Ok(Move::new_unchecked(
-                    Position::new_unchecked(4, 0), // e1
-                    Position::new_unchecked(2, 0), // c1
+                    Position::new_unchecked(4, rank), // e1 or e8
+                    Position::new_unchecked(2, rank), // c1 or c8
                     None,
                 ));
             }
@@ -189,5 +182,27 @@ impl FromStr for Move {
         Err(ChessError::InvalidMove(format!(
             "Invalid move format '{}'. Expected 'e2e4', 'e7e8q' for promotion, or 'O-O'/'O-O-O' for castling.", s
         )))
+    }
+}
+
+// Implement Display for algebraic notation
+impl fmt::Display for Move {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}{}", self.from, self.to)?;
+        if let Some(promotion) = self.promotion {
+            write!(f, "{}", promotion)?;
+        }
+        Ok(())
+    }
+}
+
+// Implement FromStr for parsing algebraic move notation
+impl FromStr for Move {
+    type Err = ChessError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Default to White for backward compatibility
+        // Note: For castling moves, this assumes White. Use from_str_with_color() for proper color context.
+        Self::from_str_with_color(s, Color::White)
     }
 }
