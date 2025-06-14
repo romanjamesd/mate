@@ -1,8 +1,10 @@
 use super::moves::Move;
 use super::{ChessError, Color, Piece, PieceType, Position};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// Represents a chess board with piece positions and game state
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Board {
     /// 8x8 array representing the chess board squares
     /// squares[rank][file] where rank 0 = rank 1, file 0 = file a
@@ -865,6 +867,24 @@ impl Board {
         if self.active_color == Color::Black {
             self.fullmove_number += 1;
         }
+    }
+
+    /// Generate a hash of the current board state
+    ///
+    /// This method creates a consistent hash value for the board state that includes:
+    /// - All piece positions (squares array)
+    /// - Active color (current player to move)
+    /// - Move counters (fullmove_number and halfmove_clock)
+    ///
+    /// Identical board positions will produce identical hash values, making this
+    /// suitable for board state comparison and integrity checking.
+    pub fn hash_state(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+
+        // Hash all relevant board state components
+        self.hash(&mut hasher);
+
+        hasher.finish()
     }
 }
 
