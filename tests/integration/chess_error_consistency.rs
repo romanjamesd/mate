@@ -439,6 +439,30 @@ fn test_error_display_is_human_readable() {
                     display_string
                 );
             }
+            ChessError::InvalidFen(_msg) => {
+                assert!(
+                    display_string.contains("FEN"),
+                    "FEN error should mention 'FEN': {}",
+                    display_string
+                );
+                assert!(
+                    display_string.contains("test fen error"),
+                    "FEN error should include original message: {}",
+                    display_string
+                );
+            }
+            ChessError::BoardStateError(_msg) => {
+                assert!(
+                    display_string.contains("Board state"),
+                    "Board state error should mention 'Board state': {}",
+                    display_string
+                );
+                assert!(
+                    display_string.contains("test board state error"),
+                    "Board state error should include original message: {}",
+                    display_string
+                );
+            }
         }
     }
 
