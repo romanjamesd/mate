@@ -2,6 +2,7 @@ pub mod board;
 pub mod color;
 pub mod display;
 pub mod fen;
+pub mod move_application;
 pub mod moves;
 pub mod piece;
 pub mod piece_type;
