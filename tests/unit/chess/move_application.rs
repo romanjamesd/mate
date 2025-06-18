@@ -221,6 +221,298 @@ mod basic_move_application_tests {
 }
 
 #[cfg(test)]
+mod move_validation_error_tests {
+    use super::*;
+
+    #[test]
+    fn test_move_to_out_of_bounds_destination() {
+        let mut board = Board::new();
+
+        // Try to move a piece to an out-of-bounds destination
+        let out_of_bounds_moves = [
+            // File out of bounds
+            Move::new(
+                Position::new_unchecked(4, 1), // e2 (valid source)
+                Position { file: 8, rank: 3 }, // out of bounds file
+                None,
+            )
+            .unwrap(),
+            // Rank out of bounds
+            Move::new(
+                Position::new_unchecked(4, 1), // e2 (valid source)
+                Position { file: 4, rank: 8 }, // out of bounds rank
+                None,
+            )
+            .unwrap(),
+            // Both out of bounds
+            Move::new(
+                Position::new_unchecked(4, 1), // e2 (valid source)
+                Position { file: 9, rank: 9 }, // both out of bounds
+                None,
+            )
+            .unwrap(),
+        ];
+
+        for mv in out_of_bounds_moves.iter() {
+            let result = board.make_move(*mv);
+            assert!(
+                result.is_err(),
+                "Move to out of bounds destination should fail: {:?}",
+                mv
+            );
+
+            match result.unwrap_err() {
+                ChessError::InvalidMove(msg) => {
+                    assert!(
+                        msg.contains("out of bounds") || msg.contains("bounds"),
+                        "Error should mention bounds: {}",
+                        msg
+                    );
+                }
+                other => panic!("Expected InvalidMove error, got: {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn test_self_capture_attempt() {
+        let mut board = Board::new();
+
+        // Try to capture own piece - white pawn trying to "capture" white knight
+        let self_capture_move = Move::new(
+            Position::new_unchecked(4, 1), // e2 (white pawn)
+            Position::new_unchecked(6, 0), // g1 (white knight)
+            None,
+        )
+        .unwrap();
+
+        let result = board.make_move(self_capture_move);
+        assert!(result.is_err(), "Self-capture should fail");
+
+        match result.unwrap_err() {
+            ChessError::InvalidMove(msg) => {
+                assert!(
+                    msg.contains("own piece") || msg.contains("capture"),
+                    "Error should mention own piece or capture: {}",
+                    msg
+                );
+            }
+            other => panic!("Expected InvalidMove error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_move_validation_multiple_error_scenarios() {
+        let mut board = Board::new();
+
+        // Test various invalid move scenarios
+        let invalid_moves = [
+            // From empty square to empty square
+            (
+                Move::new(
+                    Position::new_unchecked(4, 3), // e4 (empty)
+                    Position::new_unchecked(4, 4), // e5 (empty)
+                    None,
+                )
+                .unwrap(),
+                "empty source",
+            ),
+            // Wrong color piece
+            (
+                Move::new(
+                    Position::new_unchecked(4, 6), // e7 (black pawn)
+                    Position::new_unchecked(4, 5), // e6
+                    None,
+                )
+                .unwrap(),
+                "wrong color",
+            ),
+            // Self capture
+            (
+                Move::new(
+                    Position::new_unchecked(1, 0), // b1 (white knight)
+                    Position::new_unchecked(0, 0), // a1 (white rook)
+                    None,
+                )
+                .unwrap(),
+                "self capture",
+            ),
+        ];
+
+        for (mv, description) in invalid_moves.iter() {
+            let result = board.make_move(*mv);
+            assert!(
+                result.is_err(),
+                "Move should fail for {}: {:?}",
+                description,
+                mv
+            );
+
+            // Verify it's an InvalidMove error
+            match result.unwrap_err() {
+                ChessError::InvalidMove(_) => {
+                    // Expected error type
+                }
+                other => panic!(
+                    "Expected InvalidMove error for {}, got: {:?}",
+                    description, other
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn test_invalid_promotion_moves() {
+        let mut board = Board::new();
+
+        // Set up a white pawn on 7th rank for promotion testing
+        let pawn_pos = Position::new_unchecked(4, 6); // e7
+        board
+            .set_piece(pawn_pos, Some(Piece::new(PieceType::Pawn, Color::White)))
+            .unwrap();
+
+        // Test promotion with non-pawn piece
+        board
+            .set_piece(
+                Position::new_unchecked(3, 3), // d4
+                Some(Piece::new(PieceType::Knight, Color::White)),
+            )
+            .unwrap();
+
+        let invalid_promotion_move = Move::new(
+            Position::new_unchecked(3, 3), // d4 (knight)
+            Position::new_unchecked(3, 4), // d5
+            Some(PieceType::Queen),        // trying to promote a knight
+        )
+        .unwrap();
+
+        let result = board.make_move(invalid_promotion_move);
+        assert!(result.is_err(), "Non-pawn promotion should fail");
+
+        match result.unwrap_err() {
+            ChessError::InvalidMove(msg) => {
+                assert!(
+                    msg.contains("pawn") || msg.contains("promotion"),
+                    "Error should mention pawn or promotion: {}",
+                    msg
+                );
+            }
+            other => panic!("Expected InvalidMove error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_missing_required_promotion() {
+        let mut board = Board::new();
+
+        // Set up a white pawn that should promote
+        let pawn_pos = Position::new_unchecked(4, 6); // e7
+        board
+            .set_piece(pawn_pos, Some(Piece::new(PieceType::Pawn, Color::White)))
+            .unwrap();
+
+        // Try to move pawn to 8th rank without promotion
+        let missing_promotion_move = Move::new(
+            pawn_pos,                      // e7
+            Position::new_unchecked(4, 7), // e8 (promotion rank)
+            None,                          // missing promotion
+        )
+        .unwrap();
+
+        let result = board.make_move(missing_promotion_move);
+        assert!(result.is_err(), "Missing promotion should fail");
+
+        match result.unwrap_err() {
+            ChessError::InvalidMove(msg) => {
+                assert!(
+                    msg.contains("promotion") || msg.contains("required"),
+                    "Error should mention promotion required: {}",
+                    msg
+                );
+            }
+            other => panic!("Expected InvalidMove error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_invalid_promotion_rank() {
+        let mut board = Board::new();
+
+        // Set up a white pawn not on promotion rank
+        let pawn_pos = Position::new_unchecked(4, 4); // e5
+        board
+            .set_piece(pawn_pos, Some(Piece::new(PieceType::Pawn, Color::White)))
+            .unwrap();
+
+        // Try to promote pawn not reaching promotion rank
+        let invalid_rank_promotion = Move::new(
+            pawn_pos,                      // e5
+            Position::new_unchecked(4, 5), // e6 (not promotion rank)
+            Some(PieceType::Queen),        // trying to promote
+        )
+        .unwrap();
+
+        let result = board.make_move(invalid_rank_promotion);
+        assert!(result.is_err(), "Promotion on wrong rank should fail");
+
+        match result.unwrap_err() {
+            ChessError::InvalidMove(msg) => {
+                assert!(
+                    msg.contains("promotion") && msg.contains("rank"),
+                    "Error should mention promotion and rank: {}",
+                    msg
+                );
+            }
+            other => panic!("Expected InvalidMove error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_error_message_quality() {
+        let mut board = Board::new();
+
+        // Test that error messages are informative
+        let test_cases = [
+            (
+                Move::new(
+                    Position::new_unchecked(4, 3), // e4 (empty)
+                    Position::new_unchecked(4, 4), // e5
+                    None,
+                )
+                .unwrap(),
+                vec!["No piece", "source", "position"],
+            ),
+            (
+                Move::new(
+                    Position::new_unchecked(4, 6), // e7 (black pawn, wrong color)
+                    Position::new_unchecked(4, 5), // e6
+                    None,
+                )
+                .unwrap(),
+                vec!["Cannot move", "color", "turn"],
+            ),
+        ];
+
+        for (mv, expected_words) in test_cases.iter() {
+            let result = board.make_move(*mv);
+            assert!(result.is_err());
+
+            if let Err(ChessError::InvalidMove(msg)) = result {
+                let msg_lower = msg.to_lowercase();
+                let has_expected_word = expected_words
+                    .iter()
+                    .any(|word| msg_lower.contains(&word.to_lowercase()));
+                assert!(
+                    has_expected_word,
+                    "Error message '{}' should contain one of: {:?}",
+                    msg, expected_words
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod move_validation_placeholder_tests {
     use super::*;
 
