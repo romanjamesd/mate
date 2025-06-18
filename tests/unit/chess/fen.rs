@@ -134,6 +134,37 @@ mod fen_parsing_tests {
     }
 
     #[test]
+    fn test_invalid_fen_piece_placement_additional() {
+        let invalid_fens = vec![
+            // Ranks with too many squares
+            "rnbqkbnrr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", // 9 pieces in rank
+            "9/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",         // number > 8
+            // Ranks with too few squares
+            "rnbqkbn/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", // 7 pieces in rank
+            "7/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",       // number < 8 total
+            // Mixed invalid combinations
+            "rnbq2k1nr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", // 2 + pieces > 8
+            // Invalid zero
+            "rnbqkbn0r/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", // 0 is invalid
+        ];
+
+        for fen in invalid_fens {
+            let result = Board::from_fen(fen);
+            assert!(
+                result.is_err(),
+                "Expected error for FEN with invalid piece placement: '{}'",
+                fen
+            );
+
+            if let Err(ChessError::InvalidFen(_)) = result {
+                // Expected error type
+            } else {
+                panic!("Expected InvalidFen error for FEN: '{}'", fen);
+            }
+        }
+    }
+
+    #[test]
     fn test_invalid_fen_active_color() {
         let invalid_fens = vec![
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR x KQkq - 0 1", // x is invalid
@@ -187,6 +218,35 @@ mod fen_parsing_tests {
     }
 
     #[test]
+    fn test_invalid_fen_move_counters_additional() {
+        let invalid_fens = vec![
+            // Fullmove number must be >= 1
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 0",
+            // Floating point numbers
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 1.5 1",
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1.0",
+            // Numbers too large (implementation dependent, but test reasonable bounds)
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 999999999999999999 1",
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 999999999999999999",
+        ];
+
+        for fen in invalid_fens {
+            let result = Board::from_fen(fen);
+            assert!(
+                result.is_err(),
+                "Expected error for FEN with invalid move counters: '{}'",
+                fen
+            );
+
+            if let Err(ChessError::InvalidFen(_)) = result {
+                // Expected error type
+            } else {
+                panic!("Expected InvalidFen error for FEN: '{}'", fen);
+            }
+        }
+    }
+
+    #[test]
     fn test_invalid_fen_empty_fields() {
         let invalid_fens = vec![
             " /pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", // empty piece placement
@@ -214,6 +274,162 @@ mod fen_parsing_tests {
                 );
             } else {
                 panic!("Expected InvalidFen error for FEN: '{}'", fen);
+            }
+        }
+    }
+
+    #[test]
+    fn test_invalid_fen_castling_rights() {
+        let invalid_fens = vec![
+            // Invalid castling characters
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkqX - 0 1", // X is invalid
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w kqKQ - 0 1",  // wrong order
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq1 - 0 1", // number invalid
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KK - 0 1",    // duplicate K
+                                                                         // Note: "Qq" is actually valid according to current implementation - it just checks wrong order
+        ];
+
+        for fen in invalid_fens {
+            let result = Board::from_fen(fen);
+            assert!(
+                result.is_err(),
+                "Expected error for FEN with invalid castling rights: '{}'",
+                fen
+            );
+
+            if let Err(ChessError::InvalidFen(_)) = result {
+                // Expected error type
+            } else {
+                panic!("Expected InvalidFen error for FEN: '{}'", fen);
+            }
+        }
+    }
+
+    #[test]
+    fn test_invalid_fen_en_passant() {
+        let invalid_fens = vec![
+            // Invalid en passant square format
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq e9 0 1", // rank 9 doesn't exist
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq i3 0 1", // file i doesn't exist
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq e0 0 1", // rank 0 doesn't exist
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq e 0 1",  // incomplete square
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq 3 0 1",  // missing file
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq e33 0 1", // too many characters
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq E3 0 1", // uppercase file
+        ];
+
+        for fen in invalid_fens {
+            let result = Board::from_fen(fen);
+            assert!(
+                result.is_err(),
+                "Expected error for FEN with invalid en passant: '{}'",
+                fen
+            );
+
+            if let Err(ChessError::InvalidFen(_)) = result {
+                // Expected error type
+            } else {
+                panic!("Expected InvalidFen error for FEN: '{}'", fen);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod fen_board_state_error_tests {
+    use super::*;
+
+    #[test]
+    fn test_board_state_validation_placeholder() {
+        // These tests document future board state validation requirements
+        // The current implementation only validates FEN syntax, not board state validity
+        // These tests are expected to pass (no validation yet) but document what should eventually be validated
+
+        let syntactically_valid_but_chess_invalid = vec![
+            // Too many kings - these are syntactically valid FEN but invalid chess positions
+            "rnbqkknr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", // Two black kings
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBKKNBR w KQkq - 0 1", // Two white kings
+            // No kings
+            "rnbq1bnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQ1BNR w KQkq - 0 1", // No kings at all
+            // Too many pieces of one type
+            "qqqqqq1q/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", // 7 black queens
+            // Pawns on impossible ranks
+            "rnbqkbnr/pppppppp/8/8/8/8/pppppppp/RNBQKBNR w KQkq - 0 1", // Black pawns on rank 2
+            "rnbqkbnr/PPPPPPPP/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", // White pawns on rank 8
+            "Pnbqkbnr/pppppppp/8/8/8/8/PPPPPPPp/RNBQKBNR w KQkq - 0 1", // Pawns on ranks 1 and 8
+        ];
+
+        for fen in syntactically_valid_but_chess_invalid {
+            let result = Board::from_fen(fen);
+            // Current implementation should parse these successfully since they are syntactically valid
+            // In the future, board state validation should be added to catch these cases
+            match result {
+                Ok(_) => {
+                    // Expected for current implementation - no board state validation yet
+                    // println!("Note: FEN '{}' parsed successfully but represents invalid chess position", fen);
+                }
+                Err(ChessError::BoardStateError(_)) => {
+                    // If board state validation is added, this would be the correct error
+                }
+                Err(other) => {
+                    // Unexpected error type
+                    panic!("Unexpected error for FEN '{}': {:?}", fen, other);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_future_board_state_validation_requirements() {
+        // This test documents what board state validation should eventually check
+        // All of these FEN strings are syntactically valid but represent impossible chess positions
+
+        let impossible_positions = vec![
+            // Multiple kings of same color
+            (
+                "rnbqkknr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                "Multiple black kings",
+            ),
+            // Pawns on back ranks
+            (
+                "rnbqkbnP/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                "White pawn on 8th rank",
+            ),
+            (
+                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/pNBQKBNR w KQkq - 0 1",
+                "Black pawn on 1st rank",
+            ),
+            // Too many pieces (impossible even with promotions)
+            (
+                "qqqqqqq1/qqqqqqqq/8/8/8/8/8/8 w - - 0 1",
+                "15 black queens impossible",
+            ),
+            // No kings
+            (
+                "rnbq1bnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQ1BNR w KQkq - 0 1",
+                "No kings on board",
+            ),
+        ];
+
+        for (fen, description) in impossible_positions {
+            let result = Board::from_fen(fen);
+
+            // For now, document that these parse successfully
+            // In the future, these should return BoardStateError
+            match result {
+                Ok(_) => {
+                    // Current expected behavior - only syntax validation
+                    // println!("TODO: Should validate board state for: {}", description);
+                }
+                Err(ChessError::BoardStateError(_)) => {
+                    // Future expected behavior when board state validation is implemented
+                }
+                Err(other) => {
+                    panic!(
+                        "Unexpected error for {} ({}): {:?}",
+                        description, fen, other
+                    );
+                }
             }
         }
     }
