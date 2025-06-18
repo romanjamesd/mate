@@ -387,14 +387,14 @@ mod chess_board_integration_tests {
         for original_fen in test_positions {
             // Parse FEN to board
             let board = Board::from_fen(original_fen)
-                .expect(&format!("Failed to parse FEN: {}", original_fen));
+                .unwrap_or_else(|_| panic!("Failed to parse FEN: {}", original_fen));
 
             // Convert back to FEN
             let roundtrip_fen = board.to_fen();
 
             // Parse the roundtrip FEN
             let roundtrip_board = Board::from_fen(&roundtrip_fen)
-                .expect(&format!("Failed to parse roundtrip FEN: {}", roundtrip_fen));
+                .unwrap_or_else(|_| panic!("Failed to parse roundtrip FEN: {}", roundtrip_fen));
 
             // Verify boards are equivalent via hash comparison
             assert_eq!(
@@ -419,7 +419,7 @@ mod chess_board_integration_tests {
         let starting_ascii = board.to_ascii();
 
         // Make some moves and verify consistency
-        let moves = vec![
+        let moves = [
             Move::simple(Position::new_unchecked(4, 1), Position::new_unchecked(4, 3)).unwrap(), // e2-e4
             Move::simple(Position::new_unchecked(4, 6), Position::new_unchecked(4, 4)).unwrap(), // e7-e5
             Move::simple(Position::new_unchecked(6, 0), Position::new_unchecked(5, 2)).unwrap(), // Ng1-f3
@@ -430,7 +430,7 @@ mod chess_board_integration_tests {
             let prev_hash = board.hash_state();
             board
                 .make_move(*mv)
-                .expect(&format!("Move {} should be valid", i));
+                .unwrap_or_else(|_| panic!("Move {} should be valid", i));
             let new_hash = board.hash_state();
 
             // Verify hash changed after move
@@ -450,7 +450,7 @@ mod chess_board_integration_tests {
 
             // Verify roundtrip consistency
             let roundtrip_board = Board::from_fen(&fen)
-                .expect(&format!("FEN roundtrip should work after move {}", i));
+                .unwrap_or_else(|_| panic!("FEN roundtrip should work after move {}", i));
             assert_eq!(
                 board.hash_state(),
                 roundtrip_board.hash_state(),

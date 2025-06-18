@@ -50,7 +50,8 @@ mod fen_parsing_tests {
         ];
 
         for (fen, expected_color, expected_fullmove, expected_halfmove) in test_cases {
-            let board = Board::from_fen(fen).expect(&format!("Failed to parse FEN: {}", fen));
+            let board =
+                Board::from_fen(fen).unwrap_or_else(|_| panic!("Failed to parse FEN: {}", fen));
 
             assert_eq!(
                 board.active_color(),
@@ -450,14 +451,12 @@ mod fen_serialization_tests {
 
         for original_fen in test_fens {
             let board = Board::from_fen(original_fen)
-                .expect(&format!("Failed to parse FEN: {}", original_fen));
+                .unwrap_or_else(|_| panic!("Failed to parse FEN: {}", original_fen));
             let serialized_fen = board.to_fen();
 
             // Parse the serialized FEN to ensure it's valid
-            let round_trip_board = Board::from_fen(&serialized_fen).expect(&format!(
-                "Failed to parse serialized FEN: {}",
-                serialized_fen
-            ));
+            let round_trip_board = Board::from_fen(&serialized_fen)
+                .unwrap_or_else(|_| panic!("Failed to parse serialized FEN: {}", serialized_fen));
 
             // Compare board states
             assert_eq!(

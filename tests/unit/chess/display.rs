@@ -329,7 +329,7 @@ mod ascii_display_tests {
         }
 
         // Test white pieces
-        let white_pieces = vec![
+        let white_pieces = [
             (PieceType::King, "♔"),
             (PieceType::Queen, "♕"),
             (PieceType::Rook, "♖"),
@@ -356,7 +356,7 @@ mod ascii_display_tests {
         }
 
         // Test black pieces
-        let black_pieces = vec![
+        let black_pieces = [
             (PieceType::King, "♚"),
             (PieceType::Queen, "♛"),
             (PieceType::Rook, "♜"),
