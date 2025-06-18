@@ -49,3 +49,6 @@ pub mod chess_error_consistency;
 
 // Chess storage integration tests
 pub mod chess_storage_integration;
+
+// Chess board integration tests
+pub mod chess_board_integration;
