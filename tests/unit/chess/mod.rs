@@ -1,5 +1,6 @@
 pub mod board;
 pub mod color;
+pub mod display;
 pub mod fen;
 pub mod moves;
 pub mod piece;
