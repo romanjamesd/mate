@@ -1,4 +1,5 @@
 pub mod board;
+pub mod board_hashing;
 pub mod color;
 pub mod display;
 pub mod fen;
