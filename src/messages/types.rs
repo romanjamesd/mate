@@ -599,7 +599,8 @@ impl Message {
             validate_move_message, validate_sync_request, validate_sync_response,
         };
 
-        match self {
+        // First perform the basic validation
+        let basic_validation = match self {
             // Ping/Pong messages don't require additional validation beyond type safety
             Message::Ping { .. } | Message::Pong { .. } => Ok(()),
             // Validate chess messages using their specific validation functions
@@ -610,7 +611,22 @@ impl Message {
             Message::MoveAck(ack) => validate_move_ack(ack),
             Message::SyncRequest(req) => validate_sync_request(req),
             Message::SyncResponse(resp) => validate_sync_response(resp),
-        }
+        };
+
+        // If basic validation passes, perform enhanced security validation
+        basic_validation?;
+
+        // Perform additional security validation for chess messages
+        crate::messages::chess::security::validate_message_security(self).map_err(
+            |security_error| {
+                crate::messages::chess::ValidationError::InvalidMessageFormat(format!(
+                    "Security validation failed: {}",
+                    security_error
+                ))
+            },
+        )?;
+
+        Ok(())
     }
 }
 

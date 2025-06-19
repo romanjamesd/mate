@@ -14,6 +14,8 @@ pub use chess::{
     handle_malformed_chess_move,
     hash_board_state,
     propagate_error,
+    // Security module re-exports
+    security,
     validate_chess_move_format,
     validate_chess_move_graceful,
     validate_game_accept,

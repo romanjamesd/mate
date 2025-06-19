@@ -177,10 +177,20 @@ impl SyncResponse {
     }
 }
 
-/// Generate a unique game ID using UUID v4
+/// Generate a cryptographically secure game ID using UUID v4
 ///
 /// Creates a cryptographically secure, collision-resistant game identifier
 /// that can be used to uniquely identify chess games across the network.
+///
+/// This function uses the system's cryptographically secure random number generator
+/// to ensure that game IDs cannot be predicted or guessed by attackers.
+///
+/// # Security Properties
+///
+/// - **Cryptographically Secure**: Uses UUID v4 with cryptographically secure randomness
+/// - **Collision Resistant**: Extremely low probability of generating duplicate IDs
+/// - **Unpredictable**: Cannot be guessed or predicted by attackers
+/// - **Validated Format**: Generated IDs are guaranteed to pass security validation
 ///
 /// # Returns
 ///
@@ -194,9 +204,21 @@ impl SyncResponse {
 /// let game_id = generate_game_id();
 /// assert!(!game_id.is_empty());
 /// assert_eq!(game_id.len(), 36); // Standard UUID string length
+///
+/// // Verify it passes security validation
+/// use mate::messages::chess::security::validate_secure_game_id;
+/// assert!(validate_secure_game_id(&game_id).is_ok());
 /// ```
 pub fn generate_game_id() -> String {
-    Uuid::new_v4().to_string()
+    // Generate UUID v4 using cryptographically secure randomness
+    let game_id = Uuid::new_v4().to_string();
+
+    // Verify the generated ID meets our security requirements
+    // This should always pass for a properly generated UUID v4, but we check
+    // as a defensive programming measure
+    debug_assert!(security::validate_secure_game_id(&game_id).is_ok());
+
+    game_id
 }
 
 /// Validate that a string is a properly formatted UUID game ID
@@ -1632,5 +1654,608 @@ pub fn handle_malformed_chess_move(
             chess_move, context
         ))
         .into()
+    }
+}
+
+/// Security validation and protection for chess messages
+pub mod security {
+    use super::*;
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    /// Maximum allowed length for free-text fields to prevent injection attacks
+    pub const MAX_REASON_LENGTH: usize = 500;
+    pub const MAX_MOVE_NOTATION_LENGTH: usize = 20;
+    pub const MAX_FEN_LENGTH: usize = 200;
+    pub const MAX_MOVE_HISTORY_SIZE: usize = 1000;
+
+    /// Rate limiting configuration and tracking for chess messages
+    ///
+    /// Main considerations for chess rate limiting strategy:
+    /// 1. **Move Rate Limiting**: Chess moves should be rate-limited per game to prevent
+    ///    automated rapid-fire move attempts that could overwhelm opponents or the system.
+    ///    Typical chess time controls suggest reasonable rates (e.g., 1 move per 3-10 seconds).
+    ///
+    /// 2. **Game Invitation Rate Limiting**: Limit how many game invitations a player can
+    ///    send per time period to prevent invitation spam. Consider both per-recipient
+    ///    and global invitation limits.
+    ///
+    /// 3. **Sync Request Rate Limiting**: Synchronization requests should be limited to
+    ///    prevent denial-of-service through repeated sync operations, which can be expensive
+    ///    as they involve full game state transmission.
+    ///
+    /// 4. **Per-Game vs Global Limits**: Some limits should be per-game (move frequency),
+    ///    while others should be global per-player (invitation frequency, total active games).
+    ///
+    /// 5. **Burst vs Sustained Rates**: Allow short bursts for legitimate rapid play
+    ///    (like bullet chess) while preventing sustained high-frequency abuse.
+    ///
+    /// 6. **Progressive Penalties**: Implement escalating timeouts for rate limit violations
+    ///    rather than hard blocks, to accommodate different play styles while deterring abuse.
+    #[derive(Debug, Clone)]
+    pub struct ChessRateLimitConfig {
+        /// Maximum moves per minute per game
+        pub max_moves_per_minute: u32,
+        /// Maximum game invitations per hour per player
+        pub max_invitations_per_hour: u32,
+        /// Maximum sync requests per minute per game
+        pub max_sync_requests_per_minute: u32,
+        /// Maximum concurrent active games per player
+        pub max_active_games: u32,
+        /// Burst allowance for rapid play scenarios
+        pub burst_moves_allowed: u32,
+        /// Window for tracking burst moves (seconds)
+        pub burst_window_seconds: u64,
+    }
+
+    impl Default for ChessRateLimitConfig {
+        fn default() -> Self {
+            Self {
+                max_moves_per_minute: 20,        // Allows rapid play but prevents automation
+                max_invitations_per_hour: 50,    // Generous for legitimate use, prevents spam
+                max_sync_requests_per_minute: 5, // Allows recovery from network issues
+                max_active_games: 10,            // Reasonable concurrent game limit
+                burst_moves_allowed: 5,          // Allow 5 rapid moves in burst window
+                burst_window_seconds: 30,        // 30-second burst window
+            }
+        }
+    }
+
+    /// Rate limiting tracker for chess operations
+    #[derive(Debug)]
+    pub struct ChessRateLimiter {
+        config: ChessRateLimitConfig,
+        move_times: HashMap<String, Vec<Instant>>, // game_id -> move timestamps
+        invitation_times: HashMap<String, Vec<Instant>>, // player_id -> invitation timestamps
+        sync_times: HashMap<String, Vec<Instant>>, // game_id -> sync timestamps
+        active_games: HashMap<String, u32>,        // player_id -> active game count
+    }
+
+    impl ChessRateLimiter {
+        pub fn new(config: ChessRateLimitConfig) -> Self {
+            Self {
+                config,
+                move_times: HashMap::new(),
+                invitation_times: HashMap::new(),
+                sync_times: HashMap::new(),
+                active_games: HashMap::new(),
+            }
+        }
+
+        /// Check if a move is allowed under current rate limits
+        pub fn check_move_rate_limit(&mut self, game_id: &str) -> bool {
+            let now = Instant::now();
+            let times = self
+                .move_times
+                .entry(game_id.to_string())
+                .or_insert_with(Vec::new);
+
+            // Remove old entries outside the rate limit window
+            times.retain(|&time| now.duration_since(time) < Duration::from_secs(60));
+
+            // Check both regular rate limit and burst limit
+            let regular_limit_ok = times.len() < self.config.max_moves_per_minute as usize;
+
+            // Check burst limit (rapid moves in short window)
+            let burst_window = Duration::from_secs(self.config.burst_window_seconds);
+            let recent_moves = times
+                .iter()
+                .filter(|&&time| now.duration_since(time) < burst_window)
+                .count();
+            let burst_limit_ok = recent_moves < self.config.burst_moves_allowed as usize;
+
+            if regular_limit_ok && burst_limit_ok {
+                times.push(now);
+                true
+            } else {
+                false
+            }
+        }
+
+        /// Check if a game invitation is allowed under current rate limits
+        pub fn check_invitation_rate_limit(&mut self, player_id: &str) -> bool {
+            let now = Instant::now();
+            let times = self
+                .invitation_times
+                .entry(player_id.to_string())
+                .or_insert_with(Vec::new);
+
+            // Remove old entries outside the rate limit window
+            times.retain(|&time| now.duration_since(time) < Duration::from_secs(3600)); // 1 hour
+
+            if times.len() < self.config.max_invitations_per_hour as usize {
+                times.push(now);
+                true
+            } else {
+                false
+            }
+        }
+
+        /// Check if a sync request is allowed under current rate limits
+        pub fn check_sync_rate_limit(&mut self, game_id: &str) -> bool {
+            let now = Instant::now();
+            let times = self
+                .sync_times
+                .entry(game_id.to_string())
+                .or_insert_with(Vec::new);
+
+            // Remove old entries outside the rate limit window
+            times.retain(|&time| now.duration_since(time) < Duration::from_secs(60));
+
+            if times.len() < self.config.max_sync_requests_per_minute as usize {
+                times.push(now);
+                true
+            } else {
+                false
+            }
+        }
+
+        /// Check if a player can start a new game (concurrent game limit)
+        pub fn check_active_game_limit(&mut self, player_id: &str) -> bool {
+            let active_count = self.active_games.get(player_id).unwrap_or(&0);
+            *active_count < self.config.max_active_games
+        }
+
+        /// Register a new active game for a player
+        pub fn register_active_game(&mut self, player_id: &str) {
+            *self.active_games.entry(player_id.to_string()).or_insert(0) += 1;
+        }
+
+        /// Unregister an active game for a player
+        pub fn unregister_active_game(&mut self, player_id: &str) {
+            if let Some(count) = self.active_games.get_mut(player_id) {
+                if *count > 0 {
+                    *count -= 1;
+                }
+            }
+        }
+
+        /// Clean up old tracking data to prevent memory leaks
+        pub fn cleanup_old_data(&mut self) {
+            let now = Instant::now();
+
+            // Clean up move times older than 1 hour
+            for times in self.move_times.values_mut() {
+                times.retain(|&time| now.duration_since(time) < Duration::from_secs(3600));
+            }
+
+            // Clean up invitation times older than 24 hours
+            for times in self.invitation_times.values_mut() {
+                times.retain(|&time| now.duration_since(time) < Duration::from_secs(86400));
+            }
+
+            // Clean up sync times older than 1 hour
+            for times in self.sync_times.values_mut() {
+                times.retain(|&time| now.duration_since(time) < Duration::from_secs(3600));
+            }
+
+            // Remove empty entries
+            self.move_times.retain(|_, times| !times.is_empty());
+            self.invitation_times.retain(|_, times| !times.is_empty());
+            self.sync_times.retain(|_, times| !times.is_empty());
+        }
+    }
+
+    /// Security error types specific to chess message validation
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum SecurityViolation {
+        /// Input contains potentially malicious content
+        InjectionAttempt { field: String, content: String },
+        /// Field exceeds maximum allowed length
+        FieldTooLong {
+            field: String,
+            length: usize,
+            max_length: usize,
+        },
+        /// Rate limit exceeded for operation
+        RateLimitExceeded { operation: String, limit: String },
+        /// Cryptographic verification failed
+        CryptographicFailure { reason: String },
+        /// Suspicious pattern detected in input
+        SuspiciousPattern { field: String, pattern: String },
+        /// Board state tampering detected
+        BoardTampering {
+            game_id: String,
+            expected_hash: String,
+            actual_hash: String,
+        },
+    }
+
+    impl std::fmt::Display for SecurityViolation {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                SecurityViolation::InjectionAttempt { field, content } => {
+                    write!(
+                        f,
+                        "Potential injection attempt in field '{}': {}",
+                        field, content
+                    )
+                }
+                SecurityViolation::FieldTooLong {
+                    field,
+                    length,
+                    max_length,
+                } => {
+                    write!(
+                        f,
+                        "Field '{}' too long: {} characters (max: {})",
+                        field, length, max_length
+                    )
+                }
+                SecurityViolation::RateLimitExceeded { operation, limit } => {
+                    write!(f, "Rate limit exceeded for {}: {}", operation, limit)
+                }
+                SecurityViolation::CryptographicFailure { reason } => {
+                    write!(f, "Cryptographic verification failed: {}", reason)
+                }
+                SecurityViolation::SuspiciousPattern { field, pattern } => {
+                    write!(
+                        f,
+                        "Suspicious pattern detected in field '{}': {}",
+                        field, pattern
+                    )
+                }
+                SecurityViolation::BoardTampering {
+                    game_id,
+                    expected_hash,
+                    actual_hash,
+                } => {
+                    write!(
+                        f,
+                        "Board state tampering detected in game {}: expected {}, got {}",
+                        game_id, expected_hash, actual_hash
+                    )
+                }
+            }
+        }
+    }
+
+    /// Enhanced validation functions with security hardening
+
+    /// Validate text input against injection attacks and length limits
+    pub fn validate_safe_text_input(
+        input: &str,
+        field_name: &str,
+        max_length: usize,
+    ) -> Result<(), SecurityViolation> {
+        // Check length limit
+        if input.len() > max_length {
+            return Err(SecurityViolation::FieldTooLong {
+                field: field_name.to_string(),
+                length: input.len(),
+                max_length,
+            });
+        }
+
+        // Check for potential injection patterns
+        let suspicious_patterns = [
+            "<script",
+            "</script",
+            "javascript:",
+            "data:",
+            "vbscript:",
+            "onload=",
+            "onerror=",
+            "onclick=",
+            "eval(",
+            "Function(",
+            "setTimeout(",
+            "setInterval(",
+            "${",
+            "#{",
+            "{{",
+            "<%",
+            "%>",
+            "../",
+            "..\\",
+            "/etc/",
+            "C:\\",
+            "DROP TABLE",
+            "DELETE FROM",
+            "INSERT INTO",
+            "UPDATE SET",
+            "UNION SELECT",
+            "'; DROP",
+            "--",
+            "/*",
+            "*/",
+            "\x00",
+            "\x01",
+            "\x02",
+            "\x03",
+            "\x04",
+            "\x05",
+            "\x06",
+            "\x07",
+            "\x08",
+            "\x0b",
+            "\x0c",
+            "\x0e",
+            "\x0f",
+            "\x10",
+            "\x11",
+            "\x12",
+        ];
+
+        let input_lower = input.to_lowercase();
+        for &pattern in &suspicious_patterns {
+            if input_lower.contains(pattern) {
+                return Err(SecurityViolation::InjectionAttempt {
+                    field: field_name.to_string(),
+                    content: format!("Contains suspicious pattern: {}", pattern),
+                });
+            }
+        }
+
+        // Check for suspicious character sequences
+        if input
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\r' && c != '\t')
+        {
+            return Err(SecurityViolation::SuspiciousPattern {
+                field: field_name.to_string(),
+                pattern: "Contains control characters".to_string(),
+            });
+        }
+
+        // Check for excessive whitespace (potential buffer overflow attempt)
+        let whitespace_ratio =
+            input.chars().filter(|c| c.is_whitespace()).count() as f64 / input.len() as f64;
+        if whitespace_ratio > 0.8 && input.len() > 50 {
+            return Err(SecurityViolation::SuspiciousPattern {
+                field: field_name.to_string(),
+                pattern: "Excessive whitespace content".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Enhanced game ID validation with cryptographic strength verification
+    pub fn validate_secure_game_id(game_id: &str) -> Result<(), SecurityViolation> {
+        // First use the existing validation
+        if !validate_game_id(game_id) {
+            return Err(SecurityViolation::CryptographicFailure {
+                reason: "Invalid UUID format".to_string(),
+            });
+        }
+
+        // Parse as UUID to verify it's properly formed
+        match uuid::Uuid::parse_str(game_id) {
+            Ok(uuid) => {
+                // Verify it's a version 4 (random) UUID for cryptographic strength
+                if uuid.get_version() != Some(uuid::Version::Random) {
+                    return Err(SecurityViolation::CryptographicFailure {
+                        reason: "Game ID must be UUID version 4 (random) for security".to_string(),
+                    });
+                }
+
+                // Check that it's not a nil UUID (all zeros)
+                if uuid.is_nil() {
+                    return Err(SecurityViolation::CryptographicFailure {
+                        reason: "Game ID cannot be nil UUID".to_string(),
+                    });
+                }
+
+                Ok(())
+            }
+            Err(_) => Err(SecurityViolation::CryptographicFailure {
+                reason: "Invalid UUID format".to_string(),
+            }),
+        }
+    }
+
+    /// Enhanced chess move validation with injection protection
+    pub fn validate_secure_chess_move(
+        chess_move: &str,
+        _game_id: &str,
+    ) -> Result<(), SecurityViolation> {
+        // Validate input safety
+        validate_safe_text_input(chess_move, "chess_move", MAX_MOVE_NOTATION_LENGTH)?;
+
+        // Use existing chess move format validation
+        validate_chess_move_format(chess_move).map_err(|_| {
+            SecurityViolation::SuspiciousPattern {
+                field: "chess_move".to_string(),
+                pattern: format!("Invalid chess move format: {}", chess_move),
+            }
+        })?;
+
+        // Additional security checks for chess moves
+        if chess_move.is_empty() {
+            return Err(SecurityViolation::SuspiciousPattern {
+                field: "chess_move".to_string(),
+                pattern: "Empty move string".to_string(),
+            });
+        }
+
+        // Check for repeated characters (potential fuzzing attempt)
+        if chess_move.len() > 3 {
+            let mut prev_char = chess_move.chars().next().unwrap();
+            let mut repeat_count = 1;
+            for c in chess_move.chars().skip(1) {
+                if c == prev_char {
+                    repeat_count += 1;
+                    if repeat_count > 4 {
+                        return Err(SecurityViolation::SuspiciousPattern {
+                            field: "chess_move".to_string(),
+                            pattern: "Excessive character repetition".to_string(),
+                        });
+                    }
+                } else {
+                    repeat_count = 1;
+                    prev_char = c;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Enhanced board state hash validation with tampering detection
+    pub fn validate_secure_board_hash(
+        game_id: &str,
+        board: &Board,
+        provided_hash: &str,
+        _context: &str,
+    ) -> Result<(), SecurityViolation> {
+        // Validate hash format first
+        validate_board_hash_format(provided_hash).map_err(|_| {
+            SecurityViolation::CryptographicFailure {
+                reason: "Invalid hash format".to_string(),
+            }
+        })?;
+
+        // Calculate expected hash
+        let expected_hash = hash_board_state(board);
+
+        // Compare hashes using constant-time comparison to prevent timing attacks
+        if provided_hash.len() != expected_hash.len() {
+            return Err(SecurityViolation::BoardTampering {
+                game_id: game_id.to_string(),
+                expected_hash: expected_hash,
+                actual_hash: provided_hash.to_string(),
+            });
+        }
+
+        // Constant-time comparison
+        let mut result = 0u8;
+        for (a, b) in provided_hash.bytes().zip(expected_hash.bytes()) {
+            result |= a ^ b;
+        }
+
+        if result != 0 {
+            return Err(SecurityViolation::BoardTampering {
+                game_id: game_id.to_string(),
+                expected_hash,
+                actual_hash: provided_hash.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Enhanced reason text validation for game declines
+    pub fn validate_secure_reason_text(reason: &str) -> Result<(), SecurityViolation> {
+        validate_safe_text_input(reason, "reason", MAX_REASON_LENGTH)
+    }
+
+    /// Enhanced FEN notation validation for sync responses
+    pub fn validate_secure_fen_notation(fen: &str) -> Result<(), SecurityViolation> {
+        validate_safe_text_input(fen, "fen_notation", MAX_FEN_LENGTH)?;
+
+        // Additional FEN-specific validation
+        let parts: Vec<&str> = fen.split_whitespace().collect();
+        if parts.len() != 6 {
+            return Err(SecurityViolation::SuspiciousPattern {
+                field: "fen_notation".to_string(),
+                pattern: "FEN must have exactly 6 space-separated parts".to_string(),
+            });
+        }
+
+        // Validate piece placement (first part)
+        let piece_placement = parts[0];
+        let ranks: Vec<&str> = piece_placement.split('/').collect();
+        if ranks.len() != 8 {
+            return Err(SecurityViolation::SuspiciousPattern {
+                field: "fen_notation".to_string(),
+                pattern: "FEN piece placement must have 8 ranks".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Enhanced move history validation for sync responses
+    pub fn validate_secure_move_history(move_history: &[String]) -> Result<(), SecurityViolation> {
+        if move_history.len() > MAX_MOVE_HISTORY_SIZE {
+            return Err(SecurityViolation::FieldTooLong {
+                field: "move_history".to_string(),
+                length: move_history.len(),
+                max_length: MAX_MOVE_HISTORY_SIZE,
+            });
+        }
+
+        for (i, chess_move) in move_history.iter().enumerate() {
+            validate_safe_text_input(
+                chess_move,
+                &format!("move_history[{}]", i),
+                MAX_MOVE_NOTATION_LENGTH,
+            )?;
+
+            // Basic format validation for each move
+            validate_chess_move_format(chess_move).map_err(|_| {
+                SecurityViolation::SuspiciousPattern {
+                    field: format!("move_history[{}]", i),
+                    pattern: format!("Invalid move format: {}", chess_move),
+                }
+            })?;
+        }
+
+        Ok(())
+    }
+
+    /// Comprehensive security validation for chess messages
+    pub fn validate_message_security(
+        message: &crate::messages::types::Message,
+    ) -> Result<(), SecurityViolation> {
+        match message {
+            crate::messages::types::Message::GameInvite(invite) => {
+                validate_secure_game_id(&invite.game_id)?;
+            }
+            crate::messages::types::Message::GameAccept(accept) => {
+                validate_secure_game_id(&accept.game_id)?;
+            }
+            crate::messages::types::Message::GameDecline(decline) => {
+                validate_secure_game_id(&decline.game_id)?;
+                if let Some(reason) = &decline.reason {
+                    validate_secure_reason_text(reason)?;
+                }
+            }
+            crate::messages::types::Message::Move(chess_move) => {
+                validate_secure_game_id(&chess_move.game_id)?;
+                validate_secure_chess_move(&chess_move.chess_move, &chess_move.game_id)?;
+                validate_safe_text_input(&chess_move.board_state_hash, "board_state_hash", 64)?;
+            }
+            crate::messages::types::Message::MoveAck(ack) => {
+                validate_secure_game_id(&ack.game_id)?;
+                if let Some(move_id) = &ack.move_id {
+                    validate_safe_text_input(move_id, "move_id", 100)?;
+                }
+            }
+            crate::messages::types::Message::SyncRequest(request) => {
+                validate_secure_game_id(&request.game_id)?;
+            }
+            crate::messages::types::Message::SyncResponse(response) => {
+                validate_secure_game_id(&response.game_id)?;
+                validate_secure_fen_notation(&response.board_state)?;
+                validate_secure_move_history(&response.move_history)?;
+                validate_safe_text_input(&response.board_state_hash, "board_state_hash", 64)?;
+            }
+            // Non-chess messages are not subject to chess-specific security validation
+            _ => {}
+        }
+
+        Ok(())
     }
 }
