@@ -1,5 +1,6 @@
 use crate::chess::Color;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Chess game invitation message
 /// Sent to invite another player to a chess game
@@ -172,4 +173,55 @@ impl SyncResponse {
             board_state_hash,
         }
     }
+}
+
+/// Generate a unique game ID using UUID v4
+///
+/// Creates a cryptographically secure, collision-resistant game identifier
+/// that can be used to uniquely identify chess games across the network.
+///
+/// # Returns
+///
+/// A string representation of a UUID v4 that serves as a unique game identifier
+///
+/// # Examples
+///
+/// ```
+/// use mate::messages::chess::generate_game_id;
+///
+/// let game_id = generate_game_id();
+/// assert!(!game_id.is_empty());
+/// assert_eq!(game_id.len(), 36); // Standard UUID string length
+/// ```
+pub fn generate_game_id() -> String {
+    Uuid::new_v4().to_string()
+}
+
+/// Validate that a string is a properly formatted UUID game ID
+///
+/// Checks if the provided string conforms to the UUID format expected
+/// for game identifiers. This validation ensures that game IDs are
+/// consistently formatted and helps catch malformed identifiers.
+///
+/// # Arguments
+///
+/// * `id` - The game ID string to validate
+///
+/// # Returns
+///
+/// `true` if the ID is a valid UUID format, `false` otherwise
+///
+/// # Examples
+///
+/// ```
+/// use mate::messages::chess::{generate_game_id, validate_game_id};
+///
+/// let valid_id = generate_game_id();
+/// assert!(validate_game_id(&valid_id));
+///
+/// let invalid_id = "not-a-uuid";
+/// assert!(!validate_game_id(invalid_id));
+/// ```
+pub fn validate_game_id(id: &str) -> bool {
+    Uuid::parse_str(id).is_ok()
 }
