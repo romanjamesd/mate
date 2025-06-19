@@ -3,8 +3,11 @@ pub mod types;
 pub mod wire;
 
 pub use chess::{
-    generate_game_id, hash_board_state, validate_game_id, verify_board_hash, GameAccept,
-    GameDecline, GameInvite, Move as ChessMove, MoveAck, SyncRequest, SyncResponse,
+    generate_game_id, hash_board_state, validate_chess_move_format, validate_game_accept,
+    validate_game_decline, validate_game_id, validate_game_invite, validate_move_ack,
+    validate_move_message, validate_sync_request, validate_sync_response, verify_board_hash,
+    GameAccept, GameDecline, GameInvite, Move as ChessMove, MoveAck, SyncRequest, SyncResponse,
+    ValidationError,
 };
 pub use types::{Message, SignedEnvelope};
 pub use wire::{
