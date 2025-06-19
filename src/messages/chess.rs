@@ -818,37 +818,204 @@ pub fn validate_sync_response(response: &SyncResponse) -> Result<(), ValidationE
 /// * `Ok(())` - If the acknowledgment is valid
 /// * `Err(ValidationError)` - If validation fails
 pub fn validate_move_ack(ack: &MoveAck) -> Result<(), ValidationError> {
-    // Validate game ID format
+    // Validate game ID
     if !validate_game_id(&ack.game_id) {
         return Err(ValidationError::InvalidGameId(format!(
-            "Game ID '{}' is not a valid UUID format",
+            "Invalid game ID format: '{}'",
             ack.game_id
         )));
     }
 
-    // Check for empty game ID
-    if ack.game_id.trim().is_empty() {
-        return Err(ValidationError::InvalidGameId(
-            "Game ID cannot be empty".to_string(),
-        ));
-    }
-
-    // Validate move_id field if provided
+    // Validate move ID format if present
     if let Some(move_id) = &ack.move_id {
-        // Check for excessively long move IDs (reasonable limit: 100 characters)
-        if move_id.len() > 100 {
-            return Err(ValidationError::InvalidMessageFormat(format!(
-                "Move ID is too long ({} characters, maximum 100)",
-                move_id.len()
-            )));
-        }
-
-        // Check for empty string (should be None instead)
-        if move_id.trim().is_empty() {
+        if move_id.is_empty() {
             return Err(ValidationError::InvalidMessageFormat(
-                "Move ID should be None instead of empty string".to_string(),
+                "Move ID cannot be empty when present".to_string(),
             ));
         }
+
+        // Basic format validation for move ID
+        if move_id.len() > 64 {
+            return Err(ValidationError::InvalidMessageFormat(
+                "Move ID is too long (max 64 characters)".to_string(),
+            ));
+        }
+
+        // Check for valid characters (alphanumeric, hyphens, underscores)
+        if !move_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(ValidationError::InvalidMessageFormat(
+                "Move ID can only contain alphanumeric characters, hyphens, and underscores"
+                    .to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+// =============================================================================
+// Integration Functions for Chess Module
+// =============================================================================
+
+/// Create a chess move message from a game ID, chess move, and board state
+///
+/// This function integrates the chess module's Move type with the message protocol,
+/// creating a properly formatted Move message with board state verification.
+///
+/// # Arguments
+///
+/// * `game_id` - Unique identifier for the chess game
+/// * `chess_move` - The chess move from the chess module
+/// * `board` - Current board state after the move for hash generation
+///
+/// # Returns
+///
+/// A `Message::Move` variant containing the move information and board state hash
+///
+/// # Examples
+///
+/// ```
+/// use mate::chess::{Board, Move as ChessMove, Position};
+/// use mate::messages::chess::{create_move_message, generate_game_id};
+///
+/// let mut board = Board::new();
+/// let chess_move = ChessMove::simple(
+///     Position::from_algebraic("e2").unwrap(),
+///     Position::from_algebraic("e4").unwrap()
+/// ).unwrap();
+///
+/// let game_id = generate_game_id();
+/// let message = create_move_message(&game_id, &chess_move, &board);
+/// ```
+pub fn create_move_message(
+    game_id: &str,
+    chess_move: &crate::chess::Move,
+    board: &Board,
+) -> crate::messages::types::Message {
+    let move_string = chess_move.to_string();
+    let board_hash = hash_board_state(board);
+
+    crate::messages::types::Message::new_move(game_id.to_string(), move_string, board_hash)
+}
+
+/// Create a synchronization response message from game state
+///
+/// This function creates a comprehensive sync response containing the current
+/// board state, move history, and verification hash for game synchronization.
+///
+/// # Arguments
+///
+/// * `game_id` - Unique identifier for the chess game
+/// * `board` - Current board state to be synchronized
+/// * `history` - Complete move history from the chess module
+///
+/// # Returns
+///
+/// A `Message::SyncResponse` variant containing the complete game state
+///
+/// # Examples
+///
+/// ```
+/// use mate::chess::{Board, Move as ChessMove, Position};
+/// use mate::messages::chess::{create_sync_response, generate_game_id};
+///
+/// let board = Board::new();
+/// let history = vec![
+///     ChessMove::simple(
+///         Position::from_algebraic("e2").unwrap(),
+///         Position::from_algebraic("e4").unwrap()
+///     ).unwrap(),
+/// ];
+///
+/// let game_id = generate_game_id();
+/// let message = create_sync_response(&game_id, &board, &history);
+/// ```
+pub fn create_sync_response(
+    game_id: &str,
+    board: &Board,
+    history: &[crate::chess::Move],
+) -> crate::messages::types::Message {
+    let board_state = board.to_fen();
+    let move_history: Vec<String> = history.iter().map(|mv| mv.to_string()).collect();
+    let board_hash = hash_board_state(board);
+
+    crate::messages::types::Message::new_sync_response(
+        game_id.to_string(),
+        board_state,
+        move_history,
+        board_hash,
+    )
+}
+
+/// Apply a chess move from a message to a board
+///
+/// This function bridges the message protocol and chess module by parsing
+/// a move message and applying it to the board with proper error handling.
+///
+/// # Arguments
+///
+/// * `board` - Mutable reference to the board to apply the move to
+/// * `move_msg` - Move message containing the move string and verification hash
+///
+/// # Returns
+///
+/// * `Ok(())` if the move was successfully applied and verified
+/// * `Err(ChessError)` if the move parsing, application, or verification failed
+///
+/// # Errors
+///
+/// This function can return various `ChessError` variants:
+/// - `InvalidMove` - If the move string cannot be parsed
+/// - `BoardStateError` - If board state hash verification fails
+/// - Any chess module errors from move application
+///
+/// # Examples
+///
+/// ```
+/// use mate::chess::Board;
+/// use mate::messages::chess::{Move, apply_move_from_message};
+///
+/// let mut board = Board::new();
+/// let move_msg = Move::new(
+///     "game-123".to_string(),
+///     "e2e4".to_string(),
+///     "expected_hash".to_string(),
+/// );
+///
+/// match apply_move_from_message(&mut board, &move_msg) {
+///     Ok(()) => println!("Move applied successfully"),
+///     Err(e) => eprintln!("Failed to apply move: {}", e),
+/// }
+/// ```
+pub fn apply_move_from_message(
+    board: &mut Board,
+    move_msg: &Move,
+) -> Result<(), crate::chess::ChessError> {
+    // Parse the move string to a chess module Move
+    let chess_move =
+        match crate::chess::Move::from_str_with_color(&move_msg.chess_move, board.active_color()) {
+            Ok(mv) => mv,
+            Err(e) => {
+                return Err(crate::chess::ChessError::InvalidMove(format!(
+                    "Failed to parse move '{}': {}",
+                    move_msg.chess_move, e
+                )))
+            }
+        };
+
+    // Apply the move to the board
+    board.make_move(chess_move)?;
+
+    // Verify the board state hash matches the expected hash
+    let actual_hash = hash_board_state(board);
+    if actual_hash != move_msg.board_state_hash {
+        return Err(crate::chess::ChessError::BoardStateError(format!(
+            "Board state hash mismatch after move '{}'. Expected: {}, Actual: {}",
+            move_msg.chess_move, move_msg.board_state_hash, actual_hash
+        )));
     }
 
     Ok(())
