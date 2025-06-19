@@ -1,136 +1,175 @@
-# GitHub Actions CI Workflows
+# mate
 
-This directory contains GitHub Actions workflows for continuous integration and testing.
+A fully decentralized peer-to-peer chess game with cryptographic security and offline-first gameplay.
 
-## Workflows
+## Features
 
-### 1. `ci.yml` - Comprehensive CI Pipeline
+### Core Gameplay
+- **True P2P Chess**: Play directly with peers without any central servers
+- **Offline-first Design**: All game data stored locally, sync when both players are online
+- **Cryptographic Integrity**: Every move is cryptographically signed with Ed25519, preventing tampering
+- **Resilient Networking**: Games continue seamlessly despite network interruptions
+- **Cross-platform**: Works on macOS, Linux, and Windows
 
-A full-featured CI pipeline that runs different test categories separately:
-
-- **Quality Checks**: Code formatting, clippy lints, documentation
-- **Unit Tests**: Separated by component (crypto, messages, network, display) 
-- **Integration Tests**: End-to-end system tests
-- **Security Tests**: DoS protection and error handling
-- **Performance Tests**: Benchmark and throughput tests
-- **Cross-platform Tests**: Linux, Windows, and macOS
-- **Code Coverage**: Generates coverage reports
-
-### 2. `test.yml` - Simple Test Runner
-
-A lightweight workflow for quick validation:
-
-- Runs all tests together
-- Code formatting check
-- Clippy linting
-- Fast feedback for pull requests
-
-## Test Categories
-
-Based on your project structure in `tests/`, the workflows run:
-
-```bash
-# Unit tests by component
-cargo test --test mod unit::crypto::         # Crypto operations
-cargo test --test mod unit::messages::      # Message handling  
-cargo test --test mod unit::network::       # Network operations
-cargo test --test mod unit::display::       # Display utilities
-
-# Integration tests
-cargo test --test mod integration::         # End-to-end tests
-
-# Security tests  
-cargo test --test mod security::dos_protection::    # DoS protection
-cargo test --test mod security::error_handling::    # Error handling
-
-# Performance tests
-cargo test --test mod performance::         # Performance benchmarks
-```
-
-## Triggering Workflows
-
-Workflows automatically run on:
-- Pushes to `main` and `develop` branches
-- Pull requests to `main` and `develop` branches
-
-## Local Testing
-
-Before pushing, ensure your code passes locally:
-
-```bash
-# Run all tests
-cargo test
-
-# Check formatting
-cargo fmt --all -- --check
-
-# Run clippy
-cargo clippy -- -D warnings
-
-# Check documentation builds
-cargo doc --no-deps --document-private-items --all-features
-```
-
-## Customization
-
-### Changing Test Categories
-
-To modify which tests run, edit the `cargo test` commands in the workflow files.
-
-### Adjusting Timeout Values
-
-Some tests have timeout limits:
-- Integration tests: 10 minutes
-- Performance tests: 15 minutes
-
-### Adding New Test Types
-
-1. Add test commands to the appropriate workflow file
-2. Consider whether they should run in parallel or sequentially
-3. Set appropriate timeouts for long-running tests
-
-### Coverage Reports
-
-The `ci.yml` workflow generates code coverage using `cargo-tarpaulin` and uploads to Codecov. To use this:
-
-1. Sign up for [Codecov](https://codecov.io) 
-2. Add your repository
-3. The workflow will automatically upload coverage reports
-
-## Workflow Features
-
-### Caching
-- Rust dependencies are cached using `Swatinem/rust-cache@v2`
-- Speeds up subsequent builds significantly
-
-### Matrix Testing
-- Tests against multiple Rust versions (stable, beta)
-- Cross-platform testing (Linux, Windows, macOS)
-
-### Dependency Management
-- Workflows use specific action versions for reproducibility
-- Rust toolchain is pinned to stable versions
+### Game Management
+- Send game invitations directly to peer addresses
+- Accept/decline invitations with color preferences
+- Multiple concurrent games with different opponents
+- Automatic game synchronization when peers reconnect
+- Complete move history with cryptographic proof
 
 ### Security
-- Security audit runs with `cargo audit`
-- DoS protection tests verify security measures
+- Ed25519 digital signatures ensure move authenticity
+- Each player has a unique cryptographic identity
+- Tamper-proof game history
+- No trusted third parties required
 
-## Troubleshooting
+## Installation
 
-### Test Failures
-- Check the specific job that failed in GitHub Actions
-- Run the same command locally to reproduce
-- Look at the test output for specific error messages
+```bash
+# Install from crates.io
+cargo install mate
 
-### Timeout Issues
-- Performance tests may timeout on slow runners
-- Consider increasing timeout values or optimizing tests
+# Or build from source
+git clone https://github.com/username/mate
+cd mate
+cargo build --release
+```
 
-### Clippy Failures
-- Fix clippy warnings locally first
-- Use `cargo clippy -- -D warnings` to catch all issues
-- Some clippy rules can be disabled if needed with `#[allow()]`
+## Quick Start
 
-### Formatting Issues
-- Run `cargo fmt --all` to fix formatting
-- Check `.rustfmt.toml` for custom formatting rules 
+```bash
+# 1. Initialize your identity
+mate key generate
+
+# 2. Check your peer ID
+mate key info
+
+# 3. Start listening for connections
+mate serve --bind 0.0.0.0:8080
+
+# 4. Share your address (IP:8080) and peer ID with a friend
+```
+
+## Usage
+
+### Identity & Key Management
+```bash
+# Generate a new cryptographic identity
+mate key generate
+
+# Show your peer ID and key information
+mate key info
+
+# Show where keys are stored
+mate key path
+```
+
+### Network & Connection
+```bash
+# Start server to accept connections
+mate serve --bind 0.0.0.0:8080
+
+# Connect to another peer for testing
+mate connect 192.168.1.100:8080
+
+# Send a specific message when connecting
+mate connect 192.168.1.100:8080 --message "Hello, peer!"
+```
+
+### Game Management (Future)
+```bash
+# Invite someone to play (they need to be running `mate serve`)
+mate invite 192.168.1.100:8080
+
+# View pending invitations and active games
+mate games
+
+# Accept a game invitation
+mate accept game_abc123
+
+# Show all known peers
+mate peers
+```
+
+### Playing Chess
+```bash
+# Make a move using algebraic notation
+mate move e4 game_abc123
+mate move Nf3 game_abc123
+mate move O-O game_abc123
+
+# View current board position
+mate board game_abc123
+
+# View complete game history
+mate history game_abc123
+
+# Force synchronization of all games
+mate sync
+```
+
+### Example Game Session
+```bash
+$ mate games
+Active Games:
+  game_abc123 vs alice_def456 [Your turn] - White
+  game_xyz789 vs bob_ghi012   [Waiting]   - Black
+
+$ mate board game_abc123
+  ┌─────────────────────┐
+8 │ r n b q k b n r │
+7 │ p p p p . p p p │
+6 │ . . . . . . . . │
+5 │ . . . . p . . . │
+4 │ . . . . P . . . │
+3 │ . . . . . . . . │
+2 │ P P P P . P P P │
+1 │ R N B Q K B N R │
+  └─────────────────────┘
+    a b c d e f g h
+
+$ mate move Nf3 game_abc123
+Move played: Nf3
+Waiting for opponent...
+
+$ mate history game_abc123
+Game: game_abc123
+1. e4 e5
+2. Nf3 ...
+```
+
+## How It Works
+
+### Decentralized Architecture
+- **No Central Server**: Players connect directly to each other
+- **Local Database**: SQLite stores all game state locally
+- **P2P Synchronization**: Games sync when both players are online
+- **Conflict Resolution**: Cryptographic signatures prevent cheating
+
+### Network Protocol
+- TCP connections with message framing
+- Ed25519 signatures on all moves
+- Automatic peer discovery on local networks
+- Manual peer address exchange for internet play
+
+### Security Model
+- Each player generates a unique Ed25519 keypair
+- All moves are signed with the player's private key
+- Game history is tamper-proof and independently verifiable
+- No trusted third parties or central authorities
+
+## Configuration
+
+Mate stores configuration and game data in:
+- **Linux**: `~/.config/mate/`
+- **macOS**: `~/Library/Application Support/mate/`
+- **Windows**: `%APPDATA%\mate\`
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## License
+
+Licensed under the MIT License. See [LICENSE](LICENSE) for details.
