@@ -902,11 +902,12 @@ pub fn validate_move_ack(ack: &MoveAck) -> Result<(), ValidationError> {
 /// ```
 /// use mate::chess::{Board, Move as ChessMove, Position};
 /// use mate::messages::chess::{create_move_message, generate_game_id};
+/// use std::str::FromStr;
 ///
 /// let mut board = Board::new();
 /// let chess_move = ChessMove::simple(
-///     Position::from_algebraic("e2").unwrap(),
-///     Position::from_algebraic("e4").unwrap()
+///     Position::from_str("e2").unwrap(),
+///     Position::from_str("e4").unwrap()
 /// ).unwrap();
 ///
 /// let game_id = generate_game_id();
@@ -943,12 +944,13 @@ pub fn create_move_message(
 /// ```
 /// use mate::chess::{Board, Move as ChessMove, Position};
 /// use mate::messages::chess::{create_sync_response, generate_game_id};
+/// use std::str::FromStr;
 ///
 /// let board = Board::new();
 /// let history = vec![
 ///     ChessMove::simple(
-///         Position::from_algebraic("e2").unwrap(),
-///         Position::from_algebraic("e4").unwrap()
+///         Position::from_str("e2").unwrap(),
+///         Position::from_str("e4").unwrap()
 ///     ).unwrap(),
 /// ];
 ///
