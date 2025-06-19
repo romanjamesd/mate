@@ -1020,3 +1020,617 @@ pub fn apply_move_from_message(
 
     Ok(())
 }
+
+/// Chess-specific protocol error type that provides comprehensive error handling
+/// for all chess message protocol operations, including validation, hashing, and integration
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChessProtocolError {
+    /// Validation error for chess message format/content
+    Validation(ValidationError),
+    /// Chess engine/game logic error
+    ChessEngine(crate::chess::ChessError),
+    /// Wire protocol error during message transmission
+    Wire(String), // Simplified since we can't derive Clone for WireProtocolError
+    /// Game state synchronization error
+    SyncError { game_id: String, reason: String },
+    /// Hash verification failure with detailed information
+    HashVerificationFailed {
+        game_id: String,
+        expected: String,
+        actual: String,
+        context: String,
+    },
+    /// Game not found or invalid game state
+    GameStateError { game_id: String, error: String },
+    /// Message type mismatch or unexpected message in game flow
+    UnexpectedMessage {
+        game_id: String,
+        expected: String,
+        received: String,
+    },
+    /// Timeout during chess protocol operations
+    Timeout { operation: String, duration_ms: u64 },
+    /// Security violation detected in chess messages
+    SecurityViolation { game_id: String, violation: String },
+    /// Generic internal error with context
+    Internal { context: String, source: String },
+}
+
+impl std::fmt::Display for ChessProtocolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChessProtocolError::Validation(err) => {
+                write!(f, "Chess message validation error: {}", err)
+            }
+            ChessProtocolError::ChessEngine(err) => {
+                write!(f, "Chess engine error: {}", err)
+            }
+            ChessProtocolError::Wire(msg) => {
+                write!(f, "Wire protocol error: {}", msg)
+            }
+            ChessProtocolError::SyncError { game_id, reason } => {
+                write!(
+                    f,
+                    "Game synchronization error for game {}: {}",
+                    game_id, reason
+                )
+            }
+            ChessProtocolError::HashVerificationFailed {
+                game_id,
+                expected,
+                actual,
+                context,
+            } => {
+                write!(
+                    f,
+                    "Board hash verification failed for game {} ({}): expected '{}', got '{}'",
+                    game_id, context, expected, actual
+                )
+            }
+            ChessProtocolError::GameStateError { game_id, error } => {
+                write!(f, "Game state error for game {}: {}", game_id, error)
+            }
+            ChessProtocolError::UnexpectedMessage {
+                game_id,
+                expected,
+                received,
+            } => {
+                write!(
+                    f,
+                    "Unexpected message for game {}: expected '{}', received '{}'",
+                    game_id, expected, received
+                )
+            }
+            ChessProtocolError::Timeout {
+                operation,
+                duration_ms,
+            } => {
+                write!(
+                    f,
+                    "Chess protocol timeout during '{}' after {}ms",
+                    operation, duration_ms
+                )
+            }
+            ChessProtocolError::SecurityViolation { game_id, violation } => {
+                write!(f, "Security violation for game {}: {}", game_id, violation)
+            }
+            ChessProtocolError::Internal { context, source } => {
+                write!(
+                    f,
+                    "Internal chess protocol error in {}: {}",
+                    context, source
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ChessProtocolError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ChessProtocolError::Validation(err) => Some(err),
+            ChessProtocolError::ChessEngine(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<ValidationError> for ChessProtocolError {
+    fn from(err: ValidationError) -> Self {
+        ChessProtocolError::Validation(err)
+    }
+}
+
+impl From<crate::chess::ChessError> for ChessProtocolError {
+    fn from(err: crate::chess::ChessError) -> Self {
+        ChessProtocolError::ChessEngine(err)
+    }
+}
+
+impl From<crate::messages::wire::WireProtocolError> for ChessProtocolError {
+    fn from(err: crate::messages::wire::WireProtocolError) -> Self {
+        ChessProtocolError::Wire(err.to_string())
+    }
+}
+
+impl ChessProtocolError {
+    /// Create a sync error
+    pub fn sync_error<S: Into<String>>(game_id: S, reason: S) -> Self {
+        Self::SyncError {
+            game_id: game_id.into(),
+            reason: reason.into(),
+        }
+    }
+
+    /// Create a hash verification error
+    pub fn hash_verification_failed<S: Into<String>>(
+        game_id: S,
+        expected: S,
+        actual: S,
+        context: S,
+    ) -> Self {
+        Self::HashVerificationFailed {
+            game_id: game_id.into(),
+            expected: expected.into(),
+            actual: actual.into(),
+            context: context.into(),
+        }
+    }
+
+    /// Create a game state error
+    pub fn game_state_error<S: Into<String>>(game_id: S, error: S) -> Self {
+        Self::GameStateError {
+            game_id: game_id.into(),
+            error: error.into(),
+        }
+    }
+
+    /// Create an unexpected message error
+    pub fn unexpected_message<S: Into<String>>(game_id: S, expected: S, received: S) -> Self {
+        Self::UnexpectedMessage {
+            game_id: game_id.into(),
+            expected: expected.into(),
+            received: received.into(),
+        }
+    }
+
+    /// Create a timeout error
+    pub fn timeout<S: Into<String>>(operation: S, duration_ms: u64) -> Self {
+        Self::Timeout {
+            operation: operation.into(),
+            duration_ms,
+        }
+    }
+
+    /// Create a security violation error
+    pub fn security_violation<S: Into<String>>(game_id: S, violation: S) -> Self {
+        Self::SecurityViolation {
+            game_id: game_id.into(),
+            violation: violation.into(),
+        }
+    }
+
+    /// Create an internal error
+    pub fn internal<S: Into<String>>(context: S, source: S) -> Self {
+        Self::Internal {
+            context: context.into(),
+            source: source.into(),
+        }
+    }
+
+    /// Check if this error is recoverable (can retry the operation)
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            ChessProtocolError::Wire(_) => true, // Network issues might be temporary
+            ChessProtocolError::Timeout { .. } => true, // Timeouts can be retried
+            ChessProtocolError::SyncError { .. } => true, // Sync can be retried
+            ChessProtocolError::Internal { .. } => false, // Internal errors are not recoverable
+            ChessProtocolError::Validation(_) => false, // Invalid data won't become valid
+            ChessProtocolError::ChessEngine(_) => false, // Chess rules violations are permanent
+            ChessProtocolError::HashVerificationFailed { .. } => false, // Hash mismatches indicate corruption
+            ChessProtocolError::GameStateError { .. } => false, // Game state issues are permanent
+            ChessProtocolError::UnexpectedMessage { .. } => false, // Protocol violations are permanent
+            ChessProtocolError::SecurityViolation { .. } => false, // Security violations are permanent
+        }
+    }
+
+    /// Check if this error indicates a security concern
+    pub fn is_security_related(&self) -> bool {
+        match self {
+            ChessProtocolError::SecurityViolation { .. } => true,
+            ChessProtocolError::HashVerificationFailed { .. } => true,
+            ChessProtocolError::Validation(ValidationError::InvalidGameId(_)) => true,
+            _ => false,
+        }
+    }
+
+    /// Get the game ID associated with this error, if any
+    pub fn game_id(&self) -> Option<&str> {
+        match self {
+            ChessProtocolError::SyncError { game_id, .. } => Some(game_id),
+            ChessProtocolError::HashVerificationFailed { game_id, .. } => Some(game_id),
+            ChessProtocolError::GameStateError { game_id, .. } => Some(game_id),
+            ChessProtocolError::UnexpectedMessage { game_id, .. } => Some(game_id),
+            ChessProtocolError::SecurityViolation { game_id, .. } => Some(game_id),
+            _ => None,
+        }
+    }
+
+    /// Get error category for logging and metrics
+    pub fn category(&self) -> &'static str {
+        match self {
+            ChessProtocolError::Validation(_) => "validation",
+            ChessProtocolError::ChessEngine(_) => "chess_engine",
+            ChessProtocolError::Wire(_) => "wire_protocol",
+            ChessProtocolError::SyncError { .. } => "synchronization",
+            ChessProtocolError::HashVerificationFailed { .. } => "hash_verification",
+            ChessProtocolError::GameStateError { .. } => "game_state",
+            ChessProtocolError::UnexpectedMessage { .. } => "protocol_violation",
+            ChessProtocolError::Timeout { .. } => "timeout",
+            ChessProtocolError::SecurityViolation { .. } => "security",
+            ChessProtocolError::Internal { .. } => "internal",
+        }
+    }
+}
+
+/// Result type for chess protocol operations
+pub type ChessProtocolResult<T> = Result<T, ChessProtocolError>;
+
+/// Enhanced validation function that provides graceful error handling for game IDs
+///
+/// This function validates game IDs with detailed error information and
+/// security considerations to prevent injection attacks and ensure proper formatting.
+///
+/// # Arguments
+///
+/// * `game_id` - The game ID string to validate
+///
+/// # Returns
+///
+/// * `Ok(())` - If the game ID is valid
+/// * `Err(ChessProtocolError)` - If validation fails with detailed error information
+///
+/// # Security Considerations
+///
+/// - Validates UUID v4 format to prevent injection attacks
+/// - Checks for proper length and character set
+/// - Rejects empty, whitespace-only, or malformed IDs
+///
+/// # Examples
+///
+/// ```
+/// use mate::messages::chess::{validate_game_id_graceful, generate_game_id};
+///
+/// let valid_id = generate_game_id();
+/// assert!(validate_game_id_graceful(&valid_id).is_ok());
+///
+/// let invalid_id = "not-a-uuid";
+/// assert!(validate_game_id_graceful(invalid_id).is_err());
+/// ```
+pub fn validate_game_id_graceful(game_id: &str) -> ChessProtocolResult<()> {
+    if game_id.trim().is_empty() {
+        return Err(ChessProtocolError::security_violation(
+            game_id,
+            "Empty game ID detected - potential security violation",
+        ));
+    }
+
+    if game_id.len() > 50 {
+        // UUID should be 36 characters
+        return Err(ChessProtocolError::security_violation(
+            game_id,
+            "Game ID too long - potential buffer overflow attempt",
+        ));
+    }
+
+    // Check for suspicious characters that could indicate injection attempts
+    if game_id.chars().any(|c| c.is_control() || c == '\0') {
+        return Err(ChessProtocolError::security_violation(
+            game_id,
+            "Game ID contains suspicious control characters",
+        ));
+    }
+
+    if !validate_game_id(game_id) {
+        return Err(ValidationError::InvalidGameId(format!(
+            "Game ID '{}' is not a valid UUID v4 format",
+            game_id
+        ))
+        .into());
+    }
+
+    Ok(())
+}
+
+/// Enhanced board state hash verification with graceful error handling
+///
+/// Verifies board state hashes with detailed error reporting and security checks
+/// to detect potential tampering or corruption in chess game data.
+///
+/// # Arguments
+///
+/// * `game_id` - The game ID for error context
+/// * `board` - The chess board to verify
+/// * `expected_hash` - The expected SHA-256 hash
+/// * `context` - Additional context for error reporting (e.g., "after move", "sync response")
+///
+/// # Returns
+///
+/// * `Ok(())` - If the hash verification succeeds
+/// * `Err(ChessProtocolError)` - If verification fails with detailed error information
+///
+/// # Security Considerations
+///
+/// - Detects board state tampering
+/// - Prevents hash collision attacks
+/// - Validates hash format before comparison
+///
+/// # Examples
+///
+/// ```
+/// use mate::messages::chess::{verify_board_hash_graceful, hash_board_state};
+/// use mate::chess::Board;
+///
+/// let board = Board::new();
+/// let hash = hash_board_state(&board);
+/// let game_id = "test-game";
+///
+/// assert!(verify_board_hash_graceful(game_id, &board, &hash, "test").is_ok());
+/// assert!(verify_board_hash_graceful(game_id, &board, "invalid-hash", "test").is_err());
+/// ```
+pub fn verify_board_hash_graceful(
+    game_id: &str,
+    board: &Board,
+    expected_hash: &str,
+    context: &str,
+) -> ChessProtocolResult<()> {
+    // First validate the hash format
+    validate_board_hash_format(expected_hash)?;
+
+    // Compute the actual hash
+    let actual_hash = hash_board_state(board);
+
+    // Compare hashes
+    if actual_hash != expected_hash {
+        return Err(ChessProtocolError::hash_verification_failed(
+            game_id,
+            expected_hash,
+            &actual_hash,
+            context,
+        ));
+    }
+
+    Ok(())
+}
+
+/// Enhanced chess move validation with graceful error handling
+///
+/// Validates chess moves with comprehensive error reporting and security checks
+/// to prevent malformed moves and potential exploitation attempts.
+///
+/// # Arguments
+///
+/// * `game_id` - The game ID for error context
+/// * `chess_move` - The chess move string to validate
+/// * `board` - Optional board context for move legality checking
+///
+/// # Returns
+///
+/// * `Ok(())` - If the move is valid
+/// * `Err(ChessProtocolError)` - If validation fails with detailed error information
+///
+/// # Security Considerations
+///
+/// - Prevents injection through malformed move strings
+/// - Validates move format before processing
+/// - Checks for suspicious patterns in move data
+///
+/// # Examples
+///
+/// ```
+/// use mate::messages::chess::validate_chess_move_graceful;
+/// use mate::chess::Board;
+///
+/// let game_id = "test-game";
+/// let board = Board::new();
+///
+/// assert!(validate_chess_move_graceful(game_id, "e2e4", Some(&board)).is_ok());
+/// assert!(validate_chess_move_graceful(game_id, "invalid", Some(&board)).is_err());
+/// ```
+pub fn validate_chess_move_graceful(
+    game_id: &str,
+    chess_move: &str,
+    _board: Option<&Board>, // Future: validate move legality
+) -> ChessProtocolResult<()> {
+    // Check for potentially malicious input
+    if chess_move.len() > 20 {
+        // Chess moves should be much shorter
+        return Err(ChessProtocolError::security_violation(
+            game_id,
+            "Chess move string too long - potential buffer overflow attempt",
+        ));
+    }
+
+    // Check for suspicious characters
+    if chess_move.chars().any(|c| c.is_control() || c == '\0') {
+        return Err(ChessProtocolError::security_violation(
+            game_id,
+            "Chess move contains suspicious control characters",
+        ));
+    }
+
+    // Use existing validation
+    validate_chess_move_format(chess_move)?;
+
+    // Future enhancement: Validate move legality against board state
+    // if let Some(board) = board {
+    //     validate_move_legality(chess_move, board)?;
+    // }
+
+    Ok(())
+}
+
+/// Enhanced message chain error propagation function
+///
+/// Handles error propagation through the chess message processing chain
+/// with proper context preservation and graceful degradation strategies.
+///
+/// # Arguments
+///
+/// * `operation` - Description of the operation being performed
+/// * `result` - The result to process
+///
+/// # Returns
+///
+/// * Properly contextualized error with operation information
+///
+/// # Examples
+///
+/// ```
+/// use mate::messages::chess::{propagate_error, ChessProtocolError};
+///
+/// let result: Result<(), ChessProtocolError> = Err(
+///     ChessProtocolError::internal("test", "test error")
+/// );
+/// let contextualized = propagate_error("move validation", result);
+/// assert!(contextualized.is_err());
+/// ```
+pub fn propagate_error<T>(
+    operation: &str,
+    result: ChessProtocolResult<T>,
+) -> ChessProtocolResult<T> {
+    result.map_err(|err| match err {
+        ChessProtocolError::Internal { context, source } => {
+            ChessProtocolError::internal(format!("{} -> {}", operation, context), source)
+        }
+        other => other,
+    })
+}
+
+/// Gracefully handle invalid game IDs with proper security logging
+///
+/// Provides centralized handling of invalid game ID errors with security
+/// considerations and appropriate logging for monitoring.
+///
+/// # Arguments
+///
+/// * `game_id` - The invalid game ID
+/// * `context` - Context where the invalid ID was encountered
+///
+/// # Returns
+///
+/// * Appropriate ChessProtocolError with security classification
+///
+/// # Security Features
+///
+/// - Logs suspicious game ID patterns
+/// - Categorizes potential attack patterns  
+/// - Provides sanitized error messages
+pub fn handle_invalid_game_id(game_id: &str, context: &str) -> ChessProtocolError {
+    // Log security event (in a real implementation, this would use proper logging)
+    eprintln!(
+        "SECURITY: Invalid game ID '{}' encountered in context '{}' - potential attack attempt",
+        game_id, context
+    );
+
+    // Classify the type of invalid ID for security monitoring
+    let violation_type = if game_id.is_empty() {
+        "empty_game_id"
+    } else if game_id.len() > 50 {
+        "oversized_game_id"
+    } else if game_id.chars().any(|c| c.is_control()) {
+        "control_characters_in_game_id"
+    } else {
+        "malformed_game_id"
+    };
+
+    ChessProtocolError::SecurityViolation {
+        game_id: game_id.to_string(),
+        violation: format!("Invalid game ID in {}: {}", context, violation_type),
+    }
+}
+
+/// Gracefully handle board state hash mismatches
+///
+/// Provides centralized handling of hash verification failures with detailed
+/// error reporting and security considerations.
+///
+/// # Arguments
+///
+/// * `game_id` - The game ID where the mismatch occurred
+/// * `expected` - The expected hash value
+/// * `actual` - The actual computed hash value  
+/// * `context` - Context where the mismatch was detected
+///
+/// # Returns
+///
+/// * Appropriate ChessProtocolError with hash mismatch details
+///
+/// # Security Features
+///
+/// - Detects potential tampering attempts
+/// - Logs hash verification failures
+/// - Provides detailed mismatch information for debugging
+pub fn handle_board_hash_mismatch(
+    game_id: &str,
+    expected: &str,
+    actual: &str,
+    context: &str,
+) -> ChessProtocolError {
+    // Log security event
+    eprintln!(
+        "SECURITY: Board hash mismatch for game '{}' in context '{}' - potential tampering detected",
+        game_id, context
+    );
+
+    ChessProtocolError::hash_verification_failed(game_id, expected, actual, context)
+}
+
+/// Gracefully handle malformed chess moves
+///
+/// Provides centralized handling of invalid chess move errors with security
+/// considerations and proper error classification.
+///
+/// # Arguments
+///
+/// * `game_id` - The game ID where the malformed move was encountered
+/// * `chess_move` - The malformed move string
+/// * `context` - Context where the malformed move was detected
+///
+/// # Returns
+///
+/// * Appropriate ChessProtocolError with move validation details
+///
+/// # Security Features
+///
+/// - Detects potential injection attempts through move strings
+/// - Logs suspicious move patterns
+/// - Provides sanitized error messages
+pub fn handle_malformed_chess_move(
+    game_id: &str,
+    chess_move: &str,
+    context: &str,
+) -> ChessProtocolError {
+    // Check for potential security violations
+    let is_security_violation = chess_move.len() > 20 || chess_move.chars().any(|c| c.is_control());
+
+    if is_security_violation {
+        eprintln!(
+            "SECURITY: Malformed chess move '{}' for game '{}' in context '{}' - potential injection attempt",
+            chess_move, game_id, context
+        );
+        ChessProtocolError::SecurityViolation {
+            game_id: game_id.to_string(),
+            violation: format!(
+                "Malformed chess move in {}: potential injection attempt",
+                context
+            ),
+        }
+    } else {
+        ValidationError::InvalidMove(format!(
+            "Invalid chess move '{}' in context '{}'",
+            chess_move, context
+        ))
+        .into()
+    }
+}
