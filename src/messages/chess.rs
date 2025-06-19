@@ -1,5 +1,7 @@
+use crate::chess::Board;
 use crate::chess::Color;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 /// Chess game invitation message
@@ -224,4 +226,88 @@ pub fn generate_game_id() -> String {
 /// ```
 pub fn validate_game_id(id: &str) -> bool {
     Uuid::parse_str(id).is_ok()
+}
+
+/// Generate a SHA-256 hash of the current board state
+///
+/// Creates a deterministic, cryptographically secure hash of the board state
+/// using FEN notation as the canonical representation. This ensures that
+/// identical board positions always produce identical hashes, making it
+/// suitable for integrity checking and synchronization verification.
+///
+/// The hash includes:
+/// - All piece positions
+/// - Active color (current player to move)
+/// - Castling rights
+/// - En passant target square
+/// - Halfmove clock (50-move rule counter)
+/// - Fullmove number
+///
+/// # Arguments
+///
+/// * `board` - The chess board to hash
+///
+/// # Returns
+///
+/// A lowercase hexadecimal string representation of the SHA-256 hash
+///
+/// # Examples
+///
+/// ```
+/// use mate::chess::Board;
+/// use mate::messages::chess::hash_board_state;
+///
+/// let board = Board::new();
+/// let hash = hash_board_state(&board);
+/// assert_eq!(hash.len(), 64); // SHA-256 produces 64-character hex strings
+/// ```
+pub fn hash_board_state(board: &Board) -> String {
+    // Use FEN notation as the canonical representation for consistent hashing
+    let fen = board.to_fen();
+
+    // Create SHA-256 hasher
+    let mut hasher = Sha256::new();
+
+    // Hash the FEN string (canonical board representation)
+    hasher.update(fen.as_bytes());
+
+    // Get the hash result and convert to lowercase hex string
+    let result = hasher.finalize();
+    format!("{:x}", result)
+}
+
+/// Verify that a board state matches the expected hash
+///
+/// Computes the SHA-256 hash of the given board state and compares it
+/// against the expected hash value. This is used to verify board state
+/// integrity in chess messages and detect any desynchronization between
+/// players.
+///
+/// # Arguments
+///
+/// * `board` - The chess board to verify
+/// * `expected_hash` - The expected SHA-256 hash in hexadecimal format
+///
+/// # Returns
+///
+/// `true` if the computed hash matches the expected hash, `false` otherwise
+///
+/// # Examples
+///
+/// ```
+/// use mate::chess::Board;
+/// use mate::messages::chess::{hash_board_state, verify_board_hash};
+///
+/// let board = Board::new();
+/// let hash = hash_board_state(&board);
+/// assert!(verify_board_hash(&board, &hash));
+///
+/// let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
+/// assert!(!verify_board_hash(&board, wrong_hash));
+/// ```
+pub fn verify_board_hash(board: &Board, expected_hash: &str) -> bool {
+    let computed_hash = hash_board_state(board);
+
+    // Compare hashes in a case-insensitive manner
+    computed_hash.eq_ignore_ascii_case(expected_hash)
 }

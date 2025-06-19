@@ -2,6 +2,10 @@ pub mod chess;
 pub mod types;
 pub mod wire;
 
+pub use chess::{
+    generate_game_id, hash_board_state, validate_game_id, verify_board_hash, GameAccept,
+    GameDecline, GameInvite, Move as ChessMove, MoveAck, SyncRequest, SyncResponse,
+};
 pub use types::{Message, SignedEnvelope};
 pub use wire::{
     ConnectionState,
