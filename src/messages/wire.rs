@@ -178,6 +178,52 @@ impl WireConfig {
             write_timeout: NETWORK_DEFAULT_WRITE_TIMEOUT,
         }
     }
+
+    // Chess-specific configurations for Step 8
+
+    /// Create a WireConfig optimized for standard chess messages (invites, moves, acknowledgments)
+    /// Uses smaller size limits and faster timeouts for responsive gameplay
+    /// Suitable for: GameInvite, GameAccept, GameDecline, Move, MoveAck, SyncRequest
+    pub fn for_chess_standard() -> Self {
+        Self {
+            max_message_size: NETWORK_SMALL_MESSAGE_SIZE, // 64KB - more than enough for standard chess messages
+            read_timeout: Duration::from_secs(15),        // Faster timeout for responsive gameplay
+            write_timeout: Duration::from_secs(15),
+        }
+    }
+
+    /// Create a WireConfig optimized for chess synchronization messages
+    /// Uses larger size limits and extended timeouts to handle full game state transfers
+    /// Suitable for: SyncResponse messages with complete move history and board state
+    pub fn for_chess_sync() -> Self {
+        Self {
+            max_message_size: NETWORK_LARGE_MESSAGE_SIZE, // 8MB - handles games with extensive move history
+            read_timeout: Duration::from_secs(60),        // Extended timeout for large sync data
+            write_timeout: Duration::from_secs(60),
+        }
+    }
+
+    /// Create a WireConfig optimized for chess tournaments or bulk operations
+    /// Uses maximum size limits and very extended timeouts for handling multiple games
+    /// Suitable for: Bulk game synchronization, tournament data, multiple concurrent games
+    pub fn for_chess_bulk() -> Self {
+        Self {
+            max_message_size: MAX_MESSAGE_SIZE, // Full 16MB - for tournament or bulk operations
+            read_timeout: Duration::from_secs(120), // Very extended timeout for bulk operations
+            write_timeout: Duration::from_secs(120),
+        }
+    }
+
+    /// Create a WireConfig optimized for real-time chess gameplay
+    /// Uses balanced settings optimized for low-latency interactive play
+    /// Suitable for: Real-time games where responsiveness is critical
+    pub fn for_chess_realtime() -> Self {
+        Self {
+            max_message_size: NETWORK_DEFAULT_MESSAGE_SIZE, // 1MB - balanced for real-time use
+            read_timeout: Duration::from_secs(10), // Very fast timeout for real-time responsiveness
+            write_timeout: Duration::from_secs(10),
+        }
+    }
 }
 
 /// DoS Protection configuration for future rate limiting implementation
@@ -1327,6 +1373,36 @@ impl FramedMessage {
     /// Optimized for security and resource management in production environments
     pub fn for_production() -> Self {
         Self::new(WireConfig::for_production())
+    }
+
+    // Chess-specific configurations for Step 8
+
+    /// Create a FramedMessage optimized for standard chess messages (invites, moves, acknowledgments)
+    /// Uses smaller size limits and faster timeouts for responsive gameplay
+    /// Suitable for: GameInvite, GameAccept, GameDecline, Move, MoveAck, SyncRequest
+    pub fn for_chess_standard() -> Self {
+        Self::new(WireConfig::for_chess_standard())
+    }
+
+    /// Create a FramedMessage optimized for chess synchronization messages
+    /// Uses larger size limits and extended timeouts to handle full game state transfers
+    /// Suitable for: SyncResponse messages with complete move history and board state
+    pub fn for_chess_sync() -> Self {
+        Self::new(WireConfig::for_chess_sync())
+    }
+
+    /// Create a FramedMessage optimized for chess tournaments or bulk operations
+    /// Uses maximum size limits and very extended timeouts for handling multiple games
+    /// Suitable for: Bulk game synchronization, tournament data, multiple concurrent games
+    pub fn for_chess_bulk() -> Self {
+        Self::new(WireConfig::for_chess_bulk())
+    }
+
+    /// Create a FramedMessage optimized for real-time chess gameplay
+    /// Uses balanced settings optimized for low-latency interactive play
+    /// Suitable for: Real-time games where responsiveness is critical
+    pub fn for_chess_realtime() -> Self {
+        Self::new(WireConfig::for_chess_realtime())
     }
 
     /// Read a message with graceful degradation and retry logic (Step 4.3)
