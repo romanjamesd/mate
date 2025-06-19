@@ -1,3 +1,4 @@
+pub mod chess;
 pub mod types;
 pub mod wire;
 

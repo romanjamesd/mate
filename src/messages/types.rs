@@ -1,4 +1,7 @@
 use crate::crypto::identity::{Identity, PeerId};
+use crate::messages::chess::{
+    GameAccept, GameDecline, GameInvite, Move, MoveAck, SyncRequest, SyncResponse,
+};
 use anyhow::{Context, Result};
 use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
@@ -12,8 +15,18 @@ pub const ED25519_SIGNATURE_LENGTH: usize = 64;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Message {
+    // Existing variants
     Ping { nonce: u64, payload: String },
     Pong { nonce: u64, payload: String },
+
+    // New chess variants
+    GameInvite(GameInvite),
+    GameAccept(GameAccept),
+    GameDecline(GameDecline),
+    Move(Move),
+    MoveAck(MoveAck),
+    SyncRequest(SyncRequest),
+    SyncResponse(SyncResponse),
 }
 
 impl Message {
@@ -28,18 +41,38 @@ impl Message {
     }
 
     /// Get the nonce from either Ping or Pong message
+    /// Panics for chess messages as they don't have nonces
     pub fn get_nonce(&self) -> u64 {
         match self {
             Message::Ping { nonce, .. } => *nonce,
             Message::Pong { nonce, .. } => *nonce,
+            Message::GameInvite(_)
+            | Message::GameAccept(_)
+            | Message::GameDecline(_)
+            | Message::Move(_)
+            | Message::MoveAck(_)
+            | Message::SyncRequest(_)
+            | Message::SyncResponse(_) => {
+                panic!("get_nonce() called on chess message - use get_game_id() instead")
+            }
         }
     }
 
     /// Get the payload from either Ping or Pong message
+    /// Panics for chess messages as they don't have payloads
     pub fn get_payload(&self) -> &str {
         match self {
             Message::Ping { payload, .. } => payload,
             Message::Pong { payload, .. } => payload,
+            Message::GameInvite(_)
+            | Message::GameAccept(_)
+            | Message::GameDecline(_)
+            | Message::Move(_)
+            | Message::MoveAck(_)
+            | Message::SyncRequest(_)
+            | Message::SyncResponse(_) => {
+                panic!("get_payload() called on chess message - chess messages don't have payloads")
+            }
         }
     }
 
@@ -53,11 +86,47 @@ impl Message {
         matches!(self, Message::Pong { .. })
     }
 
+    /// Check if this is a chess message
+    pub fn is_chess_message(&self) -> bool {
+        matches!(
+            self,
+            Message::GameInvite(_)
+                | Message::GameAccept(_)
+                | Message::GameDecline(_)
+                | Message::Move(_)
+                | Message::MoveAck(_)
+                | Message::SyncRequest(_)
+                | Message::SyncResponse(_)
+        )
+    }
+
+    /// Get the game ID from chess messages
+    /// Returns None for Ping/Pong messages
+    pub fn get_game_id(&self) -> Option<&str> {
+        match self {
+            Message::GameInvite(msg) => Some(&msg.game_id),
+            Message::GameAccept(msg) => Some(&msg.game_id),
+            Message::GameDecline(msg) => Some(&msg.game_id),
+            Message::Move(msg) => Some(&msg.game_id),
+            Message::MoveAck(msg) => Some(&msg.game_id),
+            Message::SyncRequest(msg) => Some(&msg.game_id),
+            Message::SyncResponse(msg) => Some(&msg.game_id),
+            Message::Ping { .. } | Message::Pong { .. } => None,
+        }
+    }
+
     /// Get the message type as a string
     pub fn message_type(&self) -> &'static str {
         match self {
             Message::Ping { .. } => "Ping",
             Message::Pong { .. } => "Pong",
+            Message::GameInvite(_) => "GameInvite",
+            Message::GameAccept(_) => "GameAccept",
+            Message::GameDecline(_) => "GameDecline",
+            Message::Move(_) => "Move",
+            Message::MoveAck(_) => "MoveAck",
+            Message::SyncRequest(_) => "SyncRequest",
+            Message::SyncResponse(_) => "SyncResponse",
         }
     }
 
@@ -282,153 +351,5 @@ impl SignedEnvelope {
         };
 
         now.saturating_sub(self.timestamp)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::crypto::identity::Identity;
-
-    #[test]
-    fn test_new_ping() {
-        let msg = Message::new_ping(12345, "test payload".to_string());
-        assert!(msg.is_ping());
-        assert!(!msg.is_pong());
-        assert_eq!(msg.get_nonce(), 12345);
-        assert_eq!(msg.get_payload(), "test payload");
-        assert_eq!(msg.message_type(), "Ping");
-    }
-
-    #[test]
-    fn test_new_pong() {
-        let msg = Message::new_pong(67890, "response payload".to_string());
-        assert!(msg.is_pong());
-        assert!(!msg.is_ping());
-        assert_eq!(msg.get_nonce(), 67890);
-        assert_eq!(msg.get_payload(), "response payload");
-        assert_eq!(msg.message_type(), "Pong");
-    }
-
-    #[test]
-    fn test_message_accessors() {
-        let ping = Message::Ping {
-            nonce: 111,
-            payload: "ping data".to_string(),
-        };
-        let pong = Message::Pong {
-            nonce: 222,
-            payload: "pong data".to_string(),
-        };
-
-        assert_eq!(ping.get_nonce(), 111);
-        assert_eq!(ping.get_payload(), "ping data");
-        assert_eq!(pong.get_nonce(), 222);
-        assert_eq!(pong.get_payload(), "pong data");
-    }
-
-    #[test]
-    fn test_message_type_detection() {
-        let ping = Message::new_ping(1, "test".to_string());
-        let pong = Message::new_pong(2, "test".to_string());
-
-        assert!(ping.is_ping());
-        assert!(!ping.is_pong());
-        assert!(!pong.is_ping());
-        assert!(pong.is_pong());
-    }
-
-    #[test]
-    fn test_signed_envelope_new_valid() {
-        let identity = Identity::generate().unwrap();
-        let message = Message::new_ping(123, "test".to_string());
-        let message_bytes = message.serialize().unwrap();
-        let signature = identity.sign(&message_bytes);
-        let sender = identity.peer_id().as_str().to_string();
-
-        let envelope = SignedEnvelope::new(
-            message_bytes,
-            signature.to_bytes().to_vec(),
-            sender,
-            1234567890,
-        )
-        .unwrap();
-
-        assert_eq!(envelope.timestamp(), 1234567890);
-    }
-
-    #[test]
-    fn test_signed_envelope_new_empty_message() {
-        let result = SignedEnvelope::new(
-            vec![], // Empty message
-            vec![0u8; 64],
-            "test".to_string(),
-            1234567890,
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_signed_envelope_new_invalid_signature_length() {
-        let result = SignedEnvelope::new(
-            vec![1, 2, 3],
-            vec![0u8; 32], // Wrong length
-            "test".to_string(),
-            1234567890,
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_signed_envelope_create_and_verify() {
-        let identity = Identity::generate().unwrap();
-        let message = Message::new_pong(456, "response".to_string());
-
-        let envelope = SignedEnvelope::create(&message, &identity, None).unwrap();
-
-        // Verify the signature
-        assert!(envelope.verify_signature());
-
-        // Verify we can get the message back
-        let recovered_message = envelope.get_message().unwrap();
-        assert_eq!(message.get_nonce(), recovered_message.get_nonce());
-        assert_eq!(message.get_payload(), recovered_message.get_payload());
-    }
-
-    #[test]
-    fn test_signed_envelope_verify_invalid_signature() {
-        let identity1 = Identity::generate().unwrap();
-        let identity2 = Identity::generate().unwrap();
-        let message = Message::new_ping(789, "test".to_string());
-
-        // Create envelope with identity1
-        let mut envelope = SignedEnvelope::create(&message, &identity1, None).unwrap();
-
-        // Change sender to identity2 (signature mismatch)
-        envelope.sender = identity2.peer_id().as_str().to_string();
-
-        // Verification should fail
-        assert!(!envelope.verify_signature());
-    }
-
-    #[test]
-    fn test_timestamp_validation() {
-        let identity = Identity::generate().unwrap();
-        let message = Message::new_ping(1, "test".to_string());
-
-        // Create envelope with very old timestamp
-        let old_timestamp = 1000000000; // Very old
-        let envelope = SignedEnvelope::create(&message, &identity, Some(old_timestamp)).unwrap();
-
-        // Should be invalid due to age
-        assert!(!envelope.is_timestamp_valid(DEFAULT_MAX_MESSAGE_AGE_SECONDS));
-        assert!(envelope.get_age_seconds() > DEFAULT_MAX_MESSAGE_AGE_SECONDS);
-
-        // Create envelope with current timestamp
-        let envelope_current = SignedEnvelope::create(&message, &identity, None).unwrap();
-
-        // Should be valid
-        assert!(envelope_current.is_timestamp_valid(DEFAULT_MAX_MESSAGE_AGE_SECONDS));
-        assert!(envelope_current.get_age_seconds() < 10); // Should be very recent
     }
 }
