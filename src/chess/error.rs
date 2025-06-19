@@ -6,6 +6,8 @@ pub enum ChessError {
     InvalidPieceType(String),
     InvalidPosition(String),
     InvalidMove(String),
+    InvalidFen(String),
+    BoardStateError(String),
 }
 
 impl fmt::Display for ChessError {
@@ -15,6 +17,8 @@ impl fmt::Display for ChessError {
             ChessError::InvalidPieceType(msg) => write!(f, "Invalid piece type: {}", msg),
             ChessError::InvalidPosition(msg) => write!(f, "Invalid position: {}", msg),
             ChessError::InvalidMove(msg) => write!(f, "Invalid move: {}", msg),
+            ChessError::InvalidFen(msg) => write!(f, "Invalid FEN: {}", msg),
+            ChessError::BoardStateError(msg) => write!(f, "Board state error: {}", msg),
         }
     }
 }
