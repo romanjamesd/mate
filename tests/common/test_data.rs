@@ -26,6 +26,14 @@ pub fn create_test_envelope_with_nonce(payload: &str, nonce: u64) -> (SignedEnve
     (envelope, message)
 }
 
+/// Create a test SignedEnvelope with a specific message
+pub fn create_test_envelope_with_message(message: &Message) -> (SignedEnvelope, Message) {
+    let identity = Identity::generate().expect("Failed to generate identity");
+    let envelope = SignedEnvelope::create(message, &identity, Some(1234567890))
+        .expect("Failed to create signed envelope");
+    (envelope, message.clone())
+}
+
 /// Helper function to write multiple messages to a single buffer in sequence
 pub async fn write_multiple_messages_to_buffer(messages: &[(SignedEnvelope, Message)]) -> Vec<u8> {
     let framed_message = FramedMessage::default();
