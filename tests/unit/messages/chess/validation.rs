@@ -8,15 +8,14 @@
 //! - Message-specific validation (field validation, not security validation)
 //! - Integration validation and error propagation across components
 //!
-//! Note: Security-specific validation (injection prevention, rate limiting, cryptographic 
+//! Note: Security-specific validation (injection prevention, rate limiting, cryptographic
 //! validation, tampering detection) is handled in the security.rs test module.
 
 use mate::chess::{Board, Color};
 use mate::messages::chess::{
     generate_game_id, hash_board_state,
     security::{
-        validate_secure_fen_notation, validate_secure_move_history,
-        validate_secure_reason_text,
+        validate_secure_fen_notation, validate_secure_move_history, validate_secure_reason_text,
     },
     validate_chess_move_format, validate_game_accept, validate_game_decline, validate_game_id,
     validate_game_invite, validate_move_ack, validate_move_message, validate_sync_request,
