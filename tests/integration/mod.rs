@@ -52,3 +52,6 @@ pub mod chess_storage_integration;
 
 // Chess board integration tests
 pub mod chess_board_integration;
+
+// Chess engine and message protocol integration tests
+pub mod chess_engine_messages;
