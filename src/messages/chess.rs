@@ -787,7 +787,7 @@ pub fn validate_sync_response(response: &SyncResponse) -> Result<(), ValidationE
 
     // Try to parse the FEN to validate its format
     use crate::chess::Board;
-    if let Err(_) = Board::from_fen(&response.board_state) {
+    if Board::from_fen(&response.board_state).is_err() {
         return Err(ValidationError::InvalidFen(format!(
             "Invalid FEN notation: '{}'",
             response.board_state
@@ -1260,12 +1260,12 @@ impl ChessProtocolError {
 
     /// Check if this error indicates a security concern
     pub fn is_security_related(&self) -> bool {
-        match self {
-            ChessProtocolError::SecurityViolation { .. } => true,
-            ChessProtocolError::HashVerificationFailed { .. } => true,
-            ChessProtocolError::Validation(ValidationError::InvalidGameId(_)) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            ChessProtocolError::SecurityViolation { .. }
+                | ChessProtocolError::HashVerificationFailed { .. }
+                | ChessProtocolError::Validation(ValidationError::InvalidGameId(_))
+        )
     }
 
     /// Get the game ID associated with this error, if any
@@ -1747,10 +1747,7 @@ pub mod security {
         /// Check if a move is allowed under current rate limits
         pub fn check_move_rate_limit(&mut self, game_id: &str) -> bool {
             let now = Instant::now();
-            let times = self
-                .move_times
-                .entry(game_id.to_string())
-                .or_insert_with(Vec::new);
+            let times = self.move_times.entry(game_id.to_string()).or_default();
 
             // Remove old entries outside the rate limit window
             times.retain(|&time| now.duration_since(time) < Duration::from_secs(60));
@@ -1780,7 +1777,7 @@ pub mod security {
             let times = self
                 .invitation_times
                 .entry(player_id.to_string())
-                .or_insert_with(Vec::new);
+                .or_default();
 
             // Remove old entries outside the rate limit window
             times.retain(|&time| now.duration_since(time) < Duration::from_secs(3600)); // 1 hour
@@ -1796,10 +1793,7 @@ pub mod security {
         /// Check if a sync request is allowed under current rate limits
         pub fn check_sync_rate_limit(&mut self, game_id: &str) -> bool {
             let now = Instant::now();
-            let times = self
-                .sync_times
-                .entry(game_id.to_string())
-                .or_insert_with(Vec::new);
+            let times = self.sync_times.entry(game_id.to_string()).or_default();
 
             // Remove old entries outside the rate limit window
             times.retain(|&time| now.duration_since(time) < Duration::from_secs(60));
@@ -1933,7 +1927,7 @@ pub mod security {
     }
 
     /// Enhanced validation functions with security hardening
-
+    ///
     /// Validate text input against injection attacks and length limits
     pub fn validate_safe_text_input(
         input: &str,
@@ -2135,7 +2129,7 @@ pub mod security {
         if provided_hash.len() != expected_hash.len() {
             return Err(SecurityViolation::BoardTampering {
                 game_id: game_id.to_string(),
-                expected_hash: expected_hash,
+                expected_hash,
                 actual_hash: provided_hash.to_string(),
             });
         }
