@@ -58,3 +58,6 @@ pub mod chess_engine_messages;
 
 // Chess protocol core integration tests
 pub mod chess_protocol_core;
+
+// Chess protocol advanced integration tests
+pub mod chess_protocol_advanced;
