@@ -1,4 +1,7 @@
 use crate::crypto::identity::{Identity, PeerId};
+use crate::messages::chess::{
+    GameAccept, GameDecline, GameInvite, Move, MoveAck, SyncRequest, SyncResponse,
+};
 use anyhow::{Context, Result};
 use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
@@ -12,8 +15,18 @@ pub const ED25519_SIGNATURE_LENGTH: usize = 64;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Message {
+    // Existing variants
     Ping { nonce: u64, payload: String },
     Pong { nonce: u64, payload: String },
+
+    // New chess variants
+    GameInvite(GameInvite),
+    GameAccept(GameAccept),
+    GameDecline(GameDecline),
+    Move(Move),
+    MoveAck(MoveAck),
+    SyncRequest(SyncRequest),
+    SyncResponse(SyncResponse),
 }
 
 impl Message {
@@ -27,19 +40,199 @@ impl Message {
         Message::Pong { nonce, payload }
     }
 
+    /// Create a new GameInvite message
+    ///
+    /// # Arguments
+    /// * `game_id` - Unique game identifier (should be a valid UUID)
+    /// * `suggested_color` - Optional color suggestion for the invitee
+    ///
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    /// use mate::messages::chess::generate_game_id;
+    /// use mate::chess::Color;
+    ///
+    /// let msg = Message::new_game_invite(generate_game_id(), Some(Color::White));
+    /// assert!(msg.is_chess_message());
+    /// ```
+    pub fn new_game_invite(game_id: String, suggested_color: Option<crate::chess::Color>) -> Self {
+        use crate::messages::chess::GameInvite;
+        Message::GameInvite(GameInvite::new(game_id, suggested_color))
+    }
+
+    /// Create a new GameAccept message
+    ///
+    /// # Arguments
+    /// * `game_id` - Game identifier being accepted
+    /// * `accepted_color` - Color the accepter wants to play as
+    ///
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    /// use mate::messages::chess::generate_game_id;
+    /// use mate::chess::Color;
+    ///
+    /// let msg = Message::new_game_accept(generate_game_id(), Color::Black);
+    /// assert!(msg.is_chess_message());
+    /// ```
+    pub fn new_game_accept(game_id: String, accepted_color: crate::chess::Color) -> Self {
+        use crate::messages::chess::GameAccept;
+        Message::GameAccept(GameAccept::new(game_id, accepted_color))
+    }
+
+    /// Create a new GameDecline message
+    ///
+    /// # Arguments
+    /// * `game_id` - Game identifier being declined
+    /// * `reason` - Optional reason for declining
+    ///
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    /// use mate::messages::chess::generate_game_id;
+    ///
+    /// let msg = Message::new_game_decline(generate_game_id(), Some("Already in a game".to_string()));
+    /// assert!(msg.is_chess_message());
+    /// ```
+    pub fn new_game_decline(game_id: String, reason: Option<String>) -> Self {
+        use crate::messages::chess::GameDecline;
+        Message::GameDecline(GameDecline::new(game_id, reason))
+    }
+
+    /// Create a new Move message
+    ///
+    /// # Arguments
+    /// * `game_id` - Game identifier for the move
+    /// * `chess_move` - Chess move in algebraic notation (e.g., "e2e4")
+    /// * `board_state_hash` - SHA-256 hash of the board state after the move
+    ///
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    /// use mate::messages::chess::{generate_game_id, hash_board_state};
+    /// use mate::chess::Board;
+    ///
+    /// let board = Board::new();
+    /// let msg = Message::new_move(
+    ///     generate_game_id(),
+    ///     "e2e4".to_string(),
+    ///     hash_board_state(&board)
+    /// );
+    /// assert!(msg.is_chess_message());
+    /// ```
+    pub fn new_move(game_id: String, chess_move: String, board_state_hash: String) -> Self {
+        use crate::messages::chess::Move;
+        Message::Move(Move::new(game_id, chess_move, board_state_hash))
+    }
+
+    /// Create a new MoveAck message
+    ///
+    /// # Arguments
+    /// * `game_id` - Game identifier for the acknowledgment
+    /// * `move_id` - Optional move identifier being acknowledged
+    ///
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    /// use mate::messages::chess::generate_game_id;
+    ///
+    /// let msg = Message::new_move_ack(generate_game_id(), Some("move-123".to_string()));
+    /// assert!(msg.is_chess_message());
+    /// ```
+    pub fn new_move_ack(game_id: String, move_id: Option<String>) -> Self {
+        use crate::messages::chess::MoveAck;
+        Message::MoveAck(MoveAck::new(game_id, move_id))
+    }
+
+    /// Create a new SyncRequest message
+    ///
+    /// # Arguments
+    /// * `game_id` - Game identifier to request sync for
+    ///
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    /// use mate::messages::chess::generate_game_id;
+    ///
+    /// let msg = Message::new_sync_request(generate_game_id());
+    /// assert!(msg.is_chess_message());
+    /// ```
+    pub fn new_sync_request(game_id: String) -> Self {
+        use crate::messages::chess::SyncRequest;
+        Message::SyncRequest(SyncRequest::new(game_id))
+    }
+
+    /// Create a new SyncResponse message
+    ///
+    /// # Arguments
+    /// * `game_id` - Game identifier for the sync response
+    /// * `board_state` - Current board state in FEN notation
+    /// * `move_history` - Complete move history in algebraic notation
+    /// * `board_state_hash` - SHA-256 hash of the current board state
+    ///
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    /// use mate::messages::chess::{generate_game_id, hash_board_state};
+    /// use mate::chess::Board;
+    ///
+    /// let board = Board::new();
+    /// let msg = Message::new_sync_response(
+    ///     generate_game_id(),
+    ///     board.to_fen(),
+    ///     vec!["e2e4".to_string(), "e7e5".to_string()],
+    ///     hash_board_state(&board)
+    /// );
+    /// assert!(msg.is_chess_message());
+    /// ```
+    pub fn new_sync_response(
+        game_id: String,
+        board_state: String,
+        move_history: Vec<String>,
+        board_state_hash: String,
+    ) -> Self {
+        use crate::messages::chess::SyncResponse;
+        Message::SyncResponse(SyncResponse::new(
+            game_id,
+            board_state,
+            move_history,
+            board_state_hash,
+        ))
+    }
+
     /// Get the nonce from either Ping or Pong message
+    /// Panics for chess messages as they don't have nonces
     pub fn get_nonce(&self) -> u64 {
         match self {
             Message::Ping { nonce, .. } => *nonce,
             Message::Pong { nonce, .. } => *nonce,
+            Message::GameInvite(_)
+            | Message::GameAccept(_)
+            | Message::GameDecline(_)
+            | Message::Move(_)
+            | Message::MoveAck(_)
+            | Message::SyncRequest(_)
+            | Message::SyncResponse(_) => {
+                panic!("get_nonce() called on chess message - use get_game_id() instead")
+            }
         }
     }
 
     /// Get the payload from either Ping or Pong message
+    /// Panics for chess messages as they don't have payloads
     pub fn get_payload(&self) -> &str {
         match self {
             Message::Ping { payload, .. } => payload,
             Message::Pong { payload, .. } => payload,
+            Message::GameInvite(_)
+            | Message::GameAccept(_)
+            | Message::GameDecline(_)
+            | Message::Move(_)
+            | Message::MoveAck(_)
+            | Message::SyncRequest(_)
+            | Message::SyncResponse(_) => {
+                panic!("get_payload() called on chess message - chess messages don't have payloads")
+            }
         }
     }
 
@@ -53,11 +246,47 @@ impl Message {
         matches!(self, Message::Pong { .. })
     }
 
+    /// Check if this is a chess message
+    pub fn is_chess_message(&self) -> bool {
+        matches!(
+            self,
+            Message::GameInvite(_)
+                | Message::GameAccept(_)
+                | Message::GameDecline(_)
+                | Message::Move(_)
+                | Message::MoveAck(_)
+                | Message::SyncRequest(_)
+                | Message::SyncResponse(_)
+        )
+    }
+
+    /// Get the game ID from chess messages
+    /// Returns None for Ping/Pong messages
+    pub fn get_game_id(&self) -> Option<&str> {
+        match self {
+            Message::GameInvite(msg) => Some(&msg.game_id),
+            Message::GameAccept(msg) => Some(&msg.game_id),
+            Message::GameDecline(msg) => Some(&msg.game_id),
+            Message::Move(msg) => Some(&msg.game_id),
+            Message::MoveAck(msg) => Some(&msg.game_id),
+            Message::SyncRequest(msg) => Some(&msg.game_id),
+            Message::SyncResponse(msg) => Some(&msg.game_id),
+            Message::Ping { .. } | Message::Pong { .. } => None,
+        }
+    }
+
     /// Get the message type as a string
     pub fn message_type(&self) -> &'static str {
         match self {
             Message::Ping { .. } => "Ping",
             Message::Pong { .. } => "Pong",
+            Message::GameInvite(_) => "GameInvite",
+            Message::GameAccept(_) => "GameAccept",
+            Message::GameDecline(_) => "GameDecline",
+            Message::Move(_) => "Move",
+            Message::MoveAck(_) => "MoveAck",
+            Message::SyncRequest(_) => "SyncRequest",
+            Message::SyncResponse(_) => "SyncResponse",
         }
     }
 
@@ -99,6 +328,305 @@ impl Message {
     /// ```
     pub fn deserialize(data: &[u8]) -> Result<Message, bincode::Error> {
         bincode::deserialize(data)
+    }
+
+    /// Serialize the message to JSON format for debugging and interoperability
+    ///
+    /// This method provides human-readable serialization primarily for debugging,
+    /// logging, and interoperability with non-Rust systems. For efficient network
+    /// transmission, use `serialize()` which uses binary format.
+    ///
+    /// # Returns
+    /// - `Ok(String)` - Successfully serialized JSON string
+    /// - `Err(serde_json::Error)` - Serialization failed
+    ///
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    /// use mate::messages::chess::{GameInvite, generate_game_id};
+    /// use mate::chess::Color;
+    ///
+    /// let invite = GameInvite::new(generate_game_id(), Some(Color::White));
+    /// let msg = Message::GameInvite(invite);
+    /// let json = msg.to_json().expect("Failed to serialize to JSON");
+    /// assert!(json.contains("GameInvite"));
+    /// ```
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    /// Deserialize a message from JSON format
+    ///
+    /// This method provides the counterpart to `to_json()` for debugging and
+    /// interoperability purposes. For efficient network transmission, use
+    /// `deserialize()` which handles binary format.
+    ///
+    /// # Arguments
+    /// * `json` - JSON string to deserialize
+    ///
+    /// # Returns
+    /// - `Ok(Message)` - Successfully deserialized message
+    /// - `Err(serde_json::Error)` - Deserialization failed
+    ///
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    ///
+    /// let original = Message::new_ping(42, "test".to_string());
+    /// let json = original.to_json().unwrap();
+    /// let restored = Message::from_json(&json).expect("Failed to deserialize from JSON");
+    /// assert_eq!(original.get_nonce(), restored.get_nonce());
+    /// ```
+    pub fn from_json(json: &str) -> Result<Message, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    /// Estimate the serialized size of this message in bytes
+    ///
+    /// Provides an estimate of how large this message will be when serialized
+    /// using the binary format. This is useful for wire protocol planning and
+    /// ensuring messages don't exceed size limits.
+    ///
+    /// Note: This is an estimate and may not exactly match the actual serialized size
+    /// due to compression and encoding variations in bincode.
+    ///
+    /// # Returns
+    /// Estimated size in bytes
+    ///
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    ///
+    /// let small_msg = Message::new_ping(42, "hi".to_string());
+    /// let large_msg = Message::new_ping(42, "a".repeat(1000));
+    /// assert!(large_msg.estimated_size() > small_msg.estimated_size());
+    /// ```
+    pub fn estimated_size(&self) -> usize {
+        match self {
+            Message::Ping { payload, .. } => {
+                // Base overhead + nonce (8 bytes) + payload length + string overhead
+                32 + 8 + payload.len()
+            }
+            Message::Pong { payload, .. } => {
+                // Similar to Ping
+                32 + 8 + payload.len()
+            }
+            Message::GameInvite(invite) => {
+                // Base overhead + game_id (UUID ~36 chars) + optional color (1 byte)
+                32 + invite.game_id.len() + 8
+            }
+            Message::GameAccept(accept) => {
+                // Base overhead + game_id + color (1 byte)
+                32 + accept.game_id.len() + 8
+            }
+            Message::GameDecline(decline) => {
+                // Base overhead + game_id + optional reason
+                let reason_size = decline.reason.as_ref().map_or(0, |r| r.len());
+                32 + decline.game_id.len() + reason_size + 8
+            }
+            Message::Move(mv) => {
+                // Base overhead + game_id + chess_move + board_state_hash (64 chars)
+                32 + mv.game_id.len() + mv.chess_move.len() + mv.board_state_hash.len() + 16
+            }
+            Message::MoveAck(ack) => {
+                // Base overhead + game_id + optional move_id
+                let move_id_size = ack.move_id.as_ref().map_or(0, |id| id.len());
+                32 + ack.game_id.len() + move_id_size + 8
+            }
+            Message::SyncRequest(req) => {
+                // Base overhead + game_id
+                32 + req.game_id.len() + 8
+            }
+            Message::SyncResponse(resp) => {
+                // Base overhead + game_id + board_state (FEN ~80 chars) + move_history + hash
+                let move_history_size: usize = resp.move_history.iter().map(|m| m.len() + 4).sum();
+                32 + resp.game_id.len()
+                    + resp.board_state.len()
+                    + move_history_size
+                    + resp.board_state_hash.len()
+                    + 32
+            }
+        }
+    }
+
+    /// Check if this message is likely to be large (for wire protocol planning)
+    ///
+    /// Returns true if this message type is expected to potentially be large
+    /// and may require special handling in the wire protocol (e.g., streaming,
+    /// compression, or increased size limits).
+    ///
+    /// # Returns
+    /// `true` if the message could be large, `false` for typically small messages
+    ///
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    /// use mate::messages::chess::{SyncResponse, generate_game_id};
+    ///
+    /// let ping = Message::new_ping(42, "hello".to_string());
+    /// assert!(!ping.is_potentially_large());
+    ///
+    /// let sync_resp = SyncResponse::new(
+    ///     generate_game_id(),
+    ///     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string(),
+    ///     vec!["e2e4".to_string(); 100], // Large move history
+    ///     "abcd".repeat(16) // 64-char hash
+    /// );
+    /// let sync_msg = Message::SyncResponse(sync_resp);
+    /// assert!(sync_msg.is_potentially_large());
+    /// ```
+    pub fn is_potentially_large(&self) -> bool {
+        match self {
+            // Ping/Pong are typically small
+            Message::Ping { .. } | Message::Pong { .. } => false,
+            // Game management messages are typically small
+            Message::GameInvite(_) | Message::GameAccept(_) | Message::GameDecline(_) => false,
+            // Move messages are small
+            Message::Move(_) | Message::MoveAck(_) => false,
+            // Sync requests are small
+            Message::SyncRequest(_) => false,
+            // Sync responses can be large due to move history and board state
+            Message::SyncResponse(_) => true,
+        }
+    }
+
+    /// Get a summary string for logging purposes
+    ///
+    /// Returns a concise, human-readable summary of the message that's safe
+    /// for logging without exposing sensitive data or creating overly long log entries.
+    ///
+    /// # Returns
+    /// A string suitable for logging that describes the message type and key identifiers
+    ///
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    /// use mate::messages::chess::{GameInvite, generate_game_id};
+    /// use mate::chess::Color;
+    ///
+    /// let game_id = generate_game_id();
+    /// let invite = GameInvite::new(game_id.clone(), Some(Color::White));
+    /// let msg = Message::GameInvite(invite);
+    /// let summary = msg.log_summary();
+    /// assert!(summary.contains("GameInvite"));
+    /// assert!(summary.contains(&game_id[..8])); // First 8 chars of game ID
+    /// ```
+    pub fn log_summary(&self) -> String {
+        match self {
+            Message::Ping { nonce, .. } => format!("Ping(nonce={})", nonce),
+            Message::Pong { nonce, .. } => format!("Pong(nonce={})", nonce),
+            Message::GameInvite(invite) => {
+                let color_str = invite
+                    .suggested_color
+                    .map_or("any".to_string(), |c| format!("{:?}", c));
+                format!(
+                    "GameInvite(game={}, color={})",
+                    &invite.game_id[..8.min(invite.game_id.len())],
+                    color_str
+                )
+            }
+            Message::GameAccept(accept) => format!(
+                "GameAccept(game={}, color={:?})",
+                &accept.game_id[..8.min(accept.game_id.len())],
+                accept.accepted_color
+            ),
+            Message::GameDecline(decline) => {
+                let reason_info = decline
+                    .reason
+                    .as_ref()
+                    .map_or("none".to_string(), |r| format!("{}chars", r.len()));
+                format!(
+                    "GameDecline(game={}, reason={})",
+                    &decline.game_id[..8.min(decline.game_id.len())],
+                    reason_info
+                )
+            }
+            Message::Move(mv) => format!(
+                "Move(game={}, move={})",
+                &mv.game_id[..8.min(mv.game_id.len())],
+                mv.chess_move
+            ),
+            Message::MoveAck(ack) => {
+                let move_id_info = ack
+                    .move_id
+                    .as_ref()
+                    .map_or("none".to_string(), |id| format!("{}chars", id.len()));
+                format!(
+                    "MoveAck(game={}, move_id={})",
+                    &ack.game_id[..8.min(ack.game_id.len())],
+                    move_id_info
+                )
+            }
+            Message::SyncRequest(req) => format!(
+                "SyncRequest(game={})",
+                &req.game_id[..8.min(req.game_id.len())]
+            ),
+            Message::SyncResponse(resp) => format!(
+                "SyncResponse(game={}, moves={})",
+                &resp.game_id[..8.min(resp.game_id.len())],
+                resp.move_history.len()
+            ),
+        }
+    }
+
+    /// Validate the message format and constraints
+    ///
+    /// Performs comprehensive validation of the message using the validation
+    /// functions from the chess module. This includes checking game ID formats,
+    /// chess move validity, and other message-specific constraints.
+    ///
+    /// # Returns
+    /// - `Ok(())` - Message is valid
+    /// - `Err(ValidationError)` - Message validation failed
+    ///
+    /// # Example
+    /// ```
+    /// use mate::messages::types::Message;
+    /// use mate::messages::chess::{GameInvite, generate_game_id};
+    /// use mate::chess::Color;
+    ///
+    /// let valid_invite = GameInvite::new(generate_game_id(), Some(Color::White));
+    /// let valid_msg = Message::GameInvite(valid_invite);
+    /// assert!(valid_msg.validate().is_ok());
+    ///
+    /// let invalid_invite = GameInvite::new("not-a-uuid".to_string(), None);
+    /// let invalid_msg = Message::GameInvite(invalid_invite);
+    /// assert!(invalid_msg.validate().is_err());
+    /// ```
+    pub fn validate(&self) -> Result<(), crate::messages::chess::ValidationError> {
+        use crate::messages::chess::{
+            validate_game_accept, validate_game_decline, validate_game_invite, validate_move_ack,
+            validate_move_message, validate_sync_request, validate_sync_response,
+        };
+
+        // First perform the basic validation
+        let basic_validation = match self {
+            // Ping/Pong messages don't require additional validation beyond type safety
+            Message::Ping { .. } | Message::Pong { .. } => Ok(()),
+            // Validate chess messages using their specific validation functions
+            Message::GameInvite(invite) => validate_game_invite(invite),
+            Message::GameAccept(accept) => validate_game_accept(accept),
+            Message::GameDecline(decline) => validate_game_decline(decline),
+            Message::Move(mv) => validate_move_message(mv),
+            Message::MoveAck(ack) => validate_move_ack(ack),
+            Message::SyncRequest(req) => validate_sync_request(req),
+            Message::SyncResponse(resp) => validate_sync_response(resp),
+        };
+
+        // If basic validation passes, perform enhanced security validation
+        basic_validation?;
+
+        // Perform additional security validation for chess messages
+        crate::messages::chess::security::validate_message_security(self).map_err(
+            |security_error| {
+                crate::messages::chess::ValidationError::InvalidMessageFormat(format!(
+                    "Security validation failed: {}",
+                    security_error
+                ))
+            },
+        )?;
+
+        Ok(())
     }
 }
 
@@ -282,153 +810,5 @@ impl SignedEnvelope {
         };
 
         now.saturating_sub(self.timestamp)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::crypto::identity::Identity;
-
-    #[test]
-    fn test_new_ping() {
-        let msg = Message::new_ping(12345, "test payload".to_string());
-        assert!(msg.is_ping());
-        assert!(!msg.is_pong());
-        assert_eq!(msg.get_nonce(), 12345);
-        assert_eq!(msg.get_payload(), "test payload");
-        assert_eq!(msg.message_type(), "Ping");
-    }
-
-    #[test]
-    fn test_new_pong() {
-        let msg = Message::new_pong(67890, "response payload".to_string());
-        assert!(msg.is_pong());
-        assert!(!msg.is_ping());
-        assert_eq!(msg.get_nonce(), 67890);
-        assert_eq!(msg.get_payload(), "response payload");
-        assert_eq!(msg.message_type(), "Pong");
-    }
-
-    #[test]
-    fn test_message_accessors() {
-        let ping = Message::Ping {
-            nonce: 111,
-            payload: "ping data".to_string(),
-        };
-        let pong = Message::Pong {
-            nonce: 222,
-            payload: "pong data".to_string(),
-        };
-
-        assert_eq!(ping.get_nonce(), 111);
-        assert_eq!(ping.get_payload(), "ping data");
-        assert_eq!(pong.get_nonce(), 222);
-        assert_eq!(pong.get_payload(), "pong data");
-    }
-
-    #[test]
-    fn test_message_type_detection() {
-        let ping = Message::new_ping(1, "test".to_string());
-        let pong = Message::new_pong(2, "test".to_string());
-
-        assert!(ping.is_ping());
-        assert!(!ping.is_pong());
-        assert!(!pong.is_ping());
-        assert!(pong.is_pong());
-    }
-
-    #[test]
-    fn test_signed_envelope_new_valid() {
-        let identity = Identity::generate().unwrap();
-        let message = Message::new_ping(123, "test".to_string());
-        let message_bytes = message.serialize().unwrap();
-        let signature = identity.sign(&message_bytes);
-        let sender = identity.peer_id().as_str().to_string();
-
-        let envelope = SignedEnvelope::new(
-            message_bytes,
-            signature.to_bytes().to_vec(),
-            sender,
-            1234567890,
-        )
-        .unwrap();
-
-        assert_eq!(envelope.timestamp(), 1234567890);
-    }
-
-    #[test]
-    fn test_signed_envelope_new_empty_message() {
-        let result = SignedEnvelope::new(
-            vec![], // Empty message
-            vec![0u8; 64],
-            "test".to_string(),
-            1234567890,
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_signed_envelope_new_invalid_signature_length() {
-        let result = SignedEnvelope::new(
-            vec![1, 2, 3],
-            vec![0u8; 32], // Wrong length
-            "test".to_string(),
-            1234567890,
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_signed_envelope_create_and_verify() {
-        let identity = Identity::generate().unwrap();
-        let message = Message::new_pong(456, "response".to_string());
-
-        let envelope = SignedEnvelope::create(&message, &identity, None).unwrap();
-
-        // Verify the signature
-        assert!(envelope.verify_signature());
-
-        // Verify we can get the message back
-        let recovered_message = envelope.get_message().unwrap();
-        assert_eq!(message.get_nonce(), recovered_message.get_nonce());
-        assert_eq!(message.get_payload(), recovered_message.get_payload());
-    }
-
-    #[test]
-    fn test_signed_envelope_verify_invalid_signature() {
-        let identity1 = Identity::generate().unwrap();
-        let identity2 = Identity::generate().unwrap();
-        let message = Message::new_ping(789, "test".to_string());
-
-        // Create envelope with identity1
-        let mut envelope = SignedEnvelope::create(&message, &identity1, None).unwrap();
-
-        // Change sender to identity2 (signature mismatch)
-        envelope.sender = identity2.peer_id().as_str().to_string();
-
-        // Verification should fail
-        assert!(!envelope.verify_signature());
-    }
-
-    #[test]
-    fn test_timestamp_validation() {
-        let identity = Identity::generate().unwrap();
-        let message = Message::new_ping(1, "test".to_string());
-
-        // Create envelope with very old timestamp
-        let old_timestamp = 1000000000; // Very old
-        let envelope = SignedEnvelope::create(&message, &identity, Some(old_timestamp)).unwrap();
-
-        // Should be invalid due to age
-        assert!(!envelope.is_timestamp_valid(DEFAULT_MAX_MESSAGE_AGE_SECONDS));
-        assert!(envelope.get_age_seconds() > DEFAULT_MAX_MESSAGE_AGE_SECONDS);
-
-        // Create envelope with current timestamp
-        let envelope_current = SignedEnvelope::create(&message, &identity, None).unwrap();
-
-        // Should be valid
-        assert!(envelope_current.is_timestamp_valid(DEFAULT_MAX_MESSAGE_AGE_SECONDS));
-        assert!(envelope_current.get_age_seconds() < 10); // Should be very recent
     }
 }

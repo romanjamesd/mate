@@ -252,4 +252,44 @@ When adding new tests:
 
 ---
 
-For questions about the test structure or adding new tests, refer to the `organize-tests.md` document in the project root for detailed refactoring context. 
+For questions about the test structure or adding new tests, refer to the `organize-tests.md` document in the project root for detailed refactoring context.
+
+# Testing Guidelines
+
+## Test Structure
+- Unit tests go in `tests/unit/`
+- Integration tests go in `tests/integration/`  
+- Performance tests go in `tests/performance/`
+- Security tests go in `tests/security/`
+
+## Performance Testing Best Practices
+
+### CI Environment Considerations
+Performance tests should be CI-aware to avoid flaky failures:
+
+```rust
+// ✅ Good: CI-aware performance test
+fn get_performance_multiplier() -> u32 {
+    if is_ci_environment() { 10 } else { 1 }
+}
+let threshold = base_threshold * get_performance_multiplier();
+```
+
+```rust
+// ❌ Bad: Hardcoded thresholds
+assert!(duration < Duration::from_millis(100)); // Will fail in CI
+```
+
+### Alternative Approaches
+1. **Relative Performance**: Compare against baseline rather than absolute time
+2. **Statistical Analysis**: Use percentiles and variance over multiple runs
+3. **Conditional Testing**: Skip performance tests in CI entirely with `#[cfg(not(ci))]`
+4. **Benchmark Frameworks**: Use `criterion` crate for proper benchmarking
+
+### Environment Detection
+The tests detect CI environments via these environment variables:
+- `CI` (generic)
+- `GITHUB_ACTIONS` 
+- `TRAVIS`
+- `CIRCLECI`
+- `JENKINS_URL` 

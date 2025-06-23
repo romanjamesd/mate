@@ -26,7 +26,7 @@ A fully decentralized peer-to-peer chess game with cryptographic security and of
 
 ## Installation
 
-```bash
+```bash``
 # Install from crates.io
 cargo install mate
 

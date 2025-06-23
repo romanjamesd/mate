@@ -23,6 +23,9 @@ hex = "0.4"
 directories = "5.0"
 thiserror = "1.0"
 rusqlite = { version = "0.30", features = ["bundled"] }
+uuid = { version = "1.17", features = ["v4", "serde"] }
+sha2 = "0.10.9"
+regex = "1.10"
 
 [dev-dependencies]
 tokio-test = "0.4"

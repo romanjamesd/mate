@@ -2,6 +2,119 @@ use super::moves::Move;
 use super::{ChessError, Color, Piece, PieceType, Position};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::str::FromStr;
+
+/// Castling rights for both players
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CastlingRights {
+    pub white_kingside: bool,
+    pub white_queenside: bool,
+    pub black_kingside: bool,
+    pub black_queenside: bool,
+}
+
+impl CastlingRights {
+    /// Create new castling rights with all castling available
+    pub fn new() -> Self {
+        Self {
+            white_kingside: true,
+            white_queenside: true,
+            black_kingside: true,
+            black_queenside: true,
+        }
+    }
+
+    /// Create castling rights from FEN notation (e.g., "KQkq", "Kq", "-")
+    pub fn from_fen(fen: &str) -> Result<Self, ChessError> {
+        if fen == "-" {
+            return Ok(Self {
+                white_kingside: false,
+                white_queenside: false,
+                black_kingside: false,
+                black_queenside: false,
+            });
+        }
+
+        let mut rights = Self {
+            white_kingside: false,
+            white_queenside: false,
+            black_kingside: false,
+            black_queenside: false,
+        };
+
+        for c in fen.chars() {
+            match c {
+                'K' => rights.white_kingside = true,
+                'Q' => rights.white_queenside = true,
+                'k' => rights.black_kingside = true,
+                'q' => rights.black_queenside = true,
+                _ => {
+                    return Err(ChessError::InvalidFen(format!(
+                        "Invalid castling rights character '{}' (valid: K, Q, k, q, or - for none)",
+                        c
+                    )))
+                }
+            }
+        }
+
+        Ok(rights)
+    }
+
+    /// Convert to FEN notation
+    pub fn to_fen(&self) -> String {
+        let mut result = String::new();
+
+        if self.white_kingside {
+            result.push('K');
+        }
+        if self.white_queenside {
+            result.push('Q');
+        }
+        if self.black_kingside {
+            result.push('k');
+        }
+        if self.black_queenside {
+            result.push('q');
+        }
+
+        if result.is_empty() {
+            "-".to_string()
+        } else {
+            result
+        }
+    }
+
+    /// Remove castling rights for a color (when king moves)
+    pub fn remove_all_for_color(&mut self, color: Color) {
+        match color {
+            Color::White => {
+                self.white_kingside = false;
+                self.white_queenside = false;
+            }
+            Color::Black => {
+                self.black_kingside = false;
+                self.black_queenside = false;
+            }
+        }
+    }
+
+    /// Remove castling rights for a specific rook (when rook moves)
+    pub fn remove_rook_rights(&mut self, rook_position: Position) {
+        match (rook_position.file, rook_position.rank) {
+            (0, 0) => self.white_queenside = false, // a1 rook
+            (7, 0) => self.white_kingside = false,  // h1 rook
+            (0, 7) => self.black_queenside = false, // a8 rook
+            (7, 7) => self.black_kingside = false,  // h8 rook
+            _ => {}                                 // Not a corner rook
+        }
+    }
+}
+
+impl Default for CastlingRights {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Represents a chess board with piece positions and game state
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -18,6 +131,12 @@ pub struct Board {
 
     /// Halfmove counter for 50-move rule (resets on pawn moves and captures)
     halfmove_clock: u16,
+
+    /// Castling rights for both players
+    castling_rights: CastlingRights,
+
+    /// En passant target square (if available)
+    en_passant_target: Option<Position>,
 }
 
 impl Board {
@@ -28,6 +147,8 @@ impl Board {
             active_color: Color::White,
             fullmove_number: 1,
             halfmove_clock: 0,
+            castling_rights: CastlingRights::new(),
+            en_passant_target: None,
         };
 
         // Set up starting position
@@ -410,6 +531,15 @@ impl Board {
             active_color: parsed_active_color,
             halfmove_clock,
             fullmove_number,
+            castling_rights: CastlingRights::from_fen(castling_rights)?,
+            en_passant_target: if *en_passant == "-" {
+                None
+            } else {
+                Some(
+                    Position::from_str(en_passant)
+                        .map_err(|e| ChessError::InvalidFen(e.to_string()))?,
+                )
+            },
         })
     }
 
@@ -421,8 +551,11 @@ impl Board {
             Color::White => "w",
             Color::Black => "b",
         };
-        let castling_rights = "KQkq"; // Placeholder - will be implemented later
-        let en_passant = "-"; // Placeholder - will be implemented later
+        let castling_rights = self.castling_rights.to_fen();
+        let en_passant = match self.en_passant_target {
+            Some(pos) => pos.to_string(),
+            None => "-".to_string(),
+        };
         let halfmove = self.halfmove_clock;
         let fullmove = self.fullmove_number;
 
@@ -636,6 +769,12 @@ impl Board {
             }
         }
 
+        // Update castling rights before applying move
+        self.update_castling_rights(&mv, &source_piece);
+
+        // Clear en passant target from previous move
+        self.en_passant_target = None;
+
         // Apply the move
         if is_castling {
             self.apply_castling_move(&mv)?;
@@ -644,6 +783,11 @@ impl Board {
         } else {
             // Standard move application
             self.apply_standard_move(&mv)?;
+        }
+
+        // Set en passant target if this is a two-square pawn move
+        if is_pawn_move && mv.from.rank.abs_diff(mv.to.rank) == 2 {
+            self.set_en_passant_target(&mv);
         }
 
         // Update move counters
@@ -711,12 +855,19 @@ impl Board {
             return Ok(false);
         }
 
-        // Check if pawn moves diagonally to an empty square
-        if mv.from.file != mv.to.file
+        // Check if there's an en passant target available
+        let en_passant_target = match self.en_passant_target {
+            Some(target) => target,
+            None => return Ok(false), // No en passant available
+        };
+
+        // Check if pawn moves diagonally to the en passant target square
+        if mv.to == en_passant_target
+            && mv.from.file != mv.to.file
             && mv.from.rank.abs_diff(mv.to.rank) == 1
             && self.get_piece(mv.to).is_none()
         {
-            // This could be en passant - validate the move direction
+            // Validate the move direction
             let expected_direction = match self.active_color {
                 Color::White => 1,  // white pawns move up (increasing rank)
                 Color::Black => -1, // black pawns move down (decreasing rank)
@@ -837,6 +988,37 @@ impl Board {
         if self.active_color == Color::Black {
             self.fullmove_number += 1;
         }
+    }
+
+    /// Update castling rights based on the move
+    fn update_castling_rights(&mut self, mv: &Move, piece: &Piece) {
+        // If king moves, remove all castling rights for that color
+        if piece.piece_type == PieceType::King {
+            self.castling_rights.remove_all_for_color(piece.color);
+        }
+
+        // If rook moves from a corner, remove corresponding castling rights
+        if piece.piece_type == PieceType::Rook {
+            self.castling_rights.remove_rook_rights(mv.from);
+        }
+
+        // If a rook is captured, remove corresponding castling rights
+        if let Some(captured_piece) = self.get_piece(mv.to) {
+            if captured_piece.piece_type == PieceType::Rook {
+                self.castling_rights.remove_rook_rights(mv.to);
+            }
+        }
+    }
+
+    /// Set en passant target square for a two-square pawn move
+    fn set_en_passant_target(&mut self, mv: &Move) {
+        // Calculate the target square (the square the pawn "jumped over")
+        let target_rank = match self.active_color {
+            Color::White => mv.from.rank + 1, // White pawn moving up
+            Color::Black => mv.from.rank - 1, // Black pawn moving down
+        };
+
+        self.en_passant_target = Some(Position::new_unchecked(mv.to.file, target_rank));
     }
 
     /// Generate a hash of the current board state
