@@ -91,11 +91,11 @@ impl AdvancedGameState {
                 6 => format!("a{}a{}", (i % 6) + 2, (i % 6) + 3),
                 _ => format!("b{}b{}", (i % 6) + 2, (i % 6) + 3),
             };
-            
+
             self.move_history.push(fake_move);
             self.message_count += 1;
         }
-        
+
         // Update last_updated timestamp
         self.last_updated = Instant::now();
         Ok(())
@@ -418,7 +418,9 @@ async fn test_multiple_simultaneous_games() -> Result<()> {
                 .await?;
 
             // Simulate game play with moves (focus on message processing, not chess validity)
-            let moves = vec!["e2e4", "e7e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O", "Be7"];
+            let moves = vec![
+                "e2e4", "e7e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O", "Be7",
+            ];
             for chess_move in moves {
                 // For this test, we'll add moves directly to history since we're testing message processing
                 // rather than chess game validity

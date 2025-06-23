@@ -61,3 +61,6 @@ pub mod chess_protocol_core;
 
 // Chess protocol advanced integration tests
 pub mod chess_protocol_advanced;
+
+// Chess security integration tests
+pub mod chess_security_integration;
