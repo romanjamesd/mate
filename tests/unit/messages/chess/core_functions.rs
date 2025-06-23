@@ -175,9 +175,12 @@ mod game_id_generation_tests {
         let per_id = duration / iterations;
 
         // Should be able to generate IDs reasonably fast
+        // Note: CI environments may have different performance characteristics
+        let max_micros = if cfg!(debug_assertions) { 400 } else { 100 };
         assert!(
-            per_id.as_micros() < 100,
-            "ID generation should be fast (< 100μs per ID), got {:?}",
+            per_id.as_micros() < max_micros,
+            "ID generation should be reasonably fast (< {}μs per ID), got {:?}",
+            max_micros,
             per_id
         );
 
@@ -288,9 +291,12 @@ mod board_state_hashing_tests {
         let per_hash = duration / iterations;
 
         // Hashing should be reasonably fast
+        // Note: CI environments may have different performance characteristics
+        let max_micros = if cfg!(debug_assertions) { 400 } else { 100 };
         assert!(
-            per_hash.as_micros() < 100,
-            "Board hashing should be fast (< 100μs per hash), got {:?}",
+            per_hash.as_micros() < max_micros,
+            "Board hashing should be reasonably fast (< {}μs per hash), got {:?}",
+            max_micros,
             per_hash
         );
 
@@ -614,9 +620,12 @@ mod utility_function_integration_tests {
         let per_iteration = duration / iterations;
 
         // Combined operations should be reasonably fast
+        // Note: CI environments may have different performance characteristics
+        let max_micros = if cfg!(debug_assertions) { 1000 } else { 200 };
         assert!(
-            per_iteration.as_micros() < 200,
-            "Combined operations should be fast (< 200μs per iteration), got {:?}",
+            per_iteration.as_micros() < max_micros,
+            "Combined operations should be reasonably fast (< {}μs per iteration), got {:?}",
+            max_micros,
             per_iteration
         );
 

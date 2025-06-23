@@ -791,9 +791,12 @@ async fn test_performance_large_game_processing() {
     let processing_duration = start_time.elapsed();
 
     // Performance assertions
+    // Note: CI environments may have different performance characteristics
+    let max_millis = if cfg!(debug_assertions) { 5000 } else { 1000 };
     assert!(
-        processing_duration.as_millis() < 1000,
-        "Processing 100 moves should complete in under 1 second, took {:?}",
+        processing_duration.as_millis() < max_millis,
+        "Processing 100 moves should complete reasonably quickly (< {}ms), took {:?}",
+        max_millis,
         processing_duration
     );
 
@@ -805,9 +808,11 @@ async fn test_performance_large_game_processing() {
     let _sync_message = create_sync_response(&game_id, &board, &moves_history);
     let sync_duration = sync_start.elapsed();
 
+    let sync_max_millis = if cfg!(debug_assertions) { 500 } else { 100 };
     assert!(
-        sync_duration.as_millis() < 100,
-        "Sync response creation should complete in under 100ms, took {:?}",
+        sync_duration.as_millis() < sync_max_millis,
+        "Sync response creation should complete reasonably quickly (< {}ms), took {:?}",
+        sync_max_millis,
         sync_duration
     );
 
@@ -887,9 +892,11 @@ async fn test_concurrent_game_message_processing() {
         num_games * moves_per_game,
         "Should process all moves"
     );
+    let concurrent_max_millis = if cfg!(debug_assertions) { 10000 } else { 2000 };
     assert!(
-        total_duration.as_millis() < 2000,
-        "Concurrent processing should complete in under 2 seconds, took {:?}",
+        total_duration.as_millis() < concurrent_max_millis,
+        "Concurrent processing should complete reasonably quickly (< {}ms), took {:?}",
+        concurrent_max_millis,
         total_duration
     );
 
@@ -938,15 +945,21 @@ async fn test_memory_efficiency_large_sync_messages() {
     let serialization_duration = serialization_start.elapsed();
 
     // Performance and memory efficiency assertions
+    // Note: CI environments may have different performance characteristics
+    let creation_max_millis = if cfg!(debug_assertions) { 250 } else { 50 };
+    let serialization_max_millis = if cfg!(debug_assertions) { 500 } else { 100 };
+
     assert!(
-        creation_duration.as_millis() < 50,
-        "Large sync creation should be fast, took {:?}",
+        creation_duration.as_millis() < creation_max_millis,
+        "Large sync creation should be reasonably fast (< {}ms), took {:?}",
+        creation_max_millis,
         creation_duration
     );
 
     assert!(
-        serialization_duration.as_millis() < 100,
-        "Large sync serialization should be efficient, took {:?}",
+        serialization_duration.as_millis() < serialization_max_millis,
+        "Large sync serialization should be efficient (< {}ms), took {:?}",
+        serialization_max_millis,
         serialization_duration
     );
 

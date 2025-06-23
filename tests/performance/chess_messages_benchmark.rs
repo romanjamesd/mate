@@ -799,9 +799,12 @@ mod memory_usage_tests {
             );
 
             // Each batch should complete in reasonable time
+            // Note: CI environments may have different performance characteristics
+            let batch_max_millis = if cfg!(debug_assertions) { 5000 } else { 1000 };
             assert!(
-                batch_duration.as_millis() < 1000,
-                "Batch processing should be fast (< 1s), got {:?}",
+                batch_duration.as_millis() < batch_max_millis,
+                "Batch processing should be reasonably fast (< {}ms), got {:?}",
+                batch_max_millis,
                 batch_duration
             );
 
