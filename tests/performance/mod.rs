@@ -4,4 +4,5 @@
 //! throughput, and resource limits.
 
 pub mod chess_messages_benchmark;
+pub mod chess_protocol_stress;
 pub mod throughput;
