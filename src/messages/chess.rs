@@ -1286,7 +1286,7 @@ impl ChessProtocolError {
             ChessProtocolError::Validation(_) => "validation",
             ChessProtocolError::ChessEngine(_) => "chess_engine",
             ChessProtocolError::Wire(_) => "wire_protocol",
-            ChessProtocolError::SyncError { .. } => "synchronization",
+            ChessProtocolError::SyncError { .. } => "sync",
             ChessProtocolError::HashVerificationFailed { .. } => "hash_verification",
             ChessProtocolError::GameStateError { .. } => "game_state",
             ChessProtocolError::UnexpectedMessage { .. } => "protocol_violation",
