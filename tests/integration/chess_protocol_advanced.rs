@@ -35,10 +35,13 @@ use crate::common::mock_streams::InterruptibleMockStream;
 /// Advanced game state manager for concurrent testing
 #[derive(Debug, Clone)]
 struct AdvancedGameState {
+    #[allow(dead_code)]
     game_id: String,
     board: Board,
     move_history: Vec<String>,
+    #[allow(dead_code)]
     white_player: String,
+    #[allow(dead_code)]
     black_player: String,
     current_turn: Color,
     last_updated: Instant,
@@ -101,6 +104,7 @@ impl AdvancedGameState {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn estimated_sync_message_size(&self) -> usize {
         // Estimate the size of a sync response message
         let fen_size = self.board.to_fen().len();
@@ -169,16 +173,14 @@ impl ConcurrentGameManager {
 
     async fn create_sync_response(&self, game_id: &str) -> Option<Message> {
         let games = self.games.read().await;
-        if let Some(game) = games.get(game_id) {
-            Some(Message::new_sync_response(
+        games.get(game_id).map(|game| {
+            Message::new_sync_response(
                 game_id.to_string(),
                 game.board.to_fen(),
                 game.move_history.clone(),
                 game.get_board_hash(),
-            ))
-        } else {
-            None
-        }
+            )
+        })
     }
 }
 
@@ -228,7 +230,7 @@ async fn test_large_sync_response_processing() -> Result<()> {
 
     // Test message transmission over wire protocol
     let (stream1, stream2) = duplex(16 * 1024 * 1024); // 16MB buffer for large messages
-    let (mut reader, mut writer) = tokio::io::split(stream1);
+    let (_reader, mut writer) = tokio::io::split(stream1);
     let (mut test_reader, _test_writer) = tokio::io::split(stream2);
 
     // Write large message
@@ -303,7 +305,7 @@ async fn test_extremely_large_sync_response_limits() -> Result<()> {
                 // Only test transmission if size is within config limits
                 if message_size <= wire_config.max_message_size {
                     let (stream1, stream2) = duplex(wire_config.max_message_size + 1024);
-                    let (mut reader, mut writer) = tokio::io::split(stream1);
+                    let (_reader, mut writer) = tokio::io::split(stream1);
                     let (mut test_reader, _test_writer) = tokio::io::split(stream2);
 
                     // Test with timeout to prevent hanging
@@ -383,7 +385,7 @@ async fn test_sync_response_memory_efficiency() -> Result<()> {
         // Verify estimation accuracy (should be within reasonable range)
         let size_ratio = actual_size as f64 / estimated_size as f64;
         assert!(
-            size_ratio >= 0.5 && size_ratio <= 2.0,
+            (0.5..=2.0).contains(&size_ratio),
             "Size estimation should be reasonably accurate"
         );
     }
@@ -896,7 +898,7 @@ async fn test_high_volume_message_processing() -> Result<()> {
 
         // Process batch
         let (stream1, stream2) = duplex(1024 * 1024); // 1MB buffer
-        let (mut reader, mut writer) = tokio::io::split(stream1);
+        let (_reader, mut writer) = tokio::io::split(stream1);
         let (mut test_reader, _test_writer) = tokio::io::split(stream2);
 
         // Write all messages in batch
@@ -960,7 +962,7 @@ async fn test_memory_efficiency_under_load() -> Result<()> {
 
     let identity = Arc::new(Identity::generate()?);
     let wire_config = WireConfig::for_chess_sync(); // Allow larger messages
-    let framed_message = FramedMessage::new(wire_config);
+    let _framed_message = FramedMessage::new(wire_config);
 
     // Create messages of varying sizes to test memory efficiency
     let message_sizes = vec![
@@ -1103,7 +1105,7 @@ async fn test_performance_bottleneck_identification() -> Result<()> {
 
         // Measure different performance aspects
         let (stream1, stream2) = duplex(wire_config.max_message_size + 1024);
-        let (mut reader, mut writer) = tokio::io::split(stream1);
+        let (_reader, mut writer) = tokio::io::split(stream1);
         let (mut test_reader, _test_writer) = tokio::io::split(stream2);
 
         // Write performance

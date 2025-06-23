@@ -140,12 +140,8 @@ mod high_volume_tests {
                 .map(|move_idx| format!("move_{}_{}", game_idx, move_idx))
                 .collect();
 
-            let sync_response = SyncResponse::new(
-                game_id.clone(),
-                board.to_fen(),
-                move_history,
-                board_hash,
-            );
+            let sync_response =
+                SyncResponse::new(game_id.clone(), board.to_fen(), move_history, board_hash);
 
             sync_messages.push(Message::SyncResponse(sync_response));
         }
@@ -158,7 +154,7 @@ mod high_volume_tests {
                     // Simulate serialization and validation
                     let serialized = serde_json::to_string(&message)?;
                     let deserialized: Message = serde_json::from_str(&serialized)?;
-                    
+
                     // Verify message integrity
                     match (&message, &deserialized) {
                         (Message::SyncResponse(orig), Message::SyncResponse(parsed)) => {
@@ -223,7 +219,8 @@ mod high_volume_tests {
                 let mut move_count = 0;
 
                 // Simulate game invitation
-                let _invite = Message::GameInvite(GameInvite::new(game_id.clone(), Some(Color::White)));
+                let _invite =
+                    Message::GameInvite(GameInvite::new(game_id.clone(), Some(Color::White)));
                 if tx.send(("invite", game_idx)).await.is_err() {
                     return move_count;
                 }
@@ -238,7 +235,8 @@ mod high_volume_tests {
                 for move_idx in 0..moves_per_game {
                     let board_hash = hash_board_state(&Board::new());
                     let chess_move = format!("move_{}_{}", game_idx, move_idx);
-                    let _move_msg = Message::Move(Move::new(game_id.clone(), chess_move, board_hash));
+                    let _move_msg =
+                        Message::Move(Move::new(game_id.clone(), chess_move, board_hash));
 
                     if tx.send(("move", game_idx)).await.is_ok() {
                         move_count += 1;
@@ -346,7 +344,11 @@ mod memory_pressure_tests {
             drop(serialized);
             drop(sync_response);
 
-            println!("  Processed large message {} (size: {} bytes)", i + 1, message_size);
+            println!(
+                "  Processed large message {} (size: {} bytes)",
+                i + 1,
+                message_size
+            );
         }
 
         let duration = start_time.elapsed();
@@ -354,7 +356,10 @@ mod memory_pressure_tests {
         println!("Memory pressure test results:");
         println!("  - Large messages processed: {}", large_message_count);
         println!("  - Peak message size: {} bytes", peak_memory_usage);
-        println!("  - Total moves processed: {}", large_message_count * moves_per_history);
+        println!(
+            "  - Total moves processed: {}",
+            large_message_count * moves_per_history
+        );
         println!("  - Duration: {:?}", duration);
 
         assert!(peak_memory_usage > 30_000); // Should handle large messages
@@ -420,7 +425,11 @@ mod memory_pressure_tests {
             objects.clear();
 
             if cycle % 10 == 0 {
-                println!("  Completed allocation cycle {}/{}", cycle + 1, allocation_cycles);
+                println!(
+                    "  Completed allocation cycle {}/{}",
+                    cycle + 1,
+                    allocation_cycles
+                );
             }
         }
 
@@ -455,9 +464,7 @@ mod long_running_tests {
             let game_id = generate_game_id();
             let message = if message_count % 5 == 0 {
                 // Periodically create large sync responses
-                let move_history: Vec<String> = (0..100)
-                    .map(|i| format!("move_{}", i))
-                    .collect();
+                let move_history: Vec<String> = (0..100).map(|i| format!("move_{}", i)).collect();
                 let board_hash = hash_board_state(&Board::new());
                 Message::SyncResponse(SyncResponse::new(
                     game_id,
@@ -480,7 +487,7 @@ mod long_running_tests {
             // Periodic memory and stability checks
             if current_time.duration_since(last_memory_check) > Duration::from_secs(5) {
                 last_memory_check = current_time;
-                
+
                 // Verify system is still responsive
                 let quick_test_start = Instant::now();
                 let test_game_id = generate_game_id();
@@ -511,9 +518,12 @@ mod long_running_tests {
         println!("  - Total messages processed: {}", message_count);
         println!("  - Errors encountered: {}", error_count);
         println!("  - Test duration: {:?}", total_duration);
-        println!("  - Average throughput: {:.2} messages/second", messages_per_second);
+        println!(
+            "  - Average throughput: {:.2} messages/second",
+            messages_per_second
+        );
 
-        // Stability assertions  
+        // Stability assertions
         assert!(message_count > 100); // Should process reasonable number of messages in 30s
         assert!(
             message_count > 0,
@@ -540,10 +550,9 @@ mod long_running_tests {
             // Allocate resources
             for _i in 0..objects_per_cycle {
                 let game_id = generate_game_id();
-                let move_history: Vec<String> = (0..50)
-                    .map(|j| format!("move_{}_{}", cycle, j))
-                    .collect();
-                
+                let move_history: Vec<String> =
+                    (0..50).map(|j| format!("move_{}_{}", cycle, j)).collect();
+
                 let sync_response = SyncResponse::new(
                     game_id,
                     Board::new().to_fen(),
@@ -611,18 +620,18 @@ mod rate_limiter_stress_tests {
             let handle = tokio::spawn(async move {
                 let _game_id = format!("stress_game_{}", attacker_id);
                 let _player_id = format!("stress_player_{}", attacker_id);
-                
+
                 // Note: We need to handle the mutable limiter across async boundaries
                 // For this test, we'll simulate the behavior rather than actually use the limiter
                 // due to ownership constraints
-                
+
                 let mut local_success = 0;
                 let mut local_blocked = 0;
 
                 for _attempt in 0..attempts_per_attacker {
                     // Simulate different types of rate limited operations
                     let operation_type = _attempt % 4;
-                    
+
                     // Simulate rate limiting decisions (in a real implementation,
                     // this would interact with a thread-safe rate limiter)
                     let allowed = match operation_type {
@@ -670,7 +679,10 @@ mod rate_limiter_stress_tests {
         println!("  - Total attempts: {}", total_attempts);
         println!("  - Allowed: {}", total_success);
         println!("  - Blocked: {}", total_blocked);
-        println!("  - Block rate: {:.2}%", total_blocked as f64 / total_attempts as f64 * 100.0);
+        println!(
+            "  - Block rate: {:.2}%",
+            total_blocked as f64 / total_attempts as f64 * 100.0
+        );
         println!("  - Duration: {:?}", duration);
 
         // Verify rate limiting is working
@@ -708,7 +720,7 @@ mod rate_limiter_stress_tests {
             limiter.check_move_rate_limit(&game_id);
             limiter.check_invitation_rate_limit(&player_id);
             limiter.check_sync_rate_limit(&game_id);
-            
+
             if i % 2 == 0 {
                 limiter.register_active_game(&player_id);
             }
@@ -747,7 +759,9 @@ mod rate_limiter_stress_tests {
 // =============================================================================
 
 /// Simulate message processing with realistic delays and potential failures
-async fn process_stress_message(message: &Message) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn process_stress_message(
+    message: &Message,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Simulate processing time
     tokio::time::sleep(Duration::from_micros(10)).await;
 

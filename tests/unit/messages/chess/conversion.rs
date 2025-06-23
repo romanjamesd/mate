@@ -114,7 +114,7 @@ mod tests {
         let board = Board::new();
 
         // Test various move types
-        let moves = vec![
+        let moves = [
             ChessMove::simple(
                 Position::from_str("a1").unwrap(),
                 Position::from_str("a8").unwrap(),
@@ -133,7 +133,7 @@ mod tests {
             .unwrap(),
         ];
 
-        let expected_strings = vec!["a1a8", "h2h4", "b7b8R"];
+        let expected_strings = ["a1a8", "h2h4", "b7b8R"];
 
         for (chess_move, expected) in moves.iter().zip(expected_strings.iter()) {
             let message = create_move_message(&game_id, chess_move, &board);

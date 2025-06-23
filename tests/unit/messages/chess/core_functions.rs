@@ -433,7 +433,7 @@ mod hash_verification_tests {
 
         for invalid_hash in &invalid_hashes {
             assert!(
-                !verify_board_hash(&board, &invalid_hash),
+                !verify_board_hash(&board, invalid_hash),
                 "Invalid hash format should be rejected: '{}'",
                 invalid_hash
             );

@@ -72,7 +72,7 @@ async fn test_end_to_end_move_processing_complex_sequence() {
     let mut board = Board::new();
 
     // Define a sequence of moves (Scholar's Mate)
-    let move_sequence = vec![
+    let move_sequence = [
         ("e2", "e4"), // 1. e4
         ("e7", "e5"), // 1... e5
         ("d1", "h5"), // 2. Qh5

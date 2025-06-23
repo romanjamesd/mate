@@ -399,12 +399,16 @@ mod security_pipeline_integration_tests {
 
             // Check that the error type matches expectations
             let error = result.unwrap_err();
-            let error_type_matches = match (&error, expected_error_type) {
-                (SecurityViolation::CryptographicFailure { .. }, "CryptographicFailure") => true,
-                (SecurityViolation::InjectionAttempt { .. }, "InjectionAttempt") => true,
-                (SecurityViolation::FieldTooLong { .. }, "FieldTooLong") => true,
-                _ => false,
-            };
+            let error_type_matches = matches!(
+                (&error, expected_error_type),
+                (
+                    SecurityViolation::CryptographicFailure { .. },
+                    "CryptographicFailure"
+                ) | (
+                    SecurityViolation::InjectionAttempt { .. },
+                    "InjectionAttempt"
+                ) | (SecurityViolation::FieldTooLong { .. }, "FieldTooLong")
+            );
 
             assert!(
                 error_type_matches,

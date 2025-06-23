@@ -286,7 +286,8 @@ mod validation_performance_tests {
         let iterations = 5000;
 
         // Test individual validation functions using boxed closures
-        let validation_tests: Vec<(&str, Box<dyn Fn() -> bool>)> = vec![
+        type ValidationTest = (&'static str, Box<dyn Fn() -> bool>);
+        let validation_tests: Vec<ValidationTest> = vec![
             (
                 "game_id",
                 Box::new(move || mate::messages::chess::validate_game_id(&game_id)),

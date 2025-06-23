@@ -28,10 +28,13 @@ use crate::common::mock_streams::MockStream;
 /// Mock game state for tracking game progression
 #[derive(Debug, Clone)]
 struct MockGameState {
+    #[allow(dead_code)]
     game_id: String,
     board: Board,
     move_history: Vec<String>,
+    #[allow(dead_code)]
     white_player: String,
+    #[allow(dead_code)]
     black_player: String,
     current_turn: Color,
 }
@@ -126,7 +129,7 @@ async fn test_complete_game_flow_integration() -> Result<()> {
     let mut game_state = MockGameState::new_with_players(game_id.clone(), player1_id, player2_id);
 
     // Phase 3: Move Exchange
-    let moves = vec!["e2e4", "e7e5", "Nf3", "Nc6"];
+    let moves = ["e2e4", "e7e5", "Nf3", "Nc6"];
 
     for (move_index, chess_move) in moves.iter().enumerate() {
         let current_player_identity = if move_index % 2 == 0 {
@@ -347,12 +350,12 @@ async fn test_error_handling_integration() -> Result<()> {
     assert!(validation_result.is_err());
 
     // Test error propagation through chess protocol
-    let chess_protocol_result = mate::messages::chess::validate_game_id_graceful(&invalid_game_id);
+    let chess_protocol_result = mate::messages::chess::validate_game_id_graceful(invalid_game_id);
     assert!(chess_protocol_result.is_err());
 
     if let Err(chess_error) = chess_protocol_result {
         assert!(matches!(chess_error, ChessProtocolError::Validation(_)));
-        assert!(chess_error.is_recoverable() == false); // Invalid game ID is not recoverable
+        assert!(!chess_error.is_recoverable()); // Invalid game ID is not recoverable
     }
 
     // Test timeout error integration
