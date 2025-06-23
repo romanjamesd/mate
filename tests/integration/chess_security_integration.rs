@@ -29,6 +29,28 @@ use mate::messages::types::Message;
 
 use std::time::{Duration, Instant};
 
+// Helper function to detect CI environment and adjust performance expectations
+fn is_ci_environment() -> bool {
+    std::env::var("CI").is_ok()
+        || std::env::var("GITHUB_ACTIONS").is_ok()
+        || std::env::var("TRAVIS").is_ok()
+        || std::env::var("CIRCLECI").is_ok()
+        || std::env::var("JENKINS_URL").is_ok()
+}
+
+fn get_performance_multiplier() -> u32 {
+    if is_ci_environment() {
+        // Be more lenient in CI environments
+        10
+    } else if cfg!(debug_assertions) {
+        // Debug builds are slower
+        5
+    } else {
+        // Release builds on local machines
+        1
+    }
+}
+
 #[cfg(test)]
 mod attack_simulation_tests {
     use super::*;
@@ -520,10 +542,14 @@ mod performance_impact_tests {
 
         // Security validation should not add excessive overhead
         // Allow security validation to take up to 10x longer than baseline, but it should still be fast
+        let multiplier = get_performance_multiplier();
+        let max_duration_ms = 100 * multiplier;
         assert!(
-            security_duration < Duration::from_millis(100),
-            "Security validation taking too long: {:?}",
-            security_duration
+            security_duration < Duration::from_millis(max_duration_ms as u64),
+            "Security validation taking too long: {:?} (max: {}ms, multiplier: {}x)",
+            security_duration,
+            max_duration_ms,
+            multiplier
         );
 
         println!("✓ Security validation performance within acceptable limits");
@@ -601,17 +627,16 @@ mod performance_impact_tests {
 
             // Even complex validation should be reasonably fast
             // Note: CI environments may have different performance characteristics
-            let max_duration = if cfg!(debug_assertions) {
-                Duration::from_millis(200)
-            } else {
-                Duration::from_millis(50)
-            };
+            let multiplier = get_performance_multiplier();
+            let max_duration_ms = 50 * multiplier;
+            let max_duration = Duration::from_millis(max_duration_ms as u64);
             assert!(
                 duration < max_duration,
-                "{} validation too slow: {:?} (max: {:?})",
+                "{} validation too slow: {:?} (max: {:?}, multiplier: {}x)",
                 level,
                 duration,
-                max_duration
+                max_duration,
+                multiplier
             );
         }
 

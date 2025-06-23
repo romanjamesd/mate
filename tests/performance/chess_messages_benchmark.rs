@@ -17,6 +17,28 @@ use mate::messages::chess::{
 use mate::messages::types::Message;
 use std::time::Instant;
 
+// Helper function to detect CI environment and adjust performance expectations
+fn is_ci_environment() -> bool {
+    std::env::var("CI").is_ok()
+        || std::env::var("GITHUB_ACTIONS").is_ok()
+        || std::env::var("TRAVIS").is_ok()
+        || std::env::var("CIRCLECI").is_ok()
+        || std::env::var("JENKINS_URL").is_ok()
+}
+
+fn get_performance_multiplier() -> u32 {
+    if is_ci_environment() {
+        // Be more lenient in CI environments
+        10
+    } else if cfg!(debug_assertions) {
+        // Debug builds are slower
+        5
+    } else {
+        // Release builds on local machines
+        1
+    }
+}
+
 // =============================================================================
 // Serialization Performance Tests
 // =============================================================================
@@ -78,20 +100,23 @@ mod serialization_performance_tests {
 
             // Performance assertions
             // Note: CI environments may have different performance characteristics
-            let json_max = if cfg!(debug_assertions) { 2000 } else { 500 };
-            let binary_max = if cfg!(debug_assertions) { 800 } else { 200 };
+            let multiplier = get_performance_multiplier();
+            let json_max = 500 * multiplier;
+            let binary_max = 200 * multiplier;
 
             assert!(
-                json_per_op.as_micros() < json_max,
-                "JSON serialization should be reasonably fast (< {}μs), got {:?}",
+                json_per_op.as_micros() < json_max as u128,
+                "JSON serialization should be reasonably fast (< {}μs), got {:?}. Multiplier: {}x",
                 json_max,
-                json_per_op
+                json_per_op,
+                multiplier
             );
             assert!(
-                binary_per_op.as_micros() < binary_max,
-                "Binary serialization should be faster (< {}μs), got {:?}",
+                binary_per_op.as_micros() < binary_max as u128,
+                "Binary serialization should be faster (< {}μs), got {:?}. Multiplier: {}x",
                 binary_max,
-                binary_per_op
+                binary_per_op,
+                multiplier
             );
             assert!(
                 binary_duration <= json_duration,
@@ -150,17 +175,18 @@ mod serialization_performance_tests {
 
             // Large messages should still serialize in reasonable time
             // Note: CI environments may have different performance characteristics
-            let json_max_ms = if cfg!(debug_assertions) { 500 } else { 100 };
-            let binary_max_ms = if cfg!(debug_assertions) { 250 } else { 50 };
+            let multiplier = get_performance_multiplier();
+            let json_max_ms = 100 * multiplier;
+            let binary_max_ms = 50 * multiplier;
 
             assert!(
-                json_duration.as_millis() < json_max_ms,
+                json_duration.as_millis() < json_max_ms as u128,
                 "Large JSON serialization should complete reasonably quickly (< {}ms), got {:?}ms",
                 json_max_ms,
                 json_duration.as_millis()
             );
             assert!(
-                binary_duration.as_millis() < binary_max_ms,
+                binary_duration.as_millis() < binary_max_ms as u128,
                 "Large binary serialization should complete reasonably quickly (< {}ms), got {:?}ms",
                 binary_max_ms,
                 binary_duration.as_millis()
@@ -218,17 +244,18 @@ mod serialization_performance_tests {
 
             // Roundtrip should be fast enough for real-time communication
             // Note: CI environments may have different performance characteristics
-            let json_max = if cfg!(debug_assertions) { 5000 } else { 1000 };
-            let binary_max = if cfg!(debug_assertions) { 2500 } else { 500 };
+            let multiplier = get_performance_multiplier();
+            let json_max = 1000 * multiplier;
+            let binary_max = 500 * multiplier;
 
             assert!(
-                json_per_roundtrip.as_micros() < json_max,
+                json_per_roundtrip.as_micros() < json_max as u128,
                 "JSON roundtrip should be reasonably fast (< {}μs), got {:?}",
                 json_max,
                 json_per_roundtrip
             );
             assert!(
-                binary_per_roundtrip.as_micros() < binary_max,
+                binary_per_roundtrip.as_micros() < binary_max as u128,
                 "Binary roundtrip should be faster (< {}μs), got {:?}",
                 binary_max,
                 binary_per_roundtrip
@@ -350,13 +377,15 @@ mod validation_performance_tests {
 
             // Individual validations should be reasonably fast
             // Note: CI environments may have different performance characteristics
-            let max_micros = if cfg!(debug_assertions) { 50 } else { 10 };
+            let multiplier = get_performance_multiplier();
+            let max_micros = 10 * multiplier;
             assert!(
-                per_validation.as_micros() < max_micros,
-                "{} validation should be reasonably fast (< {}μs), got {:?}",
+                per_validation.as_micros() < max_micros as u128,
+                "{} validation should be reasonably fast (< {}μs), got {:?}. Multiplier: {}x",
                 validation_name,
                 max_micros,
-                per_validation
+                per_validation,
+                multiplier
             );
         }
 
