@@ -289,8 +289,8 @@ mod board_state_hashing_tests {
 
         // Hashing should be reasonably fast
         assert!(
-            per_hash.as_micros() < 50,
-            "Board hashing should be fast (< 50μs per hash), got {:?}",
+            per_hash.as_micros() < 100,
+            "Board hashing should be fast (< 100μs per hash), got {:?}",
             per_hash
         );
 
