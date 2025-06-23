@@ -48,10 +48,12 @@ impl CastlingRights {
                 'Q' => rights.white_queenside = true,
                 'k' => rights.black_kingside = true,
                 'q' => rights.black_queenside = true,
-                _ => return Err(ChessError::InvalidFen(format!(
-                    "Invalid castling rights character '{}' (valid: K, Q, k, q, or - for none)",
-                    c
-                ))),
+                _ => {
+                    return Err(ChessError::InvalidFen(format!(
+                        "Invalid castling rights character '{}' (valid: K, Q, k, q, or - for none)",
+                        c
+                    )))
+                }
             }
         }
 
@@ -61,7 +63,7 @@ impl CastlingRights {
     /// Convert to FEN notation
     pub fn to_fen(&self) -> String {
         let mut result = String::new();
-        
+
         if self.white_kingside {
             result.push('K');
         }
@@ -74,7 +76,7 @@ impl CastlingRights {
         if self.black_queenside {
             result.push('q');
         }
-        
+
         if result.is_empty() {
             "-".to_string()
         } else {
@@ -103,7 +105,7 @@ impl CastlingRights {
             (7, 0) => self.white_kingside = false,  // h1 rook
             (0, 7) => self.black_queenside = false, // a8 rook
             (7, 7) => self.black_kingside = false,  // h8 rook
-            _ => {} // Not a corner rook
+            _ => {}                                 // Not a corner rook
         }
     }
 }
@@ -530,7 +532,14 @@ impl Board {
             halfmove_clock,
             fullmove_number,
             castling_rights: CastlingRights::from_fen(castling_rights)?,
-            en_passant_target: if *en_passant == "-" { None } else { Some(Position::from_str(en_passant).map_err(|e| ChessError::InvalidFen(e.to_string()))?) },
+            en_passant_target: if *en_passant == "-" {
+                None
+            } else {
+                Some(
+                    Position::from_str(en_passant)
+                        .map_err(|e| ChessError::InvalidFen(e.to_string()))?,
+                )
+            },
         })
     }
 
@@ -987,12 +996,12 @@ impl Board {
         if piece.piece_type == PieceType::King {
             self.castling_rights.remove_all_for_color(piece.color);
         }
-        
+
         // If rook moves from a corner, remove corresponding castling rights
         if piece.piece_type == PieceType::Rook {
             self.castling_rights.remove_rook_rights(mv.from);
         }
-        
+
         // If a rook is captured, remove corresponding castling rights
         if let Some(captured_piece) = self.get_piece(mv.to) {
             if captured_piece.piece_type == PieceType::Rook {
@@ -1008,7 +1017,7 @@ impl Board {
             Color::White => mv.from.rank + 1, // White pawn moving up
             Color::Black => mv.from.rank - 1, // Black pawn moving down
         };
-        
+
         self.en_passant_target = Some(Position::new_unchecked(mv.to.file, target_rank));
     }
 
