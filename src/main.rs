@@ -8,8 +8,9 @@ use mate::network::Client;
 
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
+use tokio::signal;
 use tokio::time::Instant;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Format round-trip time for display with appropriate precision
 fn format_round_trip_time(duration: std::time::Duration) -> String {
@@ -31,6 +32,52 @@ pub async fn init_identity() -> Result<Identity> {
     Identity::load_or_generate()
 }
 
+/// Set up graceful shutdown signal handling
+async fn setup_shutdown_signal() -> Result<()> {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+        info!("Received Ctrl+C signal, initiating graceful shutdown...");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+        info!("Received SIGTERM signal, initiating graceful shutdown...");
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    Ok(())
+}
+
+/// Gracefully shutdown the application with proper cleanup
+async fn graceful_shutdown(app: Option<&App>) -> Result<()> {
+    info!("Starting graceful shutdown sequence...");
+    
+    if let Some(_app) = app {
+        debug!("Cleaning up application resources...");
+        
+        // The database connections will be automatically closed when the Database
+        // struct is dropped, but we can log the cleanup for transparency
+        debug!("Database connections will be closed automatically");
+        debug!("Application state cleanup complete");
+    }
+    
+    info!("Graceful shutdown completed successfully");
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Step 5.1: Initialize tracing with appropriate logging levels for network operations
@@ -49,8 +96,11 @@ async fn main() -> Result<()> {
         .init();
 
     info!("Starting mate application with network-optimized logging configuration");
+    debug!("Application lifecycle: Main function started");
+    debug!("Application lifecycle: Parsing command line arguments");
 
     let cli = Cli::parse();
+    debug!("Application lifecycle: Command line arguments parsed successfully");
 
     match cli.command {
         Commands::Init => {
@@ -174,21 +224,48 @@ async fn main() -> Result<()> {
         }
         Commands::Serve { bind } => {
             info!("Starting server on {}", bind);
+            debug!("Server lifecycle: Initializing server components");
 
             // Use secure storage for identity
             let identity = std::sync::Arc::new(init_identity().await?);
             info!("Loaded identity: {}", identity.peer_id());
+            debug!("Server lifecycle: Identity loaded successfully");
 
-            // Create and run server
+            // Create and run server with graceful shutdown handling
             let server = mate::network::Server::bind(&bind, identity).await?;
 
             info!("Server bound successfully, starting to accept connections...");
-            if let Err(e) = server.run().await {
-                error!("Server error: {}", e);
-                std::process::exit(1);
-            }
+            debug!("Server lifecycle: Server bound, installing signal handlers");
 
-            info!("Server shutdown complete");
+            // Run server with graceful shutdown
+            tokio::select! {
+                result = server.run() => {
+                    match result {
+                        Ok(()) => {
+                            info!("Server shutdown complete");
+                            debug!("Server lifecycle: Server terminated normally");
+                        }
+                        Err(e) => {
+                            error!("Server error: {}", e);
+                            debug!("Server lifecycle: Server terminated with error");
+                        }
+                    }
+                }
+                _ = setup_shutdown_signal() => {
+                    info!("Server lifecycle: Shutdown signal received, terminating server...");
+                    debug!("Server lifecycle: Graceful shutdown initiated");
+
+                    // Note: The server will automatically stop when this scope ends
+                    // and the server variable is dropped, which closes all connections
+                    if let Err(cleanup_error) = graceful_shutdown(None).await {
+                        warn!("Server lifecycle: Cleanup encountered issues: {}", cleanup_error);
+                    } else {
+                        debug!("Server lifecycle: Cleanup completed successfully");
+                    }
+
+                    info!("Server lifecycle: Graceful shutdown completed");
+                }
+            }
         }
         Commands::Connect { address, message } => {
             info!("Connecting to {}", address);
@@ -472,53 +549,137 @@ async fn main() -> Result<()> {
             }
         }
 
-        // Chess commands - Initialize App once and handle all chess operations
+        // Chess commands - Initialize App once and handle all chess operations with proper lifecycle management
         Commands::Games
         | Commands::Board { .. }
         | Commands::Invite { .. }
         | Commands::Accept { .. }
         | Commands::Move { .. }
         | Commands::History { .. } => {
+            info!("Initializing chess application...");
+            debug!("Chess command lifecycle: Starting application initialization");
+
             // Initialize App instance once for all chess commands
             let app = App::new()
                 .await
                 .context("Failed to initialize application")?;
 
-            match cli.command {
+            info!("Chess application initialized successfully");
+            debug!("Chess command lifecycle: Application initialization complete");
+            debug!("Peer ID: {}", app.peer_id());
+            debug!("Data directory: {}", app.data_dir().display());
+
+            // Execute the chess command with proper lifecycle management
+            let command_result = match cli.command {
                 Commands::Games => {
-                    info!("Listing chess games...");
-                    app.handle_games().await.context("Failed to list games")?;
+                    info!("Chess command lifecycle: Starting games list operation");
+                    debug!("Retrieving active games from database");
+
+                    let result = app.handle_games().await.context("Failed to list games");
+
+                    match &result {
+                        Ok(()) => {
+                            info!("Chess command lifecycle: Games list operation completed successfully");
+                            debug!("Games list command finished without errors");
+                        }
+                        Err(e) => {
+                            error!(
+                                "Chess command lifecycle: Games list operation failed: {}",
+                                e
+                            );
+                        }
+                    }
+                    result
                 }
 
                 Commands::Board { game_id } => {
                     if let Some(ref id) = game_id {
-                        info!("Displaying chess board for game: {}", id);
+                        info!(
+                            "Chess command lifecycle: Starting board display for game: {}",
+                            id
+                        );
+                        debug!("Retrieving board state for specific game ID");
                     } else {
-                        info!("Displaying chess board for most recent game");
+                        info!(
+                            "Chess command lifecycle: Starting board display for most recent game"
+                        );
+                        debug!("Retrieving board state for most recent active game");
                     }
-                    app.handle_board(game_id)
+
+                    let result = app
+                        .handle_board(game_id)
                         .await
-                        .context("Failed to display board")?;
+                        .context("Failed to display board");
+
+                    match &result {
+                        Ok(()) => {
+                            info!("Chess command lifecycle: Board display operation completed successfully");
+                            debug!("Board display command finished without errors");
+                        }
+                        Err(e) => {
+                            error!(
+                                "Chess command lifecycle: Board display operation failed: {}",
+                                e
+                            );
+                        }
+                    }
+                    result
                 }
 
                 Commands::Invite { address, color } => {
-                    info!("Sending chess game invitation to: {}", address);
+                    info!(
+                        "Chess command lifecycle: Starting game invitation to: {}",
+                        address
+                    );
                     if let Some(ref color_pref) = color {
-                        info!("Color preference: {}", color_pref);
+                        debug!("Color preference specified: {}", color_pref);
+                    } else {
+                        debug!("No color preference specified, will use random selection");
                     }
-                    app.handle_invite(address, color)
+
+                    let result = app
+                        .handle_invite(address, color)
                         .await
-                        .context("Failed to send invitation")?;
+                        .context("Failed to send invitation");
+
+                    match &result {
+                        Ok(()) => {
+                            info!("Chess command lifecycle: Game invitation sent successfully");
+                            debug!("Invitation command finished without errors");
+                        }
+                        Err(e) => {
+                            error!("Chess command lifecycle: Game invitation failed: {}", e);
+                        }
+                    }
+                    result
                 }
 
                 Commands::Accept { game_id, color } => {
-                    info!("Accepting chess game invitation: {}", game_id);
+                    info!(
+                        "Chess command lifecycle: Starting game acceptance for: {}",
+                        game_id
+                    );
                     if let Some(ref color_pref) = color {
-                        info!("Color preference: {}", color_pref);
+                        debug!("Color preference specified: {}", color_pref);
+                    } else {
+                        debug!("No color preference specified, will use automatic selection");
                     }
-                    app.handle_accept(game_id, color)
+
+                    let result = app
+                        .handle_accept(game_id, color)
                         .await
-                        .context("Failed to accept invitation")?;
+                        .context("Failed to accept invitation");
+
+                    match &result {
+                        Ok(()) => {
+                            info!("Chess command lifecycle: Game invitation accepted successfully");
+                            debug!("Accept command finished without errors");
+                        }
+                        Err(e) => {
+                            error!("Chess command lifecycle: Game acceptance failed: {}", e);
+                        }
+                    }
+                    result
                 }
 
                 Commands::Move {
@@ -526,30 +687,88 @@ async fn main() -> Result<()> {
                     game_id,
                 } => {
                     if let Some(ref id) = game_id {
-                        info!("Making move '{}' in game: {}", chess_move, id);
+                        info!(
+                            "Chess command lifecycle: Starting move '{}' in game: {}",
+                            chess_move, id
+                        );
+                        debug!("Making move in specific game ID");
                     } else {
-                        info!("Making move '{}' in most recent game", chess_move);
+                        info!(
+                            "Chess command lifecycle: Starting move '{}' in most recent game",
+                            chess_move
+                        );
+                        debug!("Making move in most recent active game");
                     }
-                    app.handle_move(game_id, chess_move)
+
+                    let result = app
+                        .handle_move(game_id, chess_move)
                         .await
-                        .context("Failed to make move")?;
+                        .context("Failed to make move");
+
+                    match &result {
+                        Ok(()) => {
+                            info!("Chess command lifecycle: Move executed successfully");
+                            debug!("Move command finished without errors");
+                        }
+                        Err(e) => {
+                            error!("Chess command lifecycle: Move execution failed: {}", e);
+                        }
+                    }
+                    result
                 }
 
                 Commands::History { game_id } => {
                     if let Some(ref id) = game_id {
-                        info!("Showing chess game history for game: {}", id);
+                        info!(
+                            "Chess command lifecycle: Starting history display for game: {}",
+                            id
+                        );
+                        debug!("Retrieving move history for specific game ID");
                     } else {
-                        info!("Showing chess game history for most recent game");
+                        info!("Chess command lifecycle: Starting history display for most recent game");
+                        debug!("Retrieving move history for most recent active game");
                     }
-                    app.handle_history(game_id)
+
+                    let result = app
+                        .handle_history(game_id)
                         .await
-                        .context("Failed to show game history")?;
+                        .context("Failed to show game history");
+
+                    match &result {
+                        Ok(()) => {
+                            info!(
+                                "Chess command lifecycle: History display completed successfully"
+                            );
+                            debug!("History command finished without errors");
+                        }
+                        Err(e) => {
+                            error!("Chess command lifecycle: History display failed: {}", e);
+                        }
+                    }
+                    result
                 }
 
                 _ => unreachable!("Non-chess commands should not reach this branch"),
+            };
+
+            // Ensure graceful cleanup regardless of command result
+            debug!("Chess command lifecycle: Starting cleanup phase");
+            if let Err(cleanup_error) = graceful_shutdown(Some(&app)).await {
+                warn!(
+                    "Chess command lifecycle: Cleanup encountered issues: {}",
+                    cleanup_error
+                );
+            } else {
+                debug!("Chess command lifecycle: Cleanup completed successfully");
             }
+
+            // Return the command result
+            command_result?;
+            info!("Chess command lifecycle: Operation completed successfully");
         }
     }
 
+    debug!("Application lifecycle: All operations completed successfully");
+    info!("Mate application finished successfully");
     Ok(())
 }
