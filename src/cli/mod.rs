@@ -6,4 +6,5 @@ pub use app::{App, Config};
 pub use commands::{Cli, Commands, KeyCommand};
 pub use game_ops::{
     GameOps, GameOpsError, GameOpsResult, GameRecord, GameState, GameStatistics, InvitationRecord,
+    MoveHistoryEntry, MoveProcessingError, MoveProcessingResult, MoveProcessor, MoveResult,
 };
