@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use clap::Parser;
 use mate::cli::{app::App, Cli, Commands, KeyCommand};
@@ -472,69 +472,82 @@ async fn main() -> Result<()> {
             }
         }
 
-        // Chess commands - implemented with proper database integration
-        Commands::Games => {
-            info!("Listing chess games...");
-            let app = App::new().await?;
-            if let Err(e) = app.handle_games().await {
-                error!("Failed to list games: {}", e);
-                std::process::exit(1);
-            }
-        }
+        // Chess commands - Initialize App once and handle all chess operations
+        Commands::Games
+        | Commands::Board { .. }
+        | Commands::Invite { .. }
+        | Commands::Accept { .. }
+        | Commands::Move { .. }
+        | Commands::History { .. } => {
+            // Initialize App instance once for all chess commands
+            let app = App::new()
+                .await
+                .context("Failed to initialize application")?;
 
-        Commands::Board { game_id } => {
-            if let Some(ref id) = game_id {
-                info!("Displaying chess board for game: {}", id);
-            } else {
-                info!("Displaying chess board for most recent game");
-            }
-            let app = App::new().await?;
-            if let Err(e) = app.handle_board(game_id).await {
-                error!("Failed to display board: {}", e);
-                std::process::exit(1);
-            }
-        }
+            match cli.command {
+                Commands::Games => {
+                    info!("Listing chess games...");
+                    app.handle_games().await.context("Failed to list games")?;
+                }
 
-        Commands::Invite { address, color } => {
-            let color_pref = color.as_deref().unwrap_or("random");
-            println!(
-                "Chess invite to {} with color preference '{}' - coming soon!",
-                address, color_pref
-            );
-            println!("This will send a chess game invitation to the specified peer.");
-        }
+                Commands::Board { game_id } => {
+                    if let Some(ref id) = game_id {
+                        info!("Displaying chess board for game: {}", id);
+                    } else {
+                        info!("Displaying chess board for most recent game");
+                    }
+                    app.handle_board(game_id)
+                        .await
+                        .context("Failed to display board")?;
+                }
 
-        Commands::Accept { game_id, color } => {
-            let color_pref = color.as_deref().unwrap_or("automatic");
-            println!(
-                "Accepting chess game {} with color preference '{}' - coming soon!",
-                game_id, color_pref
-            );
-            println!("This will accept a pending chess game invitation.");
-        }
+                Commands::Invite { address, color } => {
+                    info!("Sending chess game invitation to: {}", address);
+                    if let Some(ref color_pref) = color {
+                        info!("Color preference: {}", color_pref);
+                    }
+                    app.handle_invite(address, color)
+                        .await
+                        .context("Failed to send invitation")?;
+                }
 
-        Commands::Move {
-            chess_move,
-            game_id,
-        } => {
-            if let Some(id) = game_id {
-                println!("Making move '{}' in game {} - coming soon!", chess_move, id);
-            } else {
-                println!(
-                    "Making move '{}' in most recent game - coming soon!",
-                    chess_move
-                );
+                Commands::Accept { game_id, color } => {
+                    info!("Accepting chess game invitation: {}", game_id);
+                    if let Some(ref color_pref) = color {
+                        info!("Color preference: {}", color_pref);
+                    }
+                    app.handle_accept(game_id, color)
+                        .await
+                        .context("Failed to accept invitation")?;
+                }
+
+                Commands::Move {
+                    chess_move,
+                    game_id,
+                } => {
+                    if let Some(ref id) = game_id {
+                        info!("Making move '{}' in game: {}", chess_move, id);
+                    } else {
+                        info!("Making move '{}' in most recent game", chess_move);
+                    }
+                    app.handle_move(game_id, chess_move)
+                        .await
+                        .context("Failed to make move")?;
+                }
+
+                Commands::History { game_id } => {
+                    if let Some(ref id) = game_id {
+                        info!("Showing chess game history for game: {}", id);
+                    } else {
+                        info!("Showing chess game history for most recent game");
+                    }
+                    app.handle_history(game_id)
+                        .await
+                        .context("Failed to show game history")?;
+                }
+
+                _ => unreachable!("Non-chess commands should not reach this branch"),
             }
-            println!("This will make a chess move using standard algebraic notation.");
-        }
-
-        Commands::History { game_id } => {
-            if let Some(id) = game_id {
-                println!("Chess game history for game {} - coming soon!", id);
-            } else {
-                println!("Chess game history for most recent game - coming soon!");
-            }
-            println!("This will show the complete move history of a chess game.");
         }
     }
 
