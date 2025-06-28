@@ -1,9 +1,10 @@
 use crate::chess::{Board, Color};
+use crate::cli::network_manager::NetworkManager;
 use crate::crypto::Identity;
 use crate::messages::chess::Move as ChessMove;
 use crate::messages::chess::{hash_board_state, GameAccept, GameInvite};
 use crate::messages::types::Message;
-use crate::network::Client;
+
 use crate::storage::models::{GameStatus, PlayerColor};
 use crate::storage::Database;
 use anyhow::{Context, Result};
@@ -102,6 +103,8 @@ pub struct App {
     pub database: Database,
     /// Application configuration
     pub config: Config,
+    /// Network manager for peer connections
+    pub network_manager: NetworkManager,
 }
 
 impl App {
@@ -122,10 +125,14 @@ impl App {
         let database =
             Database::new(identity.peer_id().as_str()).context("Failed to initialize database")?;
 
+        // Initialize network manager
+        let network_manager = NetworkManager::new(identity.clone());
+
         Ok(App {
             identity,
             database,
             config,
+            network_manager,
         })
     }
 
@@ -407,14 +414,15 @@ impl App {
             game.id
         );
 
-        // Create network client
-        let client = Client::new(self.identity.clone());
+        // Create game invitation
+        let invite = GameInvite::new(game.id.clone(), suggested_color);
 
-        // Create game invitation message
-        let invite_message = Message::new_game_invite(game.id.clone(), suggested_color);
-
-        // Send the invitation
-        match client.send_message_to(&address, invite_message).await {
+        // Send the invitation using network manager
+        match self
+            .network_manager
+            .send_game_invite(&address, game.id.clone(), invite)
+            .await
+        {
             Ok(response) => {
                 println!("✓ Invitation sent successfully!");
 
@@ -529,15 +537,13 @@ impl App {
             Color::Black => PlayerColor::Black,
         };
 
-        // Create network client
-        let client = Client::new(self.identity.clone());
+        // Create game acceptance
+        let accept = GameAccept::new(game_id.clone(), accepted_color);
 
-        // Create game acceptance message
-        let accept_message = Message::new_game_accept(game_id.clone(), accepted_color);
-
-        // Send the acceptance
-        match client
-            .send_message_to(&game.opponent_peer_id, accept_message)
+        // Send the acceptance using network manager
+        match self
+            .network_manager
+            .send_game_accept(&game.opponent_peer_id, game_id.clone(), accept)
             .await
         {
             Ok(_response) => {
@@ -690,19 +696,21 @@ impl App {
         // Create board state hash (using current board for now)
         let board_hash = hash_board_state(&board);
 
-        // Create network client
-        let client = Client::new(self.identity.clone());
-
-        // Create move message
-        let move_message = Message::new_move(
+        // Create chess move
+        let chess_move_msg = ChessMove::new(
             target_game_id.clone(),
             chess_move.clone(),
             board_hash.clone(),
         );
 
-        // Send the move
-        match client
-            .send_message_to(&game.opponent_peer_id, move_message)
+        // Send the move using network manager
+        match self
+            .network_manager
+            .send_chess_move(
+                &game.opponent_peer_id,
+                target_game_id.clone(),
+                chess_move_msg,
+            )
             .await
         {
             Ok(_response) => {
