@@ -372,7 +372,7 @@ pub fn display_move_history(history: &[String], current_move: u32) {
 
     for (i, move_pair) in history.chunks(2).enumerate() {
         let move_num = i + 1;
-        let white_move = move_pair.get(0).map(|s| s.as_str()).unwrap_or("-");
+        let white_move = move_pair.first().map(|s| s.as_str()).unwrap_or("-");
         let black_move = move_pair.get(1).map(|s| s.as_str()).unwrap_or("-");
 
         println!(

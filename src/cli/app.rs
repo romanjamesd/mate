@@ -343,10 +343,10 @@ impl App {
 
         // Show whose turn it is
         let turn_color = board.active_color();
-        let is_my_turn = match (turn_color, game.my_color) {
-            (Color::White, PlayerColor::White) | (Color::Black, PlayerColor::Black) => true,
-            _ => false,
-        };
+        let is_my_turn = matches!(
+            (turn_color, game.my_color),
+            (Color::White, PlayerColor::White) | (Color::Black, PlayerColor::Black)
+        );
 
         if game.status == GameStatus::Active {
             if is_my_turn {
@@ -669,10 +669,10 @@ impl App {
         } else {
             Color::Black
         };
-        let is_our_turn = match (current_turn, &game.my_color) {
-            (Color::White, PlayerColor::White) | (Color::Black, PlayerColor::Black) => true,
-            _ => false,
-        };
+        let is_our_turn = matches!(
+            (current_turn, &game.my_color),
+            (Color::White, PlayerColor::White) | (Color::Black, PlayerColor::Black)
+        );
 
         if !is_our_turn {
             anyhow::bail!(
@@ -874,10 +874,10 @@ impl App {
             } else {
                 Color::Black
             };
-            let is_our_turn = match (current_turn, &game.my_color) {
-                (Color::White, PlayerColor::White) | (Color::Black, PlayerColor::Black) => true,
-                _ => false,
-            };
+            let is_our_turn = matches!(
+                (current_turn, &game.my_color),
+                (Color::White, PlayerColor::White) | (Color::Black, PlayerColor::Black)
+            );
 
             if is_our_turn {
                 println!("It's your turn to move!");

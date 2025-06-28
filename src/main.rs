@@ -64,16 +64,16 @@ async fn setup_shutdown_signal() -> Result<()> {
 /// Gracefully shutdown the application with proper cleanup
 async fn graceful_shutdown(app: Option<&App>) -> Result<()> {
     info!("Starting graceful shutdown sequence...");
-    
+
     if let Some(_app) = app {
         debug!("Cleaning up application resources...");
-        
+
         // The database connections will be automatically closed when the Database
         // struct is dropped, but we can log the cleanup for transparency
         debug!("Database connections will be closed automatically");
         debug!("Application state cleanup complete");
     }
-    
+
     info!("Graceful shutdown completed successfully");
     Ok(())
 }

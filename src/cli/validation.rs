@@ -209,12 +209,10 @@ impl<'a> InputValidator<'a> {
         for game_record in &games {
             let game_id_lower = game_record.game.id.to_lowercase();
 
-            // Check if input is a prefix of the game ID
-            if game_id_lower.starts_with(&input_lower) {
-                partial_matches.push(game_record.game.id.clone());
-            }
-            // Check if input appears anywhere in the game ID (for middle sections)
-            else if game_id_lower.contains(&input_lower) && input_lower.len() >= 6 {
+            // Check if input is a prefix or appears anywhere in the game ID
+            if game_id_lower.starts_with(&input_lower)
+                || (game_id_lower.contains(&input_lower) && input_lower.len() >= 6)
+            {
                 partial_matches.push(game_record.game.id.clone());
             }
         }
@@ -281,6 +279,7 @@ impl<'a> InputValidator<'a> {
     ///
     /// Returns true if user confirms, false if they decline
     /// Supports both y/n and yes/no responses (case insensitive)
+    #[allow(clippy::only_used_in_recursion)]
     pub fn confirm_action(&self, prompt: &str) -> ValidationResult<bool> {
         print!("{} (y/n): ", prompt);
         io::stdout().flush()?;

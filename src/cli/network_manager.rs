@@ -192,7 +192,7 @@ impl NetworkManager {
         &self,
         peer_address: &str,
         message: Message,
-        game_id: &str,
+        _game_id: &str,
     ) -> Result<Message> {
         let mut last_error = None;
 

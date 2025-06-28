@@ -431,14 +431,14 @@ pub fn display_error(error: &CliError) {
 
 /// Check if an error is recoverable (user can retry)
 pub fn is_recoverable_error(error: &CliError) -> bool {
-    match error {
-        CliError::NetworkTimeout { .. } => true,
-        CliError::Connection(_) => true,
-        CliError::InvalidInput { .. } => true,
-        CliError::GameOps(GameOpsError::NoCurrentGame) => true,
-        CliError::GameOps(GameOpsError::GameNotFound(_)) => true,
-        CliError::Storage(StorageError::DatabaseLocked { .. }) => true,
-        CliError::Chess(ChessError::InvalidMove(_)) => true,
-        _ => false,
-    }
+    matches!(
+        error,
+        CliError::NetworkTimeout { .. }
+            | CliError::Connection(_)
+            | CliError::InvalidInput { .. }
+            | CliError::GameOps(GameOpsError::NoCurrentGame)
+            | CliError::GameOps(GameOpsError::GameNotFound(_))
+            | CliError::Storage(StorageError::DatabaseLocked { .. })
+            | CliError::Chess(ChessError::InvalidMove(_))
+    )
 }
