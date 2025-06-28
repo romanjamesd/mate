@@ -4,6 +4,7 @@ pub mod display;
 pub mod error_handler;
 pub mod game_ops;
 pub mod network_manager;
+pub mod validation;
 
 pub use app::{App, Config};
 pub use commands::{Cli, Commands, KeyCommand};
@@ -20,3 +21,4 @@ pub use game_ops::{
     MoveHistoryEntry, MoveProcessingError, MoveProcessingResult, MoveProcessor, MoveResult,
 };
 pub use network_manager::{NetworkConfig, NetworkManager, NetworkStats};
+pub use validation::{InputValidationUtils, InputValidator, ValidationError, ValidationResult};
