@@ -471,6 +471,63 @@ async fn main() -> Result<()> {
                 }
             }
         }
+
+        // Chess commands - placeholder implementations (to be implemented in later phases)
+        Commands::Games => {
+            println!("Chess games command - coming soon!");
+            println!("This will list all active chess games and their status.");
+        }
+
+        Commands::Board { game_id } => {
+            if let Some(id) = game_id {
+                println!("Chess board display for game {} - coming soon!", id);
+            } else {
+                println!("Chess board display for most recent game - coming soon!");
+            }
+            println!("This will show the current chess position in ASCII format.");
+        }
+
+        Commands::Invite { address, color } => {
+            let color_pref = color.as_deref().unwrap_or("random");
+            println!(
+                "Chess invite to {} with color preference '{}' - coming soon!",
+                address, color_pref
+            );
+            println!("This will send a chess game invitation to the specified peer.");
+        }
+
+        Commands::Accept { game_id, color } => {
+            let color_pref = color.as_deref().unwrap_or("automatic");
+            println!(
+                "Accepting chess game {} with color preference '{}' - coming soon!",
+                game_id, color_pref
+            );
+            println!("This will accept a pending chess game invitation.");
+        }
+
+        Commands::Move {
+            chess_move,
+            game_id,
+        } => {
+            if let Some(id) = game_id {
+                println!("Making move '{}' in game {} - coming soon!", chess_move, id);
+            } else {
+                println!(
+                    "Making move '{}' in most recent game - coming soon!",
+                    chess_move
+                );
+            }
+            println!("This will make a chess move using standard algebraic notation.");
+        }
+
+        Commands::History { game_id } => {
+            if let Some(id) = game_id {
+                println!("Chess game history for game {} - coming soon!", id);
+            } else {
+                println!("Chess game history for most recent game - coming soon!");
+            }
+            println!("This will show the complete move history of a chess game.");
+        }
     }
 
     Ok(())
