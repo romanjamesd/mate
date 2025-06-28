@@ -236,7 +236,7 @@ impl WireConfig {
 /// - Backpressure mechanisms for high load
 ///
 /// Example future configuration:
-/// ```rust,ignore
+/// ```rust
 /// pub struct RateLimitConfig {
 ///     pub max_messages_per_second: u32,
 ///     pub max_bytes_per_second: u64,
@@ -1113,14 +1113,7 @@ impl FramedMessage {
     /// * `Ok(SignedEnvelope)` - Successfully read and deserialized message
     /// * `Err(anyhow::Error)` - Read timeout, IO error, or deserialization error
     ///
-    /// # Examples
-    /// ```rust,ignore
-    /// use std::time::Duration;
-    ///
-    /// let framed = FramedMessage::default();
-    /// let timeout = Duration::from_secs(10);
-    /// let envelope = framed.read_message_with_timeout(&mut reader, timeout).await?;
-    /// ```
+
     #[instrument(level = "debug", skip(self, reader), fields(timeout_secs = timeout_duration.as_secs()))]
     pub async fn read_message_with_timeout(
         &self,
@@ -1171,14 +1164,7 @@ impl FramedMessage {
     /// * `Ok(())` - Successfully serialized and written message
     /// * `Err(anyhow::Error)` - Write timeout, IO error, or serialization error
     ///
-    /// # Examples
-    /// ```rust,ignore
-    /// use std::time::Duration;
-    ///
-    /// let framed = FramedMessage::default();
-    /// let timeout = Duration::from_secs(10);
-    /// framed.write_message_with_timeout(&mut writer, &envelope, timeout).await?;
-    /// ```
+
     #[instrument(level = "debug", skip(self, writer, envelope), fields(timeout_secs = timeout_duration.as_secs()))]
     pub async fn write_message_with_timeout(
         &self,
