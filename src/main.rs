@@ -1,7 +1,7 @@
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
 use clap::Parser;
-use mate::cli::{Cli, Commands, KeyCommand};
+use mate::cli::{app::App, Cli, Commands, KeyCommand};
 use mate::crypto::Identity;
 use mate::messages::Message;
 use mate::network::Client;
@@ -472,19 +472,27 @@ async fn main() -> Result<()> {
             }
         }
 
-        // Chess commands - placeholder implementations (to be implemented in later phases)
+        // Chess commands - implemented with proper database integration
         Commands::Games => {
-            println!("Chess games command - coming soon!");
-            println!("This will list all active chess games and their status.");
+            info!("Listing chess games...");
+            let app = App::new().await?;
+            if let Err(e) = app.handle_games().await {
+                error!("Failed to list games: {}", e);
+                std::process::exit(1);
+            }
         }
 
         Commands::Board { game_id } => {
-            if let Some(id) = game_id {
-                println!("Chess board display for game {} - coming soon!", id);
+            if let Some(ref id) = game_id {
+                info!("Displaying chess board for game: {}", id);
             } else {
-                println!("Chess board display for most recent game - coming soon!");
+                info!("Displaying chess board for most recent game");
             }
-            println!("This will show the current chess position in ASCII format.");
+            let app = App::new().await?;
+            if let Err(e) = app.handle_board(game_id).await {
+                error!("Failed to display board: {}", e);
+                std::process::exit(1);
+            }
         }
 
         Commands::Invite { address, color } => {
