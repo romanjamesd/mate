@@ -23,6 +23,9 @@ pub mod cli_app_lifecycle;
 // CLI-Database integration tests
 pub mod cli_database;
 
+// CLI error handling integration tests
+pub mod cli_error_handling;
+
 // Interactive mode initialization tests
 pub mod interactive_initialization;
 
