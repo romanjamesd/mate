@@ -121,7 +121,11 @@ impl Database {
     /// Create a new Database instance with the given peer ID
     pub fn new(peer_id: &str) -> Result<Self> {
         let db_path = get_database_path()?;
+        Self::new_with_path(peer_id, &db_path)
+    }
 
+    /// Create a new Database instance with a custom database path
+    pub fn new_with_path(peer_id: &str, db_path: &std::path::Path) -> Result<Self> {
         // Ensure the parent directory exists
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -132,7 +136,7 @@ impl Database {
             })?;
         }
 
-        let conn = Self::create_optimized_connection(&db_path)?;
+        let conn = Self::create_optimized_connection(&db_path.to_path_buf())?;
         let managed_conn = ManagedConnection::new(conn);
 
         let database = Database {
@@ -153,7 +157,16 @@ impl Database {
 
         // Apply optimal SQLite pragmas for our use case
         conn.pragma_update(None, "foreign_keys", true)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
+
+        // Use WAL mode for production, but DELETE mode for tests to avoid persistent files
+        if std::env::var("MATE_DATA_DIR").is_ok() {
+            // In test mode, use DELETE journal mode to avoid persistent WAL files
+            conn.pragma_update(None, "journal_mode", "DELETE")?;
+        } else {
+            // In production, use WAL mode for better performance
+            conn.pragma_update(None, "journal_mode", "WAL")?;
+        }
+
         conn.pragma_update(None, "synchronous", "NORMAL")?; // Good balance of safety/speed
         conn.pragma_update(None, "cache_size", -64000)?; // 64MB cache
         conn.pragma_update(None, "temp_store", "memory")?; // Store temp tables in memory
@@ -321,6 +334,25 @@ impl Database {
             .unwrap()
             .as_secs() as i64
     }
+}
+
+/// Clean up database files at the given path (for testing)
+pub fn cleanup_database_files(db_path: &std::path::Path) -> std::io::Result<()> {
+    let wal_path = db_path.with_extension("sqlite-wal");
+    let shm_path = db_path.with_extension("sqlite-shm");
+    let journal_path = db_path.with_extension("sqlite-journal");
+
+    // Remove auxiliary files (ignore errors since they might not exist)
+    let _ = std::fs::remove_file(&wal_path);
+    let _ = std::fs::remove_file(&shm_path);
+    let _ = std::fs::remove_file(&journal_path);
+
+    // Remove the main database file
+    if db_path.exists() {
+        std::fs::remove_file(db_path)?;
+    }
+
+    Ok(())
 }
 
 /// Get the appropriate database path for the current platform

@@ -124,6 +124,11 @@ impl App {
         let config =
             Config::load_or_create_default().context("Failed to initialize configuration")?;
 
+        Self::new_with_config(config).await
+    }
+
+    /// Create a new App instance with the given configuration
+    pub async fn new_with_config(config: Config) -> Result<Self> {
         // Ensure data directory exists
         Self::ensure_data_dir(&config.data_dir).context("Failed to create data directory")?;
 
@@ -134,6 +139,48 @@ impl App {
         // Initialize database
         let database =
             Database::new(identity.peer_id().as_str()).context("Failed to initialize database")?;
+
+        // Initialize network manager
+        let network_manager = NetworkManager::new(identity.clone());
+
+        Ok(App {
+            identity,
+            database,
+            config,
+            network_manager,
+        })
+    }
+
+    /// Create a new App instance with custom data directory (primarily for testing)
+    pub async fn new_with_data_dir(data_dir: std::path::PathBuf) -> Result<Self> {
+        // Create custom configuration with specified data directory
+        let config = Config {
+            data_dir: data_dir.clone(),
+            default_bind_addr: "127.0.0.1:8080".to_string(),
+            max_concurrent_games: 10,
+        };
+
+        // Ensure data directory exists
+        Self::ensure_data_dir(&config.data_dir).context("Failed to create data directory")?;
+
+        // Set environment variable temporarily for Identity to use the test directory
+        let original_data_dir = std::env::var("MATE_DATA_DIR").ok();
+        std::env::set_var("MATE_DATA_DIR", &data_dir);
+
+        // Load or generate identity (will use MATE_DATA_DIR)
+        let identity =
+            Arc::new(Identity::load_or_generate().context("Failed to initialize identity")?);
+
+        // Restore original environment variable immediately
+        match original_data_dir {
+            Some(original) => std::env::set_var("MATE_DATA_DIR", original),
+            None => std::env::remove_var("MATE_DATA_DIR"),
+        }
+
+        // Initialize database with explicit path (no environment variables needed)
+        let db_path = data_dir.join("database.sqlite");
+        let database = Database::new_with_path(identity.peer_id().as_str(), &db_path)
+            .context("Failed to initialize database")?;
 
         // Initialize network manager
         let network_manager = NetworkManager::new(identity.clone());
