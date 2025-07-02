@@ -39,6 +39,11 @@ impl Default for Config {
 impl Config {
     /// Get the default data directory
     pub fn default_data_dir() -> Result<PathBuf> {
+        // Check for test override environment variable first
+        if let Ok(custom_data_dir) = std::env::var("MATE_DATA_DIR") {
+            return Ok(PathBuf::from(custom_data_dir));
+        }
+
         ProjectDirs::from("dev", "mate", "mate")
             .map(|proj_dirs| proj_dirs.data_dir().to_path_buf())
             .ok_or_else(|| anyhow::anyhow!("Could not determine data directory"))
@@ -46,6 +51,11 @@ impl Config {
 
     /// Get the default config directory
     pub fn default_config_dir() -> Result<PathBuf> {
+        // Check for test override environment variable first
+        if let Ok(custom_config_dir) = std::env::var("MATE_CONFIG_DIR") {
+            return Ok(PathBuf::from(custom_config_dir));
+        }
+
         ProjectDirs::from("dev", "mate", "mate")
             .map(|proj_dirs| proj_dirs.config_dir().to_path_buf())
             .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))

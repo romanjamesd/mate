@@ -31,8 +31,15 @@ pub struct DefaultKeyStorage;
 
 impl KeyStorage for DefaultKeyStorage {
     fn default_key_path() -> Result<PathBuf, StorageError> {
+        // Check for test override environment variable first (consistent with database and config)
+        if let Ok(custom_data_dir) = std::env::var("MATE_DATA_DIR") {
+            let key_path = PathBuf::from(custom_data_dir).join("identity.key");
+            return Ok(key_path);
+        }
+
+        // Use consistent project directories with the main app (dev.mate.mate instead of rust-chess)
         let proj_dirs =
-            ProjectDirs::from("", "", "rust-chess").ok_or(StorageError::DirectoryNotFound)?;
+            ProjectDirs::from("dev", "mate", "mate").ok_or(StorageError::DirectoryNotFound)?;
 
         let key_path = proj_dirs.data_dir().join("identity.key");
         Ok(key_path)

@@ -1,0 +1,3 @@
+//! Unit tests for CLI components
+
+pub mod app_foundation;

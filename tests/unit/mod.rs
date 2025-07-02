@@ -1,6 +1,7 @@
 //! Unit tests for individual components
 
 pub mod chess; // Chess data structures unit tests
+pub mod cli; // CLI application components unit tests
 pub mod crypto; // ADD: Focused crypto unit tests
 pub mod display;
 pub mod messages;
