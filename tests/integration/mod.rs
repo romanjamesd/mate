@@ -17,6 +17,9 @@ pub mod cli_tests;
 // CLI command handler tests
 pub mod cli_commands;
 
+// CLI application lifecycle tests
+pub mod cli_app_lifecycle;
+
 // Interactive mode initialization tests
 pub mod interactive_initialization;
 

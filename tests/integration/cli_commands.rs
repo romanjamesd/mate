@@ -42,29 +42,41 @@ async fn test_games_empty_database_shows_no_games_message() {
 
     let result = app.handle_games().await;
 
-    assert!(result.is_ok(), "handle_games should succeed with empty database");
+    assert!(
+        result.is_ok(),
+        "handle_games should succeed with empty database"
+    );
 }
 
 #[tokio::test]
 async fn test_games_single_game_formatted_display() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
 
-    let _game_id = create_test_game(&app, "test_opponent", PlayerColor::White, GameStatus::Active)
-        .await
-        .expect("Failed to create test game");
+    let _game_id = create_test_game(
+        &app,
+        "test_opponent",
+        PlayerColor::White,
+        GameStatus::Active,
+    )
+    .await
+    .expect("Failed to create test game");
 
     let result = app.handle_games().await;
 
-    assert!(result.is_ok(), "handle_games should succeed with single game");
+    assert!(
+        result.is_ok(),
+        "handle_games should succeed with single game"
+    );
 }
 
 #[tokio::test]
 async fn test_games_multiple_games_ordered_by_recent_activity() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
 
-    let _pending_game = create_test_game(&app, "opponent1", PlayerColor::White, GameStatus::Pending)
-        .await
-        .expect("Failed to create pending game");
+    let _pending_game =
+        create_test_game(&app, "opponent1", PlayerColor::White, GameStatus::Pending)
+            .await
+            .expect("Failed to create pending game");
 
     let _active_game = create_test_game(&app, "opponent2", PlayerColor::Black, GameStatus::Active)
         .await
@@ -72,7 +84,10 @@ async fn test_games_multiple_games_ordered_by_recent_activity() {
 
     let result = app.handle_games().await;
 
-    assert!(result.is_ok(), "handle_games should succeed with multiple games");
+    assert!(
+        result.is_ok(),
+        "handle_games should succeed with multiple games"
+    );
 
     let games = app.database.get_all_games().expect("Failed to get games");
     assert_eq!(games.len(), 2, "Should have 2 games in database");
@@ -86,35 +101,56 @@ async fn test_games_multiple_games_ordered_by_recent_activity() {
 async fn test_board_no_game_id_finds_most_recent() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
 
-    let _game_id = create_test_game(&app, "test_opponent", PlayerColor::White, GameStatus::Active)
-        .await
-        .expect("Failed to create test game");
+    let _game_id = create_test_game(
+        &app,
+        "test_opponent",
+        PlayerColor::White,
+        GameStatus::Active,
+    )
+    .await
+    .expect("Failed to create test game");
 
     let result = app.handle_board(None).await;
 
-    assert!(result.is_ok(), "handle_board should find active game when no ID specified");
+    assert!(
+        result.is_ok(),
+        "handle_board should find active game when no ID specified"
+    );
 }
 
 #[tokio::test]
 async fn test_board_specific_game_id_displays_correct_state() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
 
-    let game_id = create_test_game(&app, "test_opponent", PlayerColor::Black, GameStatus::Active)
-        .await
-        .expect("Failed to create test game");
+    let game_id = create_test_game(
+        &app,
+        "test_opponent",
+        PlayerColor::Black,
+        GameStatus::Active,
+    )
+    .await
+    .expect("Failed to create test game");
 
     let result = app.handle_board(Some(game_id)).await;
 
-    assert!(result.is_ok(), "handle_board should work with specific game ID");
+    assert!(
+        result.is_ok(),
+        "handle_board should work with specific game ID"
+    );
 }
 
 #[tokio::test]
 async fn test_board_invalid_game_id_error_handling() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
 
-    let result = app.handle_board(Some("nonexistent_game_id".to_string())).await;
+    let result = app
+        .handle_board(Some("nonexistent_game_id".to_string()))
+        .await;
 
-    assert!(result.is_err(), "handle_board should fail with nonexistent game ID");
+    assert!(
+        result.is_err(),
+        "handle_board should fail with nonexistent game ID"
+    );
 }
 
 // =============================================================================
@@ -125,9 +161,14 @@ async fn test_board_invalid_game_id_error_handling() {
 async fn test_move_no_active_games_error_handling() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
 
-    let _game_id = create_test_game(&app, "test_opponent", PlayerColor::White, GameStatus::Completed)
-        .await
-        .expect("Failed to create test game");
+    let _game_id = create_test_game(
+        &app,
+        "test_opponent",
+        PlayerColor::White,
+        GameStatus::Completed,
+    )
+    .await
+    .expect("Failed to create test game");
 
     let result = app.handle_move(None, "e4".to_string()).await;
 
@@ -144,9 +185,14 @@ async fn test_move_no_active_games_error_handling() {
 async fn test_move_invalid_game_states_error_handling() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
 
-    let game_id = create_test_game(&app, "test_opponent", PlayerColor::White, GameStatus::Pending)
-        .await
-        .expect("Failed to create test game");
+    let game_id = create_test_game(
+        &app,
+        "test_opponent",
+        PlayerColor::White,
+        GameStatus::Pending,
+    )
+    .await
+    .expect("Failed to create test game");
 
     let result = app.handle_move(Some(game_id), "e4".to_string()).await;
 
@@ -163,9 +209,14 @@ async fn test_move_invalid_game_states_error_handling() {
 async fn test_move_empty_move_notation_error_handling() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
 
-    let game_id = create_test_game(&app, "test_opponent", PlayerColor::White, GameStatus::Active)
-        .await
-        .expect("Failed to create test game");
+    let game_id = create_test_game(
+        &app,
+        "test_opponent",
+        PlayerColor::White,
+        GameStatus::Active,
+    )
+    .await
+    .expect("Failed to create test game");
 
     let result = app.handle_move(Some(game_id), "".to_string()).await;
 
@@ -186,7 +237,9 @@ async fn test_move_empty_move_notation_error_handling() {
 async fn test_accept_nonexistent_game_error_handling() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
 
-    let result = app.handle_accept("nonexistent_game_id".to_string(), None).await;
+    let result = app
+        .handle_accept("nonexistent_game_id".to_string(), None)
+        .await;
 
     assert!(result.is_err(), "Should fail with nonexistent game ID");
     assert!(
@@ -199,9 +252,14 @@ async fn test_accept_nonexistent_game_error_handling() {
 async fn test_accept_non_pending_game_error_handling() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
 
-    let game_id = create_test_game(&app, "test_opponent", PlayerColor::White, GameStatus::Active)
-        .await
-        .expect("Failed to create test game");
+    let game_id = create_test_game(
+        &app,
+        "test_opponent",
+        PlayerColor::White,
+        GameStatus::Active,
+    )
+    .await
+    .expect("Failed to create test game");
 
     let result = app.handle_accept(game_id, None).await;
 
@@ -224,16 +282,24 @@ async fn test_history_no_games_shows_helpful_message() {
 
     let result = app.handle_history(None).await;
 
-    assert!(result.is_ok(), "handle_history should handle empty database gracefully");
+    assert!(
+        result.is_ok(),
+        "handle_history should handle empty database gracefully"
+    );
 }
 
 #[tokio::test]
 async fn test_history_nonexistent_game_error_handling() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
 
-    let result = app.handle_history(Some("nonexistent_game_id".to_string())).await;
+    let result = app
+        .handle_history(Some("nonexistent_game_id".to_string()))
+        .await;
 
-    assert!(result.is_err(), "handle_history should fail with nonexistent game ID");
+    assert!(
+        result.is_err(),
+        "handle_history should fail with nonexistent game ID"
+    );
 }
 
 // =============================================================================
@@ -244,7 +310,9 @@ async fn test_history_nonexistent_game_error_handling() {
 async fn test_invite_invalid_color_input_rejection() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
 
-    let result = app.handle_invite("127.0.0.1:8080".to_string(), Some("invalid".to_string())).await;
+    let result = app
+        .handle_invite("127.0.0.1:8080".to_string(), Some("invalid".to_string()))
+        .await;
 
     assert!(result.is_err(), "Should fail with invalid color");
     let error_msg = result.unwrap_err().to_string();
@@ -253,4 +321,4 @@ async fn test_invite_invalid_color_input_rejection() {
         "Error should indicate invalid color: {}",
         error_msg
     );
-} 
+}
