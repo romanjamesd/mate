@@ -2,3 +2,4 @@
 
 pub mod app_foundation;
 pub mod configuration;
+pub mod validation;
