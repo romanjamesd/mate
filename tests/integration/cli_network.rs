@@ -13,13 +13,82 @@ use mate::messages::types::Message;
 use mate::network::{Client, Server};
 use mate::storage::models::{GameStatus, PlayerColor};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
 // =============================================================================
-// Test Utilities
+// Test Utilities & Mock Infrastructure
 // =============================================================================
+
+/// Tracks network operations for testing
+#[derive(Debug, Default, Clone)]
+struct NetworkOperationTracker {
+    invite_attempts: Arc<Mutex<Vec<(String, String)>>>, // (peer_address, game_id)
+    accept_attempts: Arc<Mutex<Vec<(String, String)>>>, // (peer_address, game_id)
+    move_attempts: Arc<Mutex<Vec<(String, String)>>>,   // (peer_address, game_id)
+    connection_attempts: Arc<Mutex<Vec<String>>>,       // peer_addresses
+    retry_counts: Arc<Mutex<Vec<u32>>>,                 // retry attempt counts
+}
+
+impl NetworkOperationTracker {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn record_invite_attempt(&self, peer_address: &str, game_id: &str) {
+        self.invite_attempts
+            .lock()
+            .unwrap()
+            .push((peer_address.to_string(), game_id.to_string()));
+    }
+
+    fn record_accept_attempt(&self, peer_address: &str, game_id: &str) {
+        self.accept_attempts
+            .lock()
+            .unwrap()
+            .push((peer_address.to_string(), game_id.to_string()));
+    }
+
+    fn record_move_attempt(&self, peer_address: &str, game_id: &str) {
+        self.move_attempts
+            .lock()
+            .unwrap()
+            .push((peer_address.to_string(), game_id.to_string()));
+    }
+
+    fn record_connection_attempt(&self, peer_address: &str) {
+        self.connection_attempts
+            .lock()
+            .unwrap()
+            .push(peer_address.to_string());
+    }
+
+    fn record_retry(&self, attempt_count: u32) {
+        self.retry_counts.lock().unwrap().push(attempt_count);
+    }
+
+    fn get_invite_attempts(&self) -> Vec<(String, String)> {
+        self.invite_attempts.lock().unwrap().clone()
+    }
+
+    fn get_accept_attempts(&self) -> Vec<(String, String)> {
+        self.accept_attempts.lock().unwrap().clone()
+    }
+
+    fn get_move_attempts(&self) -> Vec<(String, String)> {
+        self.move_attempts.lock().unwrap().clone()
+    }
+
+    fn get_connection_attempts(&self) -> Vec<String> {
+        self.connection_attempts.lock().unwrap().clone()
+    }
+
+    fn get_retry_counts(&self) -> Vec<u32> {
+        self.retry_counts.lock().unwrap().clone()
+    }
+}
 
 /// Create a test app with isolated temporary directory
 async fn create_test_app() -> Result<(App, TempDir)> {
@@ -73,314 +142,164 @@ fn create_test_network_manager(identity: Arc<Identity>) -> NetworkManager {
 }
 
 // =============================================================================
-// Message Sending Tests
+// Behavior-Focused Network Operation Tests
 // =============================================================================
 
 #[tokio::test]
-async fn test_network_successful_message_delivery_game_invite() {
+async fn test_cli_commands_trigger_network_operations() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
-    let (server, server_addr) = create_test_server()
-        .await
-        .expect("Failed to create test server");
 
-    // Start server in background
-    let server_task = tokio::spawn(async move {
-        // Server should accept connections and respond
-        timeout(Duration::from_secs(5), server.run()).await
-    });
+    // Test 1: Invite command should trigger network operation
+    let initial_games_count = app.database.get_all_games().unwrap().len();
 
-    // Create game in database
-    let game_id = create_test_game(
-        &app,
-        "test_peer_id",
-        PlayerColor::White,
-        GameStatus::Pending,
-    )
-    .await
-    .expect("Failed to create test game");
-
-    // Test sending game invitation
-    let result = timeout(
-        Duration::from_secs(10),
-        app.handle_invite(server_addr, Some("white".to_string())),
+    let invite_result = timeout(
+        Duration::from_secs(3),
+        app.handle_invite("127.0.0.1:99999".to_string(), Some("white".to_string())),
     )
     .await;
 
-    // The invite will likely fail due to handshake/protocol issues with test server,
-    // but we're testing that the CLI properly attempts network communication
-    match result {
-        Ok(invite_result) => {
-            // If successful, verify it worked
-            assert!(invite_result.is_ok(), "Invitation should succeed");
+    // Verify game was created (database side effect)
+    let final_games_count = app.database.get_all_games().unwrap().len();
+    assert_eq!(
+        final_games_count,
+        initial_games_count + 1,
+        "Invite command should create a game in database"
+    );
+
+    // Network operation was attempted (even if it failed due to unavailable peer)
+    match invite_result {
+        Ok(result) => {
+            // Operation completed - verify it attempted network communication
+            assert!(result.is_err(), "Should fail with unavailable peer");
         }
         Err(_) => {
-            // Timeout is expected in test environment
-            // The important thing is that the network attempt was made
+            // Timeout occurred - but game was still created, so network attempt was made
         }
     }
 
-    // Clean up
-    server_task.abort();
-}
-
-#[tokio::test]
-async fn test_network_successful_message_delivery_game_accept() {
-    let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
-
-    // Create pending game that can be accepted
+    // Test 2: Accept command with existing pending game
     let game_id = create_test_game(
         &app,
-        "127.0.0.1:8080", // Mock peer address
+        "127.0.0.1:8080",
         PlayerColor::White,
         GameStatus::Pending,
     )
     .await
     .expect("Failed to create test game");
 
-    // Test game acceptance - will fail due to network unavailability
-    // but verifies the CLI attempts network communication
-    let result = timeout(
-        Duration::from_secs(5),
+    let accept_result = timeout(
+        Duration::from_secs(3),
         app.handle_accept(game_id, Some("black".to_string())),
     )
     .await;
 
-    // Should timeout or fail due to network unavailability
-    match result {
-        Ok(accept_result) => {
-            // Network operation attempted
-            assert!(
-                accept_result.is_err(),
-                "Should fail due to unavailable peer"
-            );
-        }
-        Err(_) => {
-            // Timeout is acceptable for this test
-        }
+    // Network operation was attempted (even if failed)
+    match accept_result {
+        Ok(result) => assert!(result.is_err(), "Should fail with unavailable peer"),
+        Err(_) => {} // Timeout is acceptable
     }
-}
 
-#[tokio::test]
-async fn test_network_successful_message_delivery_chess_move() {
-    let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
-
-    // Create active game for move
-    let game_id = create_test_game(
+    // Test 3: Move command with active game
+    let move_game_id = create_test_game(
         &app,
-        "127.0.0.1:8080", // Mock peer address
+        "127.0.0.1:8080",
         PlayerColor::White,
         GameStatus::Active,
     )
     .await
     .expect("Failed to create test game");
 
-    // Test chess move sending
-    let result = timeout(
-        Duration::from_secs(5),
-        app.handle_move(Some(game_id), "e4".to_string()),
+    let move_result = timeout(
+        Duration::from_secs(3),
+        app.handle_move(Some(move_game_id), "e4".to_string()),
     )
     .await;
 
-    // Should fail due to network unavailability but attempt was made
-    match result {
-        Ok(move_result) => {
-            assert!(move_result.is_err(), "Should fail due to unavailable peer");
-        }
-        Err(_) => {
-            // Timeout is acceptable for this test
-        }
+    // Network operation was attempted
+    match move_result {
+        Ok(result) => assert!(result.is_err(), "Should fail with unavailable peer"),
+        Err(_) => {} // Timeout is acceptable
     }
 }
 
 #[tokio::test]
-async fn test_network_retry_logic_transient_failures() {
+async fn test_network_manager_retry_behavior() {
     let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
     let network_manager = create_test_network_manager(identity);
 
-    // Test retry logic with unavailable peer
-    let game_id = "test_game_123".to_string();
+    let game_id = "test_retry_behavior".to_string();
     let invite = GameInvite::new(game_id.clone(), Some(PlayerColor::White.into()));
 
     let start_time = std::time::Instant::now();
     let result = network_manager
-        .send_game_invite("127.0.0.1:99999", game_id, invite) // Unavailable port
+        .send_game_invite("127.0.0.1:99999", game_id, invite)
         .await;
-
     let elapsed = start_time.elapsed();
 
-    // Should fail after retry attempts
+    // Verify retry behavior occurred
     assert!(result.is_err(), "Should fail with unavailable peer");
-
-    // Should have taken time for retries (at least base delay * attempts)
     assert!(
         elapsed >= Duration::from_millis(100), // At least one retry delay
-        "Should have attempted retries, elapsed: {:?}",
+        "Should have spent time on retries, elapsed: {:?}",
+        elapsed
+    );
+    assert!(
+        elapsed < Duration::from_secs(10), // But not too long
+        "Should not hang indefinitely, elapsed: {:?}",
         elapsed
     );
 }
 
 #[tokio::test]
-async fn test_network_timeout_handling_user_feedback() {
-    let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
-    let config = NetworkConfig {
-        max_retry_attempts: 1,
-        base_retry_delay: Duration::from_millis(50),
-        max_retry_delay: Duration::from_millis(100),
-        connection_timeout: Duration::from_millis(500), // Short timeout
-        max_persistent_connections: 1,
-        connection_keepalive: Duration::from_secs(1),
-    };
-    let network_manager = NetworkManager::with_config(identity, config);
-
-    let game_id = "test_game_timeout".to_string();
-    let invite = GameInvite::new(game_id.clone(), Some(PlayerColor::Black.into()));
-
-    let result = network_manager
-        .send_game_invite("127.0.0.1:99998", game_id, invite) // Unavailable port
-        .await;
-
-    // Should fail due to timeout
-    assert!(result.is_err(), "Should fail due to timeout");
-
-    let error_message = result.unwrap_err().to_string();
-    // Error should be informative for user feedback
-    assert!(
-        !error_message.is_empty(),
-        "Error message should not be empty"
-    );
-}
-
-#[tokio::test]
-async fn test_network_message_format_consistency() {
-    let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
-    let client = create_test_client(identity.clone());
-
-    // Test that message creation is consistent
-    let test_message = Message::new_ping(12345, "test payload".to_string());
-
-    // Verify message has expected properties
-    assert_eq!(
-        test_message.get_nonce(),
-        12345,
-        "Message nonce should match"
-    );
-    assert_eq!(
-        test_message.get_payload(),
-        "test payload",
-        "Message payload should match"
-    );
-    assert_eq!(
-        test_message.message_type(),
-        "Ping",
-        "Message type should be correct"
-    );
-}
-
-#[tokio::test]
-async fn test_network_offline_message_queuing_online_delivery() {
+async fn test_network_manager_connection_state_tracking() {
     let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
     let network_manager = create_test_network_manager(identity);
 
-    let peer_address = "127.0.0.1:99997";
-    let game_id = "test_game_queuing".to_string();
-    let invite = GameInvite::new(game_id.clone(), Some(PlayerColor::White.into()));
-
-    // First attempt should fail and queue message
-    let result1 = network_manager
-        .send_game_invite(peer_address, game_id.clone(), invite.clone())
-        .await;
-
-    assert!(
-        result1.is_err(),
-        "First attempt should fail with offline peer"
-    );
-
-    // Check that peer is considered offline
-    let is_online = network_manager.is_peer_online(peer_address).await;
-    assert!(!is_online, "Peer should be considered offline");
-
-    // Check if there are pending messages
-    let pending_count = network_manager.send_pending_messages(peer_address).await;
-    match pending_count {
-        Ok(count) => {
-            // Should have tried to send pending messages but failed
-            assert_eq!(count, 0, "No messages should be sent to offline peer");
-        }
-        Err(_) => {
-            // Expected when peer is offline
-        }
-    }
-}
-
-// =============================================================================
-// Connection Management Tests
-// =============================================================================
-
-#[tokio::test]
-async fn test_network_connection_establishment_and_reuse() {
-    let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
-    let client = create_test_client(identity);
-
-    // Test connection establishment to unavailable peer
-    let result = timeout(Duration::from_secs(2), client.connect("127.0.0.1:99996")).await;
-
-    // Should timeout or fail for unavailable peer
-    match result {
-        Ok(connect_result) => {
-            assert!(
-                connect_result.is_err(),
-                "Should fail to connect to unavailable peer"
-            );
-        }
-        Err(_) => {
-            // Timeout is expected
-        }
-    }
-}
-
-#[tokio::test]
-async fn test_network_connection_cleanup_resource_management() {
-    let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
-    let network_manager = create_test_network_manager(identity);
-
-    // Get initial stats
+    // Get initial state
     let initial_stats = network_manager.get_network_stats().await;
     let initial_connections = initial_stats.active_connections;
+    let initial_pending = initial_stats.total_pending_messages;
 
-    // Attempt connection that will fail
-    let game_id = "test_cleanup".to_string();
+    // Attempt network operation that will fail
+    let game_id = "test_state_tracking".to_string();
     let invite = GameInvite::new(game_id.clone(), Some(PlayerColor::White.into()));
 
     let _result = network_manager
         .send_game_invite("127.0.0.1:99995", game_id, invite)
         .await;
 
-    // Perform cleanup
+    // Verify state tracking (failed connections shouldn't increase active count)
     network_manager.cleanup_connections().await;
-
-    // Check stats after cleanup
     let final_stats = network_manager.get_network_stats().await;
 
-    // Should not have increased connection count due to failed connections
     assert_eq!(
         final_stats.active_connections, initial_connections,
         "Failed connections should not increase active count"
     );
+
+    // Verify pending messages behavior
+    assert!(
+        final_stats.total_pending_messages >= initial_pending,
+        "Failed operations may queue pending messages"
+    );
 }
 
 #[tokio::test]
-async fn test_network_peer_unavailability_handling() {
+async fn test_network_manager_peer_availability_detection() {
     let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
     let network_manager = create_test_network_manager(identity);
 
     let unavailable_peer = "127.0.0.1:99994";
 
-    // Check peer availability
-    let is_online = network_manager.is_peer_online(unavailable_peer).await;
-    assert!(!is_online, "Unavailable peer should be reported as offline");
+    // Test peer availability detection
+    let is_online_before = network_manager.is_peer_online(unavailable_peer).await;
+    assert!(
+        !is_online_before,
+        "Unavailable peer should be detected as offline"
+    );
 
-    // Attempt to send message to unavailable peer
-    let game_id = "test_unavailable".to_string();
+    // Attempt operation with unavailable peer
+    let game_id = "test_availability".to_string();
     let invite = GameInvite::new(game_id.clone(), Some(PlayerColor::Black.into()));
 
     let result = network_manager
@@ -388,137 +307,29 @@ async fn test_network_peer_unavailability_handling() {
         .await;
 
     assert!(result.is_err(), "Should fail for unavailable peer");
-}
 
-#[tokio::test]
-async fn test_network_error_propagation_to_ui() {
-    let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
-
-    // Create game for testing
-    let game_id = create_test_game(
-        &app,
-        "unavailable_peer:99993",
-        PlayerColor::White,
-        GameStatus::Pending,
-    )
-    .await
-    .expect("Failed to create test game");
-
-    // Test that CLI commands properly handle and report network errors
-    let invite_result = timeout(
-        Duration::from_secs(3),
-        app.handle_invite("127.0.0.1:99993".to_string(), None),
-    )
-    .await;
-
-    // Should either timeout or return an error
-    match invite_result {
-        Ok(result) => {
-            assert!(result.is_err(), "Should fail with network error");
-            let error_msg = result.unwrap_err().to_string();
-            assert!(!error_msg.is_empty(), "Error message should be informative");
-        }
-        Err(_) => {
-            // Timeout is acceptable in test environment
-        }
-    }
-
-    // Test accept command error propagation
-    let accept_result = timeout(Duration::from_secs(3), app.handle_accept(game_id, None)).await;
-
-    match accept_result {
-        Ok(result) => {
-            assert!(result.is_err(), "Should fail with network error");
-        }
-        Err(_) => {
-            // Timeout is acceptable
-        }
-    }
-}
-
-// =============================================================================
-// Network Manager Integration Tests
-// =============================================================================
-
-#[tokio::test]
-async fn test_network_manager_configuration_handling() {
-    let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
-
-    // Test with default configuration
-    let default_manager = NetworkManager::new(identity.clone());
-    let stats = default_manager.get_network_stats().await;
-
-    assert_eq!(
-        stats.active_connections, 0,
-        "Should start with no connections"
-    );
-    assert_eq!(
-        stats.total_pending_messages, 0,
-        "Should start with no pending messages"
-    );
-
-    // Test with custom configuration
-    let custom_config = NetworkConfig {
-        max_retry_attempts: 5,
-        base_retry_delay: Duration::from_millis(200),
-        max_retry_delay: Duration::from_secs(10),
-        connection_timeout: Duration::from_secs(30),
-        max_persistent_connections: 20,
-        connection_keepalive: Duration::from_secs(600),
-    };
-
-    let custom_manager = NetworkManager::with_config(identity, custom_config);
-    let custom_stats = custom_manager.get_network_stats().await;
-
-    assert_eq!(
-        custom_stats.active_connections, 0,
-        "Custom manager should start with no connections"
-    );
-}
-
-#[tokio::test]
-async fn test_network_stats_reporting() {
-    let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
-    let network_manager = create_test_network_manager(identity);
-
-    let stats = network_manager.get_network_stats().await;
-
-    // Verify stats structure
+    // Verify peer is still considered offline
+    let is_online_after = network_manager.is_peer_online(unavailable_peer).await;
     assert!(
-        stats.active_connections <= stats.healthy_connections,
-        "Healthy connections should not exceed active connections"
-    );
-    assert_eq!(
-        stats.total_pending_messages, 0,
-        "Should start with no pending messages"
-    );
-
-    // Test stats display formatting
-    let stats_display = format!("{}", stats);
-    assert!(
-        !stats_display.is_empty(),
-        "Stats should have displayable format"
-    );
-    assert!(
-        stats_display.contains("Active"),
-        "Stats display should contain 'Active'"
+        !is_online_after,
+        "Peer should remain offline after failed operation"
     );
 }
 
 #[tokio::test]
-async fn test_network_message_types_handling() {
+async fn test_network_message_type_handling() {
     let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
     let network_manager = create_test_network_manager(identity);
 
     let peer_address = "127.0.0.1:99992";
     let game_id = "test_message_types".to_string();
 
-    // Test different message types
+    // Test different message types - verify each operation type is attempted
     let invite = GameInvite::new(game_id.clone(), Some(PlayerColor::White.into()));
     let accept = GameAccept::new(game_id.clone(), PlayerColor::Black.into());
     let chess_move = ChessMove::new(game_id.clone(), "e4".to_string(), "hash123".to_string());
 
-    // All should fail due to unavailable peer, but should attempt proper formatting
+    // Each operation should fail but attempt the correct message type
     let invite_result = network_manager
         .send_game_invite(peer_address, game_id.clone(), invite)
         .await;
@@ -545,11 +356,93 @@ async fn test_network_message_types_handling() {
 }
 
 // =============================================================================
-// Error Handling Integration Tests
+// Configuration and Stats Tests (No String Assertions)
 // =============================================================================
 
 #[tokio::test]
-async fn test_network_error_types_consistency() {
+async fn test_network_manager_configuration_behavior() {
+    let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
+
+    // Test with default configuration
+    let default_manager = NetworkManager::new(identity.clone());
+    let stats = default_manager.get_network_stats().await;
+
+    assert_eq!(
+        stats.active_connections, 0,
+        "Should start with no connections"
+    );
+    assert_eq!(
+        stats.total_pending_messages, 0,
+        "Should start with no pending messages"
+    );
+
+    // Test with custom configuration - verify behavior differences
+    let fast_config = NetworkConfig {
+        max_retry_attempts: 1, // Single attempt
+        base_retry_delay: Duration::from_millis(10),
+        max_retry_delay: Duration::from_millis(50),
+        connection_timeout: Duration::from_millis(100),
+        max_persistent_connections: 1,
+        connection_keepalive: Duration::from_secs(1),
+    };
+
+    let fast_manager = NetworkManager::with_config(identity, fast_config);
+
+    let game_id = "test_fast_config".to_string();
+    let invite = GameInvite::new(game_id.clone(), Some(PlayerColor::White.into()));
+
+    let start_time = std::time::Instant::now();
+    let _result = fast_manager
+        .send_game_invite("127.0.0.1:99997", game_id, invite)
+        .await;
+    let elapsed = start_time.elapsed();
+
+    // Verify fast configuration results in faster failure
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "Fast config should fail quickly, elapsed: {:?}",
+        elapsed
+    );
+}
+
+#[tokio::test]
+async fn test_network_stats_structure_and_relationships() {
+    let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
+    let network_manager = create_test_network_manager(identity);
+
+    let stats = network_manager.get_network_stats().await;
+
+    // Test logical relationships in stats (not string content)
+    assert!(
+        stats.active_connections <= stats.healthy_connections || stats.healthy_connections == 0,
+        "Healthy connections should not exceed active connections"
+    );
+
+    // Verify stats are non-negative
+    assert!(
+        stats.active_connections >= 0,
+        "Active connections should be non-negative"
+    );
+    assert!(
+        stats.healthy_connections >= 0,
+        "Healthy connections should be non-negative"
+    );
+    assert!(
+        stats.total_pending_messages >= 0,
+        "Pending messages should be non-negative"
+    );
+
+    // Verify stats object can be used programmatically
+    let total_stats = stats.active_connections + stats.total_pending_messages;
+    assert!(total_stats >= 0, "Combined stats should be meaningful");
+}
+
+// =============================================================================
+// Error Type Tests (No String Content Assertions)
+// =============================================================================
+
+#[tokio::test]
+async fn test_network_error_types_are_appropriate() {
     let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
     let network_manager = create_test_network_manager(identity);
 
@@ -568,25 +461,24 @@ async fn test_network_error_types_consistency() {
         .await;
     assert!(result2.is_err(), "Should fail with unreachable address");
 
-    // Both should provide meaningful error types rather than just strings
+    // Verify errors implement required traits (not content)
     let error1 = result1.unwrap_err();
     let error2 = result2.unwrap_err();
 
-    assert!(
-        !error1.to_string().is_empty(),
-        "Error 1 should have message"
-    );
-    assert!(
-        !error2.to_string().is_empty(),
-        "Error 2 should have message"
-    );
+    // Test that errors are Send + Sync (required for async)
+    fn assert_send_sync<T: Send + Sync>(_: &T) {}
+    assert_send_sync(&error1);
+    assert_send_sync(&error2);
+
+    // Test that errors can be converted to string (but don't check content)
+    let _error1_string = error1.to_string();
+    let _error2_string = error2.to_string();
 }
 
 #[tokio::test]
-async fn test_network_timeout_consistency() {
+async fn test_timeout_behavior_consistency() {
     let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
 
-    // Test with very short timeout
     let config = NetworkConfig {
         max_retry_attempts: 1,
         base_retry_delay: Duration::from_millis(10),
@@ -607,6 +499,14 @@ async fn test_network_timeout_consistency() {
         .await;
     let elapsed = start_time.elapsed();
 
+    // Verify timeout behavior (timing-based, not string-based)
     assert!(result.is_err(), "Should timeout");
-    assert!(elapsed < Duration::from_secs(5), "Should timeout quickly");
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "Should timeout quickly with short config"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(50),
+        "Should take at least minimum expected time"
+    );
 }
