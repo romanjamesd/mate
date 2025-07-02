@@ -73,3 +73,5 @@ pub mod chess_protocol_advanced;
 
 // Chess security integration tests
 pub mod chess_security_integration;
+
+pub mod cli_network;
