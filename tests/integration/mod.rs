@@ -20,6 +20,9 @@ pub mod cli_commands;
 // CLI application lifecycle tests
 pub mod cli_app_lifecycle;
 
+// CLI-Database integration tests
+pub mod cli_database;
+
 // Interactive mode initialization tests
 pub mod interactive_initialization;
 
