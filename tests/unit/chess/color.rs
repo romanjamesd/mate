@@ -72,8 +72,8 @@ fn test_color_display_output() {
     assert_eq!(Color::Black.to_string(), "Black");
 
     // Test format! macro usage
-    assert_eq!(format!("{}", Color::White), "White");
-    assert_eq!(format!("{}", Color::Black), "Black");
+    assert_eq!(format!("{val}", val = Color::White), "White");
+    assert_eq!(format!("{val}", val = Color::Black), "Black");
 }
 
 /// Test bidirectional conversion with storage::PlayerColor
@@ -127,8 +127,8 @@ fn test_color_trait_implementations() {
     let black = Color::Black;
 
     // Test Debug
-    assert!(format!("{:?}", white).contains("White"));
-    assert!(format!("{:?}", black).contains("Black"));
+    assert!(format!("{white:?}").contains("White"));
+    assert!(format!("{black:?}").contains("Black"));
 
     // Test Clone
     let white_clone = white;

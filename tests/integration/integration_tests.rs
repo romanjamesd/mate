@@ -81,7 +81,7 @@ async fn test_complete_workflow_connection_to_termination() {
 
         // Phase 4: Extended messaging to test sustained operation
         for i in 1..=3 {
-            let message = format!("Workflow message {}\n", i);
+            let message = format!("Workflow message {i}\n");
             let _ = stdin.write_all(message.as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
@@ -105,7 +105,7 @@ async fn test_complete_workflow_connection_to_termination() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Complete workflow test output:\n{}", combined_output);
 
@@ -287,7 +287,7 @@ async fn test_combinations_commands_messages_single_session() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Command/message combinations test output:\n{}",
@@ -438,7 +438,7 @@ async fn test_reconnection_followed_by_continued_operation() {
 
         // Phase 5: Extended operation to verify stability
         for i in 1..=3 {
-            let message = format!("Stability test message {}\n", i);
+            let message = format!("Stability test message {i}\n");
             let _ = stdin.write_all(message.as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(350)).await;
         }
@@ -460,7 +460,7 @@ async fn test_reconnection_followed_by_continued_operation() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Reconnection and continued operation test output:\n{}",
@@ -586,7 +586,7 @@ async fn test_appropriate_information_logged_throughout_session() {
 
         // More messaging for comprehensive logging
         for i in 3..=5 {
-            let message = format!("Comprehensive logging message {}\n", i);
+            let message = format!("Comprehensive logging message {i}\n");
             let _ = stdin.write_all(message.as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(350)).await;
         }
@@ -608,7 +608,7 @@ async fn test_appropriate_information_logged_throughout_session() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Comprehensive logging test output:\n{}", combined_output);
 
@@ -807,7 +807,7 @@ async fn test_behavior_consistency_across_terminal_environments() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Analyze output characteristics for this environment
         let environment_analysis = EnvironmentTestResult {
@@ -979,7 +979,7 @@ async fn test_comprehensive_integration_functionality() {
         ];
 
         for (i, message) in test_messages.iter().enumerate() {
-            let msg = format!("{}\n", message);
+            let msg = format!("{message}\n");
             let _ = stdin.write_all(msg.as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(300)).await;
 
@@ -996,7 +996,7 @@ async fn test_comprehensive_integration_functionality() {
 
         // 4. Rapid sequence testing
         for i in 1..=3 {
-            let msg = format!("Rapid integration {}\n", i);
+            let msg = format!("Rapid integration {i}\n");
             let _ = stdin.write_all(msg.as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -1020,7 +1020,7 @@ async fn test_comprehensive_integration_functionality() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Comprehensive integration test output:\n{}",

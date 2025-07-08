@@ -2052,7 +2052,7 @@ pub mod security {
             if input_lower.contains(&pattern.to_lowercase()) {
                 return Err(SecurityViolation::InjectionAttempt {
                     field: field_name.to_string(),
-                    content: format!("Contains injection pattern: {}", pattern),
+                    content: format!("Contains injection pattern: {pattern}"),
                 });
             }
         }
@@ -2155,9 +2155,10 @@ pub mod security {
 
         for operator in &basic_sql_operators {
             if input_lower.contains(operator) {
+                let operator_trimmed = operator.trim();
                 return Err(SecurityViolation::InjectionAttempt {
                     field: field_name.to_string(),
-                    content: format!("Contains potential SQL operator: {}", operator.trim()),
+                    content: format!("Contains potential SQL operator: {operator_trimmed}"),
                 });
             }
         }
@@ -2192,7 +2193,7 @@ pub mod security {
             if input_lower.contains(pattern) {
                 return Err(SecurityViolation::InjectionAttempt {
                     field: field_name.to_string(),
-                    content: format!("Detected {}: contains '{}'", description, pattern),
+                    content: format!("Detected {description}: contains '{pattern}'"),
                 });
             }
         }
@@ -2396,7 +2397,7 @@ pub mod security {
         for (i, chess_move) in move_history.iter().enumerate() {
             validate_safe_text_input(
                 chess_move,
-                &format!("move_history[{}]", i),
+                &format!("move_history[{i}]"),
                 MAX_MOVE_NOTATION_LENGTH,
             )?;
 

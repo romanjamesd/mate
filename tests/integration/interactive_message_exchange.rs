@@ -74,7 +74,7 @@ async fn test_successful_message_send_and_echo_response() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Message send and echo response output:\n{}",
@@ -163,7 +163,7 @@ async fn test_response_timing_measured() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Response timing measurement output:\n{}", combined_output);
 
@@ -254,7 +254,7 @@ async fn test_message_statistics_tracked() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Message statistics tracking output:\n{}", combined_output);
 
@@ -339,7 +339,7 @@ async fn test_performance_metrics_accumulate() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Performance metrics accumulation output:\n{}",
@@ -412,7 +412,7 @@ async fn test_clear_indication_of_received_responses() {
 
     if let Some(stdin) = child.stdin.as_mut() {
         for message in &test_messages {
-            let _ = stdin.write_all(format!("{}\n", message).as_bytes()).await;
+            let _ = stdin.write_all(format!("{message}\n").as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(400)).await;
         }
 
@@ -429,7 +429,7 @@ async fn test_clear_indication_of_received_responses() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Clear response indication output:\n{}", combined_output);
 
@@ -502,7 +502,7 @@ async fn test_multiple_exchanges_maintain_accurate_statistics() {
         // Send first batch of messages
         for i in 1..=3 {
             let _ = stdin
-                .write_all(format!("Batch 1 Message {}\n", i).as_bytes())
+                .write_all(format!("Batch 1 Message {i}\n").as_bytes())
                 .await;
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
@@ -514,7 +514,7 @@ async fn test_multiple_exchanges_maintain_accurate_statistics() {
         // Send second batch of messages
         for i in 1..=4 {
             let _ = stdin
-                .write_all(format!("Batch 2 Message {}\n", i).as_bytes())
+                .write_all(format!("Batch 2 Message {i}\n").as_bytes())
                 .await;
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
@@ -536,7 +536,7 @@ async fn test_multiple_exchanges_maintain_accurate_statistics() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Multiple exchanges statistics output:\n{}", combined_output);
 
@@ -653,7 +653,7 @@ async fn test_comprehensive_interactive_message_exchange() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Comprehensive message exchange output:\n{}",

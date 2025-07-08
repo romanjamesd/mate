@@ -94,10 +94,9 @@ pub fn display_games_list(games: &[GameRecord]) {
                 }
             })
             .unwrap_or_else(|| {
-                format!(
-                    "{}...",
-                    &game.game.opponent_peer_id[..8.min(game.game.opponent_peer_id.len())]
-                )
+                let truncated =
+                    &game.game.opponent_peer_id[..8.min(game.game.opponent_peer_id.len())];
+                format!("{truncated}...")
             });
 
         let status = match game.game.status {

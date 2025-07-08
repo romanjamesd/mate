@@ -251,7 +251,7 @@ fn test_status_icon_display() {
 
     for (i, status) in statuses.into_iter().enumerate() {
         let games = vec![create_test_game_record(
-            &format!("game{}", i),
+            &format!("game{i}"),
             Some("Player".to_string()),
             status,
             PlayerColor::White,

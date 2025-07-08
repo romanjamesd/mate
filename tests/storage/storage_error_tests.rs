@@ -33,8 +33,7 @@ impl TestEnvironment {
 
         // Include the test function name or a unique identifier in the path
         let unique_temp_dir = temp_dir.path().join(format!(
-            "test_errors_{}_{:x}_{:?}_{}_{}",
-            timestamp, random_id, thread_id, process_id, delay_ms
+            "test_errors_{timestamp}_{random_id:x}_{thread_id:?}_{process_id}_{delay_ms}"
         ));
         std::fs::create_dir_all(&unique_temp_dir).expect("Failed to create unique test dir");
 
@@ -180,7 +179,7 @@ fn test_corrupted_database_handling() {
         .as_nanos();
     let unique_temp_dir = temp_dir
         .path()
-        .join(format!("test_corrupted_{}", timestamp));
+        .join(format!("test_corrupted_{timestamp}"));
     std::fs::create_dir_all(&unique_temp_dir).expect("Failed to create unique test dir");
 
     _env_guard.set_data_dir(&unique_temp_dir);
@@ -710,8 +709,8 @@ fn test_concurrent_query_and_modification() {
         db.store_message(
             game.id.clone(),
             "move".to_string(),
-            format!(r#"{{"move": {}}}"#, i),
-            format!("sig_{}", i),
+            format!(r#"{{"move": {i}}}"#),
+            format!("sig_{i}"),
             "sender".to_string(),
         )
         .unwrap_or_else(|_| panic!("Failed to store message {}", i));

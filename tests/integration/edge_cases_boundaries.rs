@@ -70,7 +70,7 @@ async fn test_very_long_message_content_handling() {
         for (long_message, description) in test_cases {
             println!("Testing {}", description);
 
-            let message_with_newline = format!("{}\n", long_message);
+            let message_with_newline = format!("{long_message}\n");
             let _ = stdin.write_all(message_with_newline.as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(800)).await; // Extra time for long messages
         }
@@ -95,7 +95,7 @@ async fn test_very_long_message_content_handling() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Very long message content test output:\n{}",
@@ -213,7 +213,7 @@ async fn test_rapid_consecutive_message_sending() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Rapid consecutive message sending test output:\n{}",
@@ -222,7 +222,7 @@ async fn test_rapid_consecutive_message_sending() {
 
     // Verify all rapid messages were processed
     let rapid_messages_found = (1..=10)
-        .filter(|i| combined_output.contains(&format!("Rapid message {}", i)))
+        .filter(|i| combined_output.contains(&format!("Rapid message {i}")))
         .count();
 
     assert!(
@@ -328,7 +328,7 @@ async fn test_statistics_accuracy_with_minimal_message_counts() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify zero message statistics
         assert!(
@@ -381,7 +381,7 @@ async fn test_statistics_accuracy_with_minimal_message_counts() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify single message statistics
         assert!(
@@ -436,7 +436,7 @@ async fn test_statistics_accuracy_with_minimal_message_counts() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify two message statistics
         assert!(
@@ -503,7 +503,7 @@ async fn test_session_duration_calculation_edge_cases() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify short duration is displayed with appropriate precision
         assert!(
@@ -559,7 +559,7 @@ async fn test_session_duration_calculation_edge_cases() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Extract all duration values to verify they're increasing
         let duration_lines: Vec<&str> = combined_output
@@ -655,7 +655,7 @@ async fn test_unusual_peer_identification_scenarios() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         println!("{} test output:\n{}", scenario_description, combined_output);
 
@@ -770,7 +770,7 @@ async fn test_reconnection_during_various_phases() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify connection was eventually established or handled gracefully
         let connection_established = combined_output.contains("Connected")
@@ -847,7 +847,7 @@ async fn test_reconnection_during_various_phases() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify messaging phases were handled
         assert!(
@@ -912,7 +912,7 @@ async fn test_reconnection_during_various_phases() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify termination was handled gracefully despite disruption
         assert!(
@@ -976,7 +976,7 @@ async fn test_comprehensive_edge_cases_and_boundaries() {
 
         // 2. Rapid short messages
         for i in 1..=5 {
-            let msg = format!("R{}\n", i);
+            let msg = format!("R{i}\n");
             let _ = stdin.write_all(msg.as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(30)).await;
         }
@@ -1004,7 +1004,7 @@ async fn test_comprehensive_edge_cases_and_boundaries() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Comprehensive edge cases test output:\n{}", combined_output);
 

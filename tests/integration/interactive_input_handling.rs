@@ -73,7 +73,7 @@ async fn test_clear_prompt_displayed() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Prompt display output:\n{}", combined_output);
 
@@ -157,7 +157,7 @@ async fn test_empty_input_ignored() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Empty input handling output:\n{}", combined_output);
 
@@ -245,7 +245,7 @@ async fn test_whitespace_only_input_treated_as_empty() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Whitespace input handling output:\n{}", combined_output);
 
@@ -321,7 +321,7 @@ async fn test_end_of_input_graceful_termination() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("End-of-input handling output:\n{}", combined_output);
 
@@ -389,7 +389,7 @@ async fn test_input_reading_error_handling() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Input error handling output:\n{}", combined_output);
 
@@ -451,7 +451,7 @@ async fn test_non_command_input_sent_as_messages() {
     if let Some(stdin) = child.stdin.as_mut() {
         // Send various non-command messages
         for message in &test_messages {
-            let _ = stdin.write_all(format!("{}\n", message).as_bytes()).await;
+            let _ = stdin.write_all(format!("{message}\n").as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
 
@@ -468,7 +468,7 @@ async fn test_non_command_input_sent_as_messages() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Non-command input handling output:\n{}", combined_output);
 
@@ -578,7 +578,7 @@ async fn test_comprehensive_interactive_input_handling() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Comprehensive input handling output:\n{}", combined_output);
 

@@ -60,7 +60,7 @@ async fn test_cli_all_commands_work_after_app_initialization() {
 
         let stderr = String::from_utf8_lossy(&command_output.stderr);
         let stdout = String::from_utf8_lossy(&command_output.stdout);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Commands should either succeed or fail gracefully (not crash)
         // For empty databases, they should show appropriate messages
@@ -147,7 +147,7 @@ async fn test_cli_command_dispatch_and_error_propagation() {
 
     let stderr = String::from_utf8_lossy(&command_output.stderr);
     let stdout = String::from_utf8_lossy(&command_output.stdout);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Valid command should execute without unknown command errors
     assert!(
@@ -176,7 +176,7 @@ async fn test_cli_command_dispatch_and_error_propagation() {
 
     let stderr = String::from_utf8_lossy(&command_output.stderr);
     let stdout = String::from_utf8_lossy(&command_output.stdout);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Should propagate error appropriately (either through exit code or error message)
     let has_error_indication = !command_output.status.success()
@@ -280,7 +280,7 @@ async fn test_cli_application_startup_operation_shutdown() {
 
         let stderr = String::from_utf8_lossy(&command_output.stderr);
         let stdout = String::from_utf8_lossy(&command_output.stdout);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify startup sequence in logs
         if combined_output.contains("Starting mate application")
@@ -352,7 +352,7 @@ async fn test_cli_logging_and_signal_handling() {
 
     let stderr = String::from_utf8_lossy(&command_output.stderr);
     let stdout = String::from_utf8_lossy(&command_output.stdout);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify logging is working
     let has_logging = combined_output.contains("Starting mate application")
@@ -377,7 +377,7 @@ async fn test_cli_logging_and_signal_handling() {
             Command::new(get_mate_binary_path())
                 .args(["games"])
                 .env("MATE_DATA_DIR", &temp_path)
-                .env("RUST_LOG", format!("mate={}", log_level))
+                .env("RUST_LOG", format!("mate={log_level}"))
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output(),
@@ -473,7 +473,7 @@ async fn test_cli_concurrent_command_execution() {
     for (command_id, command_output, execution_time) in results {
         let stderr = String::from_utf8_lossy(&command_output.stderr);
         let stdout = String::from_utf8_lossy(&command_output.stdout);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Each command should complete successfully
         assert!(
@@ -546,7 +546,7 @@ async fn test_cli_resource_management_across_commands() {
 
         let stderr = String::from_utf8_lossy(&command_output.stderr);
         let stdout = String::from_utf8_lossy(&command_output.stdout);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify no resource leaks or accumulation issues
         assert!(
@@ -604,7 +604,7 @@ async fn test_cli_resource_management_across_commands() {
 
         let stderr = String::from_utf8_lossy(&command_output.stderr);
         let stdout = String::from_utf8_lossy(&command_output.stdout);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify consistent resource management across different command types
         assert!(

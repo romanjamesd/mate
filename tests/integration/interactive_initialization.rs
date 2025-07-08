@@ -74,7 +74,7 @@ async fn test_connection_information_display() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Debug output:\n{}", combined_output);
 
@@ -136,7 +136,7 @@ async fn test_connection_status_communication() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify connection status is clearly communicated
     assert!(
@@ -198,7 +198,7 @@ async fn test_available_functionality_explanation() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify available functionality is explained
     assert!(
@@ -266,7 +266,7 @@ async fn test_usage_instructions_provided() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify usage instructions are provided
     assert!(
@@ -333,7 +333,7 @@ async fn test_visual_separation_between_sections() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify visual separation elements are present
     let has_separation = combined_output.contains("---")
@@ -406,7 +406,7 @@ async fn test_session_tracking_initialization() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify session tracking is initialized
     assert!(
@@ -471,7 +471,7 @@ async fn test_comprehensive_interactive_initialization() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Full initialization output:\n{}", combined_output);
 

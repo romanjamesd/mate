@@ -35,8 +35,7 @@ impl TestEnvironment {
         let random_suffix: u32 = rand::random();
 
         let unique_test_dir = temp_dir.path().join(format!(
-            "app_test_{}_{:x}_{:?}_{}_{}",
-            timestamp, random_id, thread_id, process_id, random_suffix
+            "app_test_{timestamp}_{random_id:x}_{thread_id:?}_{process_id}_{random_suffix}"
         ));
 
         std::fs::create_dir_all(&unique_test_dir).expect("Failed to create unique test dir");

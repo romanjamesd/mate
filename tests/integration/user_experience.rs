@@ -79,7 +79,7 @@ async fn test_user_communications_clear_and_informative() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("User communications test output:\n{}", combined_output);
 
@@ -215,7 +215,7 @@ async fn test_connection_state_changes_clearly_indicated() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Connection state changes test output:\n{}", combined_output);
 
@@ -337,7 +337,7 @@ async fn test_consistent_visual_formatting_throughout_session() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Visual formatting consistency test output:\n{}",
@@ -503,7 +503,7 @@ async fn test_timing_information_consistently_presented() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Timing information consistency test output:\n{}",
@@ -644,7 +644,7 @@ async fn test_session_flow_intuitive_and_responsive() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Session flow test output:\n{}", combined_output);
 
@@ -814,7 +814,7 @@ async fn test_error_recovery_doesnt_create_user_confusion() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Error recovery confusion test output:\n{}", combined_output);
 
@@ -975,7 +975,7 @@ async fn test_comprehensive_user_experience() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Comprehensive user experience test output:\n{}",

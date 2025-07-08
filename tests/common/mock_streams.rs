@@ -419,14 +419,11 @@ impl AsyncWrite for InterruptibleWriteMockStream {
         // Check if we should simulate backpressure at this position
         if self.should_interrupt() {
             self.interrupted_count += 1;
-
+            let position = self.current_position;
             // Return WouldBlock to simulate write buffer backpressure
             return std::task::Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::WouldBlock,
-                format!(
-                    "Simulated write buffer backpressure at position {}",
-                    self.current_position
-                ),
+                format!("Simulated write buffer backpressure at position {position}"),
             )));
         }
 

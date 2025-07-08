@@ -771,7 +771,7 @@ fn test_move_trait_implementations() {
     .unwrap();
 
     // Test Debug
-    let debug_str = format!("{:?}", move1);
+    let debug_str = format!("{move1:?}");
     assert!(debug_str.contains("Move"));
     assert!(debug_str.contains("from"));
     assert!(debug_str.contains("to"));

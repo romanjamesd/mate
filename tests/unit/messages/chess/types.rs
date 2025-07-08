@@ -533,9 +533,9 @@ mod tests {
         let move_history: Vec<String> = (1..=50)
             .map(|i| {
                 if i % 2 == 1 {
-                    format!("e{}e{}", i % 7 + 2, i % 7 + 3)
+                    format!("e{move_one}e{move_two}", move_one = i % 7 + 2, move_two = i % 7 + 3)
                 } else {
-                    format!("d{}d{}", i % 7 + 2, i % 7 + 3)
+                    format!("d{move_one}d{move_two}", move_one = i % 7 + 2, move_two = i % 7 + 3)
                 }
             })
             .collect();

@@ -314,7 +314,7 @@ fn test_peer_id_display_formatting() {
     let peer_id = identity.peer_id();
 
     // Test Display trait implementation
-    let display_str = format!("{}", peer_id);
+    let display_str = format!("{peer_id}");
     let as_str = peer_id.as_str();
     assert_eq!(display_str, as_str, "Display output should match as_str()");
 
@@ -334,7 +334,7 @@ fn test_peer_id_display_formatting() {
     // Test that display format is stable (same identity = same display)
     let same_peer_id = PeerId::from_verifying_key(&identity.verifying_key());
     assert_eq!(
-        format!("{}", same_peer_id),
+        format!("{same_peer_id}"),
         display_str,
         "Display format should be stable for same identity"
     );

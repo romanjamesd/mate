@@ -151,7 +151,7 @@ async fn test_network_manager_retry_behavior() {
             .as_nanos()
             % 10000) as u16;
     let result = network_manager
-        .send_game_invite(&format!("127.0.0.1:{}", unreachable_port), game_id, invite)
+        .send_game_invite(&format!("127.0.0.1:{unreachable_port}"), game_id, invite)
         .await;
     let elapsed = start_time.elapsed();
 
@@ -190,7 +190,7 @@ async fn test_network_manager_connection_state_tracking() {
             .as_nanos()
             % 10000) as u16;
     let _result = network_manager
-        .send_game_invite(&format!("127.0.0.1:{}", unreachable_port), game_id, invite)
+        .send_game_invite(&format!("127.0.0.1:{unreachable_port}"), game_id, invite)
         .await;
 
     // Verify state tracking (failed connections shouldn't increase active count)
@@ -220,7 +220,7 @@ async fn test_network_manager_peer_availability_detection() {
             .unwrap()
             .as_nanos()
             % 10000) as u16;
-    let unavailable_peer = format!("127.0.0.1:{}", unavailable_port);
+    let unavailable_peer = format!("127.0.0.1:{unavailable_port}");
 
     // Test peer availability detection
     let is_online_before = network_manager.is_peer_online(&unavailable_peer).await;
@@ -258,7 +258,7 @@ async fn test_network_message_type_handling() {
             .unwrap()
             .as_nanos()
             % 10000) as u16;
-    let peer_address = format!("127.0.0.1:{}", test_port);
+    let peer_address = format!("127.0.0.1:{test_port}");
     let game_id = "test_message_types".to_string();
 
     // Test different message types - verify each operation type is attempted
@@ -334,7 +334,7 @@ async fn test_network_manager_configuration_behavior() {
             .as_nanos()
             % 10000) as u16;
     let _result = fast_manager
-        .send_game_invite(&format!("127.0.0.1:{}", config_test_port), game_id, invite)
+        .send_game_invite(&format!("127.0.0.1:{config_test_port}"), game_id, invite)
         .await;
     let elapsed = start_time.elapsed();
 
@@ -391,7 +391,7 @@ async fn test_network_error_types_are_appropriate() {
             .as_nanos()
             % 10000) as u16;
     let result2 = network_manager
-        .send_game_invite(&format!("127.0.0.1:{}", error_test_port), game_id, invite)
+        .send_game_invite(&format!("127.0.0.1:{error_test_port}"), game_id, invite)
         .await;
     assert!(result2.is_err(), "Should fail with unreachable address");
 
@@ -433,7 +433,7 @@ async fn test_timeout_behavior_consistency() {
             .as_nanos()
             % 10000) as u16;
     let result = network_manager
-        .send_game_invite(&format!("127.0.0.1:{}", timeout_test_port), game_id, invite)
+        .send_game_invite(&format!("127.0.0.1:{timeout_test_port}"), game_id, invite)
         .await;
     let elapsed = start_time.elapsed();
 

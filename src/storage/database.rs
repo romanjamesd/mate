@@ -133,8 +133,7 @@ impl Database {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 StorageError::database_path_error(format!(
-                    "Failed to create database directory: {}",
-                    e
+                    "Failed to create database directory: {e}"
                 ))
             })?;
         }

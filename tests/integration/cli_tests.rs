@@ -81,7 +81,7 @@ async fn test_successful_message_send_with_timing() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify timing information is displayed
     assert!(
@@ -150,7 +150,7 @@ async fn test_message_content_echo_correctness() {
 
         let stderr = String::from_utf8_lossy(&command_output.stderr);
         let stdout = String::from_utf8_lossy(&command_output.stdout);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Debug: print the actual output
         if combined_output.is_empty() {
@@ -222,7 +222,7 @@ async fn test_response_timing_measurement() {
 
     let stderr = String::from_utf8_lossy(&command_output.stderr);
     let stdout = String::from_utf8_lossy(&command_output.stdout);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify timing format is correct (should match our format_round_trip_time function)
     let timing_patterns = [
@@ -286,7 +286,7 @@ async fn test_error_handling_send_failure() {
 
     let stderr = String::from_utf8_lossy(&command_output.stderr);
     let stdout = String::from_utf8_lossy(&command_output.stdout);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify appropriate error handling - check for common error patterns
     assert!(
@@ -351,7 +351,7 @@ async fn test_error_handling_receive_failure() {
 
     let stderr = String::from_utf8_lossy(&command_output.stderr);
     let stdout = String::from_utf8_lossy(&command_output.stdout);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // The command might succeed or fail depending on timing, but should handle it gracefully
     if !command_output.status.success() {
@@ -425,7 +425,7 @@ async fn test_program_exits_after_single_exchange() {
 
     let stderr = String::from_utf8_lossy(&command_output.stderr);
     let stdout = String::from_utf8_lossy(&command_output.stdout);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify it shows message exchange completion
     assert!(
@@ -489,7 +489,7 @@ async fn test_appropriate_logging() {
 
     let stderr = String::from_utf8_lossy(&command_output.stderr);
     let stdout = String::from_utf8_lossy(&command_output.stdout);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify appropriate log messages are present
     let expected_log_patterns = vec![
@@ -576,7 +576,7 @@ async fn test_one_shot_mode_comprehensive() {
 
         let stderr = String::from_utf8_lossy(&command_output.stderr);
         let stdout = String::from_utf8_lossy(&command_output.stdout);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Debug: print the actual output
         if combined_output.is_empty() {

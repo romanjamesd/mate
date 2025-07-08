@@ -141,7 +141,7 @@ mod piece_tests {
     fn test_piece_debug_format() {
         // Test debug format for development purposes
         let piece = Piece::new(PieceType::Knight, Color::White);
-        let debug_str = format!("{:?}", piece);
+        let debug_str = format!("{piece:?}");
 
         // Should contain both piece type and color information
         assert!(debug_str.contains("Knight"));

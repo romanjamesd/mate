@@ -97,12 +97,12 @@ fn test_piece_type_display_output() {
     assert_eq!(PieceType::King.to_string(), "K");
 
     // Test format! macro usage
-    assert_eq!(format!("{}", PieceType::Pawn), "P");
-    assert_eq!(format!("{}", PieceType::Rook), "R");
-    assert_eq!(format!("{}", PieceType::Knight), "N");
-    assert_eq!(format!("{}", PieceType::Bishop), "B");
-    assert_eq!(format!("{}", PieceType::Queen), "Q");
-    assert_eq!(format!("{}", PieceType::King), "K");
+    assert_eq!(format!("{pawn}", pawn = PieceType::Pawn), "P");
+    assert_eq!(format!("{rook}", rook = PieceType::Rook), "R");
+    assert_eq!(format!("{knight}", knight = PieceType::Knight), "N");
+    assert_eq!(format!("{bishop}", bishop = PieceType::Bishop), "B");
+    assert_eq!(format!("{queen}", queen = PieceType::Queen), "Q");
+    assert_eq!(format!("{king}", king = PieceType::King), "K");
 }
 
 /// Test piece values according to standard chess values
@@ -123,8 +123,8 @@ fn test_piece_type_trait_implementations() {
     let queen = PieceType::Queen;
 
     // Test Debug
-    assert!(format!("{:?}", pawn).contains("Pawn"));
-    assert!(format!("{:?}", queen).contains("Queen"));
+    assert!(format!("{pawn:?}").contains("Pawn"));
+    assert!(format!("{queen:?}").contains("Queen"));
 
     // Test Clone
     let pawn_clone = pawn;

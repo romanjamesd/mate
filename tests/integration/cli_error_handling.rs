@@ -139,7 +139,7 @@ async fn test_error_handling_connection_timeouts() {
     if let Some(command_output) = command_result {
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify appropriate error message is shown
         assert!(
@@ -206,7 +206,7 @@ async fn test_error_handling_network_failures_user_feedback() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify graceful error handling
         assert!(
@@ -342,7 +342,7 @@ async fn test_error_handling_offline_operation_capabilities() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Operations should either succeed or fail gracefully (not hang)
         // Success is acceptable if app initializes properly
@@ -444,7 +444,7 @@ async fn test_error_handling_database_connection_failures() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Should fail gracefully with database error
     assert!(
@@ -569,7 +569,7 @@ async fn test_error_handling_corrupted_game_data_recovery() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Should fail gracefully with database corruption error
     assert!(
@@ -722,7 +722,7 @@ async fn test_error_handling_malformed_user_input() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Should fail gracefully with validation error
         assert!(
@@ -958,7 +958,7 @@ async fn test_error_handling_edge_cases() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Should not contain stack traces or panics
         assert!(

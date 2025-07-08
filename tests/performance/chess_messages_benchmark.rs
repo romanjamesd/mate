@@ -143,7 +143,7 @@ mod serialization_performance_tests {
             println!("  Testing sync response with {} moves...", history_size);
 
             let move_history: Vec<String> =
-                (0..history_size).map(|i| format!("move_{}", i)).collect();
+                (0..history_size).map(|i| format!("move_{i}")).collect();
 
             let sync_response = SyncResponse::new(
                 game_id.clone(),
@@ -407,7 +407,7 @@ mod validation_performance_tests {
                 Message::SyncResponse(SyncResponse::new(
                     game_id.clone(),
                     board.to_fen(),
-                    (0..500).map(|i| format!("move_{}", i)).collect(),
+                    (0..500).map(|i| format!("move_{i}")).collect(),
                     board_hash.clone(),
                 )),
             ),
@@ -731,7 +731,7 @@ mod memory_usage_tests {
             println!("  Testing scaling with {} moves...", history_size);
 
             let move_history: Vec<String> = (0..history_size)
-                .map(|i| format!("move_{:04}", i))
+                .map(|i| format!("move_{i:04}"))
                 .collect();
 
             let sync_response = SyncResponse::new(

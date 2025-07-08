@@ -73,7 +73,7 @@ async fn test_help_command_displays_functionality() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Help command output:\n{}", combined_output);
 
@@ -151,7 +151,7 @@ async fn test_info_command_shows_connection_details() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Info command output:\n{}", combined_output);
 
@@ -233,7 +233,7 @@ async fn test_info_command_shows_statistics_after_messages() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Info with statistics output:\n{}", combined_output);
 
@@ -307,7 +307,7 @@ async fn test_quit_command_terminates_gracefully() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify graceful termination messaging
     assert!(
@@ -370,7 +370,7 @@ async fn test_exit_command_terminates_gracefully() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify graceful termination
     assert!(
@@ -455,7 +455,7 @@ async fn test_commands_case_sensitive_exact_match() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Case sensitivity test output:\n{}", combined_output);
 
@@ -532,7 +532,7 @@ async fn test_comprehensive_interactive_commands() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Comprehensive commands test output:\n{}", combined_output);
 

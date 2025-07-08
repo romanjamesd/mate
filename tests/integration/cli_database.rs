@@ -34,11 +34,7 @@ impl TestEnvironment {
         let thread_id = std::thread::current().id();
         let process_id = std::process::id();
         let unique_temp_dir = temp_dir.path().join(format!(
-            "test_cli_db_{}_{:x}_{:?}_{}_{}",
-            timestamp,
-            random_id,
-            thread_id,
-            process_id,
+            "test_cli_db_{timestamp}_{random_id:x}_{thread_id:?}_{process_id}_{}",
             rand::random::<u64>()
         ));
         std::fs::create_dir_all(&unique_temp_dir).expect("Failed to create unique test dir");
@@ -320,10 +316,10 @@ fn test_database_game_status_filtering() {
 
     // Create multiple games in each status
     for i in 0..3 {
-        env.create_test_game(&db, &format!("pending_{}", i), GameStatus::Pending);
-        env.create_test_game(&db, &format!("active_{}", i), GameStatus::Active);
-        env.create_test_game(&db, &format!("completed_{}", i), GameStatus::Completed);
-        env.create_test_game(&db, &format!("abandoned_{}", i), GameStatus::Abandoned);
+        env.create_test_game(&db, &format!("pending_{i}"), GameStatus::Pending);
+        env.create_test_game(&db, &format!("active_{i}"), GameStatus::Active);
+        env.create_test_game(&db, &format!("completed_{i}"), GameStatus::Completed);
+        env.create_test_game(&db, &format!("abandoned_{i}"), GameStatus::Abandoned);
     }
 
     // Test count by status
@@ -639,7 +635,7 @@ fn test_database_malformed_messages_handling() {
             game_id.clone(),
             msg_type.to_string(),
             content.to_string(),
-            format!("sig_{}", i),
+            format!("sig_{i}"),
             "malformed_opponent".to_string(),
         )
         .expect("Failed to store malformed message");
@@ -785,7 +781,7 @@ fn test_database_message_storage_all_types() {
                 game_id.clone(),
                 msg_type.to_string(),
                 content.to_string(),
-                format!("sig_{}", i),
+                format!("sig_{i}"),
                 if i % 2 == 0 {
                     "test_peer_cli"
                 } else {
@@ -970,8 +966,8 @@ fn test_database_concurrent_access_handling() {
                         game_id_clone.clone(),
                         "ConcurrentTest".to_string(),
                         json!({"thread": thread_id, "message": i}).to_string(),
-                        format!("sig_{}_{}", thread_id, i),
-                        format!("sender_{}", thread_id),
+                        format!("sig_{thread_id}_{i}"),
+                        format!("sender_{thread_id}"),
                     );
 
                     assert!(result.is_ok(), "Concurrent message storage should succeed");
