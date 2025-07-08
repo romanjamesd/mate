@@ -1,0 +1,9 @@
+# Clippy configuration for mate project
+# This allows the old format syntax: format!("{}", variable) instead of format!("{variable}")
+
+# Allow mixed uninlined format args (old and new format syntax)
+allow-mixed-uninlined-format-args = true
+
+# Additional configuration
+disallowed-methods = []
+disallowed-types = [] 
