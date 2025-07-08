@@ -540,8 +540,7 @@ impl Board {
         let fullmove = self.fullmove_number;
 
         format!(
-            "{} {} {} {} {} {}",
-            piece_placement, active_color, castling_rights, en_passant, halfmove, fullmove
+            "{piece_placement} {active_color} {castling_rights} {en_passant} {halfmove} {fullmove}"
         )
     }
 
@@ -622,8 +621,7 @@ impl Board {
             'p' => (PieceType::Pawn, Color::Black),
             _ => {
                 return Err(ChessError::InvalidFen(format!(
-                    "Invalid piece character '{}'",
-                    c
+                    "Invalid piece character '{c}'"
                 )))
             }
         };
@@ -687,16 +685,17 @@ impl Board {
         // Ensure piece belongs to active player
         if source_piece.color != self.active_color {
             return Err(ChessError::InvalidMove(format!(
-                "Cannot move {} piece when it's {}'s turn",
-                source_piece.color, self.active_color
+                "Cannot move {source_piece_color} piece when it's {active_color}'s turn",
+                source_piece_color = source_piece.color,
+                active_color = self.active_color
             )));
         }
 
         // Validate destination position bounds
         if mv.to.file > 7 || mv.to.rank > 7 {
             return Err(ChessError::InvalidMove(format!(
-                "Destination position {} is out of bounds",
-                mv.to
+                "Destination position {to} is out of bounds",
+                to = mv.to
             )));
         }
 
@@ -704,8 +703,8 @@ impl Board {
         if let Some(dest_piece) = self.get_piece(mv.to) {
             if dest_piece.color == self.active_color {
                 return Err(ChessError::InvalidMove(format!(
-                    "Cannot capture own piece at {}",
-                    mv.to
+                    "Cannot capture own piece at {to}",
+                    to = mv.to
                 )));
             }
         }
@@ -732,8 +731,8 @@ impl Board {
 
             if mv.to.rank != promotion_rank {
                 return Err(ChessError::InvalidMove(format!(
-                    "Pawn promotion only allowed when reaching rank {}",
-                    promotion_rank + 1
+                    "Pawn promotion only allowed when reaching rank {promotion_rank}",
+                    promotion_rank = promotion_rank + 1
                 )));
             }
         } else if is_pawn_move {
@@ -811,9 +810,9 @@ impl Board {
 
             if mv.from.rank != expected_rank {
                 return Err(ChessError::InvalidMove(format!(
-                    "Castling must be performed on rank {} for {}",
-                    expected_rank + 1,
-                    self.active_color
+                    "Castling must be performed on rank {expected_rank} for {active_color}",
+                    expected_rank = expected_rank + 1,
+                    active_color = self.active_color
                 )));
             }
 
