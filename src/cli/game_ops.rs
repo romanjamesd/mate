@@ -30,12 +30,12 @@ pub enum GameOpsError {
 impl std::fmt::Display for GameOpsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GameOpsError::Database(e) => write!(f, "Database error: {}", e),
-            GameOpsError::Chess(e) => write!(f, "Chess error: {}", e),
-            GameOpsError::Serialization(e) => write!(f, "Serialization error: {}", e),
-            GameOpsError::InvalidGameState(e) => write!(f, "Invalid game state: {}", e),
+            GameOpsError::Database(e) => write!(f, "Database error: {e}"),
+            GameOpsError::Chess(e) => write!(f, "Chess error: {e}"),
+            GameOpsError::Serialization(e) => write!(f, "Serialization error: {e}"),
+            GameOpsError::InvalidGameState(e) => write!(f, "Invalid game state: {e}"),
             GameOpsError::NoCurrentGame => write!(f, "No current game found"),
-            GameOpsError::GameNotFound(id) => write!(f, "Game not found: {}", id),
+            GameOpsError::GameNotFound(id) => write!(f, "Game not found: {id}"),
         }
     }
 }
