@@ -303,14 +303,14 @@ fn format_storage_error(error: &StorageError) -> String {
 fn format_connection_error(error: &ConnectionError) -> String {
     match error {
         ConnectionError::WireProtocol(_wire_err) => {
-            format!("🌐 Communication protocol error\n   💡 Suggestion: Check network connection and ensure both players use compatible versions.")
+            "🌐 Communication protocol error\n   💡 Suggestion: Check network connection and ensure both players use compatible versions.".to_string()
         }
         ConnectionError::HandshakeFailed { reason: _ } => {
             // Don't expose technical handshake details
-            format!("🤝 Failed to connect to peer\n   💡 Suggestion: Verify the peer address is correct and the peer is online. Check for network connectivity issues.")
+            "🤝 Failed to connect to peer\n   💡 Suggestion: Verify the peer address is correct and the peer is online. Check for network connectivity issues.".to_string()
         }
         ConnectionError::AuthenticationFailed { peer_id: _ } => {
-            format!("🔐 Authentication failed with peer\n   💡 Suggestion: The peer may be using different credentials. Ensure both players have compatible identities.")
+            "🔐 Authentication failed with peer\n   💡 Suggestion: The peer may be using different credentials. Ensure both players have compatible identities.".to_string()
         }
         ConnectionError::ConnectionClosed => {
             "🌐 Connection closed unexpectedly\n   💡 Suggestion: The peer may have disconnected. Try reconnecting to continue the game.".to_string()
