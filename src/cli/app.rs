@@ -248,14 +248,14 @@ impl App {
         }
 
         // Display header
-        println!("{header}", header = "=".repeat(80));
+        println!("{}", "=".repeat(80));
         println!("{:^80}", "CHESS GAMES");
-        println!("{header}", header = "=".repeat(80));
+        println!("{}", "=".repeat(80));
         println!(
             "{:<12} {:<20} {:<8} {:<10} {:<15} {:<10}",
             "GAME ID", "OPPONENT", "COLOR", "STATUS", "LAST UPDATED", "RESULT"
         );
-        println!("{line}", line = "-".repeat(80));
+        println!("{}", "-".repeat(80));
 
         // Display each game
         for game in &games {
@@ -298,9 +298,9 @@ impl App {
             );
         }
 
-        println!("{line}", line = "-".repeat(80));
+        println!("{}", "-".repeat(80));
         let game_count = games.len();
-        println!("Total games: {game_count}");
+        println!("Total games: {}", game_count);
         println!();
         println!("Use 'mate board --game-id <id>' to view a specific game board.");
         println!("Use 'mate history --game-id <id>' to view game move history.");
@@ -371,7 +371,7 @@ impl App {
         }
 
         // Display game information
-        println!("{header}", header = "=".repeat(60));
+        println!("{}", "=".repeat(60));
         let game_display = if target_game_id.len() > 8 {
             let short_id = &target_game_id[..8];
             format!("{short_id}...")
@@ -379,11 +379,11 @@ impl App {
             target_game_id.clone()
         };
         println!("{:^60}", format!("CHESS BOARD - GAME {game_display}"));
-        println!("{div}", let div = "=".repeat(60));
-        println!("Opponent: {opponent_peer_id}", opponent_peer_id = game.opponent_peer_id);
-        println!("Your Color: {my_color:?}", my_color = game.my_color);
-        println!("Status: {status:?}", status = game.status);
-        println!("Moves Played: {move_count}", move_count = move_count);
+        println!("{}", "=".repeat(60));
+        println!("Opponent: {}", game.opponent_peer_id);
+        println!("Your Color: {:?}", game.my_color);
+        println!("Status: {:?}", game.status);
+        println!("Moves Played: {}", move_count);
         if let Some(result) = &game.result {
             println!("Result: {result:?}");
         }
@@ -887,16 +887,16 @@ impl App {
         println!("{}", "=".repeat(70));
 
         // Display game metadata
-        println!("Game ID: {target_game_id}", target_game_id = target_game_id);
-        println!("Opponent: {opponent_peer_id}", opponent_peer_id = game.opponent_peer_id);
-        println!("Your Color: {my_color:?}", my_color = game.my_color);
-        println!("Status: {status:?}", status = game.status);
+        println!("Game ID: {}", target_game_id);
+        println!("Opponent: {}", game.opponent_peer_id);
+        println!("Your Color: {:?}", game.my_color);
+        println!("Status: {:?}", game.status);
         if let Some(result) = &game.result {
-            println!("Result: {result:?}", result = result);
+            println!("Result: {:?}", result);
         }
-        println!("Created: {timestamp}", timestamp = format_timestamp(game.created_at));
+        println!("Created: {}", format_timestamp(game.created_at));
         if let Some(completed_at) = game.completed_at {
-            println!("Completed: {timestamp}", timestamp = format_timestamp(completed_at));
+            println!("Completed: {}", format_timestamp(completed_at));
         }
         println!("{}", "-".repeat(70));
 
@@ -940,7 +940,7 @@ impl App {
         }
 
         println!("{}", "-".repeat(70));
-        println!("Total moves: {move_count}", move_count = moves.len());
+        println!("Total moves: {}", moves.len());
 
         if game.status == GameStatus::Active {
             let current_turn = if moves.len() % 2 == 0 {
@@ -963,9 +963,7 @@ impl App {
             }
         }
 
-        println!(
-            "Use 'mate board --game-id {target_game_id}' to view the current board position."
-        );
+        println!("Use 'mate board --game-id {target_game_id}' to view the current board position.");
 
         Ok(())
     }
