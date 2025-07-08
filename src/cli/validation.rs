@@ -465,18 +465,20 @@ impl InputValidationUtils {
 mod tests {
     use super::*;
     use crate::storage::database::Database;
-    use tempfile::tempdir;
+    use std::sync::Arc;
+    use tempfile::TempDir;
 
     // Helper function to create a test database
-    fn create_test_database() -> Database {
-        let temp_dir = tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db");
-        Database::new(db_path.to_str().unwrap()).unwrap()
+    fn create_test_database() -> (Database, Arc<TempDir>) {
+        let temp_dir = Arc::new(TempDir::new().unwrap());
+        let db_path = temp_dir.path().join("test_validation.db");
+        let database = Database::new_with_path("test_peer", &db_path).unwrap();
+        (database, temp_dir)
     }
 
     #[test]
     fn test_chess_move_validation() {
-        let db = create_test_database();
+        let (db, _temp_dir) = create_test_database();
         let validator = InputValidator::new(&db);
 
         // Valid moves
@@ -494,7 +496,7 @@ mod tests {
 
     #[test]
     fn test_color_validation() {
-        let db = create_test_database();
+        let (db, _temp_dir) = create_test_database();
         let validator = InputValidator::new(&db);
 
         // Valid colors
@@ -518,7 +520,7 @@ mod tests {
 
     #[test]
     fn test_uuid_format_validation() {
-        let db = create_test_database();
+        let (db, _temp_dir) = create_test_database();
         let validator = InputValidator::new(&db);
 
         // Valid UUID

@@ -6,13 +6,17 @@
 use mate::chess::Color;
 use mate::cli::validation::{InputValidator, ValidationError};
 use mate::storage::Database;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 /// Create a test database for validation testing
-fn create_test_database() -> Database {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    std::env::set_var("MATE_DATA_DIR", temp_dir.path());
-    Database::new("test_peer").expect("Failed to create test database")
+/// Returns both the database and the temp directory to keep it alive
+fn create_test_database() -> (Database, Arc<TempDir>) {
+    let temp_dir = Arc::new(TempDir::new().expect("Failed to create temp dir"));
+    let db_path = temp_dir.path().join("test_validation.db");
+    let database =
+        Database::new_with_path("test_peer", &db_path).expect("Failed to create test database");
+    (database, temp_dir)
 }
 
 // =============================================================================
@@ -22,7 +26,7 @@ fn create_test_database() -> Database {
 #[test]
 fn test_uuid_format_validation() {
     // Test UUID format validation specifically
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     let valid_uuid = "550e8400-e29b-41d4-a716-446655440000";
@@ -49,7 +53,7 @@ fn test_uuid_format_validation() {
 #[test]
 fn test_empty_game_id_handling() {
     // Test that empty game ID input is handled appropriately
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     let test_cases = vec!["", "   ", "\t", "\n"];
@@ -77,7 +81,7 @@ fn test_empty_game_id_handling() {
 #[test]
 fn test_game_id_validation_no_active_games() {
     // Test behavior when no active games exist
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     let result = validator.validate_and_resolve_game_id("some-uuid");
@@ -98,7 +102,7 @@ fn test_game_id_validation_no_active_games() {
 #[test]
 fn test_ipv4_address_validation() {
     // Test IPv4 address validation with various valid formats
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     let valid_ipv4_addresses = vec![
@@ -125,7 +129,7 @@ fn test_ipv4_address_validation() {
 #[test]
 fn test_ipv6_address_validation() {
     // Test IPv6 address validation with various valid formats
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     let valid_ipv6_addresses = vec![
@@ -150,7 +154,7 @@ fn test_ipv6_address_validation() {
 #[test]
 fn test_hostname_address_validation() {
     // Test hostname address validation
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     let valid_hostnames = vec![
@@ -187,7 +191,7 @@ fn test_hostname_address_validation() {
 #[test]
 fn test_port_requirement_enforcement() {
     // Test that port numbers are required and validated
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     let addresses_missing_ports = vec!["127.0.0.1", "localhost", "example.com", "[::1]"];
@@ -230,7 +234,7 @@ fn test_port_requirement_enforcement() {
 #[test]
 fn test_address_validation_edge_cases() {
     // Test edge cases and invalid address formats
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     let invalid_addresses = vec![
@@ -269,7 +273,7 @@ fn test_address_validation_edge_cases() {
 #[test]
 fn test_color_input_normalization() {
     // Test that color inputs are properly normalized
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     let white_variations = vec!["white", "WHITE", "White", "WhItE", "w", "W"];
@@ -314,7 +318,7 @@ fn test_color_input_normalization() {
 #[test]
 fn test_color_case_insensitive_handling() {
     // Test case insensitive color handling specifically
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     let test_cases = vec![
@@ -356,7 +360,7 @@ fn test_color_case_insensitive_handling() {
 #[test]
 fn test_invalid_color_input_rejection() {
     // Test that invalid color inputs are rejected appropriately
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     let invalid_colors = vec![
@@ -413,7 +417,7 @@ fn test_invalid_color_input_rejection() {
 #[test]
 fn test_color_empty_input_handling() {
     // Test that empty color input defaults to random (None)
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     let empty_inputs = vec!["", "   ", "\t", "\n"];
@@ -440,7 +444,7 @@ fn test_color_empty_input_handling() {
 #[test]
 fn test_validation_error_types_are_appropriate() {
     // Test that validation functions return appropriate error types
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     // Test game ID validation error types
@@ -468,7 +472,7 @@ fn test_validation_error_types_are_appropriate() {
 #[test]
 fn test_validation_functions_handle_whitespace() {
     // Test that all validation functions properly handle leading/trailing whitespace
-    let database = create_test_database();
+    let (database, _temp_dir) = create_test_database();
     let validator = InputValidator::new(&database);
 
     // Test address validation with whitespace
