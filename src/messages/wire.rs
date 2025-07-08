@@ -34,6 +34,19 @@ pub const CLIENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const CLIENT_RETRY_MAX_ATTEMPTS: u32 = 3;
 pub const CLIENT_RETRY_BASE_DELAY: Duration = Duration::from_millis(1000);
 
+// Smart retry configuration for CLI operations
+pub const CLI_QUICK_RETRY_MAX_ATTEMPTS: u32 = 1; // Single attempt for interactive operations
+pub const CLI_QUICK_RETRY_BASE_DELAY: Duration = Duration::from_millis(0);
+pub const CLI_NORMAL_RETRY_MAX_ATTEMPTS: u32 = 2; // Reduced from 3 to 2
+pub const CLI_NORMAL_RETRY_BASE_DELAY: Duration = Duration::from_millis(500); // Reduced from 1000ms
+pub const CLI_PATIENT_RETRY_MAX_ATTEMPTS: u32 = 3; // Reduced from 5 to 3
+pub const CLI_PATIENT_RETRY_BASE_DELAY: Duration = Duration::from_millis(1000); // Reduced from 2000ms
+
+// Fast-fail detection timeouts for obvious failures
+pub const FAST_FAIL_CONNECTION_TIMEOUT: Duration = Duration::from_secs(3);
+pub const FAST_FAIL_DNS_TIMEOUT: Duration = Duration::from_secs(2);
+pub const FAST_FAIL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+
 // DoS Protection Constants
 pub const MIN_MESSAGE_SIZE: usize = 1; // Minimum message size (1 byte)
 pub const MAX_REASONABLE_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB for reasonable messages
@@ -2349,4 +2362,104 @@ pub struct SessionSummary {
     pub max_attempts: u32,
     pub base_delay_ms: u64,
     pub can_attempt_operations: bool,
+}
+
+/// Retry strategy for CLI operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryStrategy {
+    /// Quick retries for interactive CLI operations (2 attempts, 500ms delay)
+    Quick,
+    /// Normal retries for standard operations (3 attempts, 1s delay)
+    Normal,
+    /// Patient retries for important operations (5 attempts, 2s delay)
+    Patient,
+    /// No retries - fail fast
+    NoRetry,
+}
+
+impl RetryStrategy {
+    pub fn max_attempts(&self) -> u32 {
+        match self {
+            RetryStrategy::Quick => CLI_QUICK_RETRY_MAX_ATTEMPTS,
+            RetryStrategy::Normal => CLI_NORMAL_RETRY_MAX_ATTEMPTS,
+            RetryStrategy::Patient => CLI_PATIENT_RETRY_MAX_ATTEMPTS,
+            RetryStrategy::NoRetry => 1,
+        }
+    }
+
+    pub fn base_delay(&self) -> Duration {
+        match self {
+            RetryStrategy::Quick => CLI_QUICK_RETRY_BASE_DELAY,
+            RetryStrategy::Normal => CLI_NORMAL_RETRY_BASE_DELAY,
+            RetryStrategy::Patient => CLI_PATIENT_RETRY_BASE_DELAY,
+            RetryStrategy::NoRetry => Duration::from_millis(0),
+        }
+    }
+
+    /// Get the appropriate strategy for a CLI operation
+    pub fn for_cli_operation(operation: &str) -> Self {
+        match operation {
+            "invite" | "accept" | "move" => RetryStrategy::Normal,
+            "games" | "board" | "history" => RetryStrategy::NoRetry,
+            "sync" => RetryStrategy::Patient,
+            _ => RetryStrategy::Quick,
+        }
+    }
+}
+
+/// Classification of network failures for smart retry decisions
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FailureClass {
+    /// Immediate failures that should not be retried (DNS, invalid address)
+    NoRetry,
+    /// Transient failures that can be retried (timeouts, connection refused)
+    Retriable,
+    /// Critical failures that need patient retries (handshake, protocol errors)
+    Critical,
+}
+
+impl FailureClass {
+    /// Classify an error for retry decisions
+    pub fn classify_error(error: &anyhow::Error) -> Self {
+        let error_str = error.to_string().to_lowercase();
+        
+        // Check for immediate failures that should not be retried
+        if error_str.contains("name or service not known")
+            || error_str.contains("no such host")
+            || error_str.contains("invalid port")
+            || error_str.contains("invalid ip address")
+            || error_str.contains("address family not supported")
+            || error_str.contains("invalid hostname")
+            || error_str.contains("nodename nor servname provided")
+            || error_str.contains("name resolution failed")
+            || error_str.contains("temporary failure in name resolution")
+            || error_str.contains("could not resolve hostname")
+            || error_str.contains("connection refused")  // Often means service not running
+            || error_str.contains("network unreachable") // Network config issue
+            || error_str.contains("no route to host")     // Routing issue
+        {
+            return FailureClass::NoRetry;
+        }
+
+        // Check for critical failures that need patient retries
+        if error_str.contains("handshake")
+            || error_str.contains("protocol")
+            || error_str.contains("authentication")
+            || error_str.contains("identity")
+        {
+            return FailureClass::Critical;
+        }
+
+        // Default to retriable for connection issues, timeouts, etc.
+        FailureClass::Retriable
+    }
+
+    /// Get the appropriate retry strategy for this failure class
+    pub fn retry_strategy(&self) -> RetryStrategy {
+        match self {
+            FailureClass::NoRetry => RetryStrategy::NoRetry,
+            FailureClass::Retriable => RetryStrategy::Quick,
+            FailureClass::Critical => RetryStrategy::Normal,
+        }
+    }
 }

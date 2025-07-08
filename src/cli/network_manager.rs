@@ -1,6 +1,7 @@
 use crate::crypto::Identity;
 use crate::messages::chess::{GameAccept, GameInvite, Move as ChessMove};
 use crate::messages::types::Message;
+use crate::messages::{RetryStrategy, FailureClass};
 use crate::network::{Client, Connection};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -12,12 +13,8 @@ use tracing::{debug, error, info, warn};
 /// Configuration for network operations
 #[derive(Debug, Clone)]
 pub struct NetworkConfig {
-    /// Maximum number of retry attempts for network operations
-    pub max_retry_attempts: u32,
-    /// Base delay between retry attempts
-    pub base_retry_delay: Duration,
-    /// Maximum delay between retry attempts
-    pub max_retry_delay: Duration,
+    /// Default retry strategy for network operations
+    pub default_retry_strategy: RetryStrategy,
     /// Connection timeout duration
     pub connection_timeout: Duration,
     /// Maximum number of persistent connections to maintain
@@ -29,10 +26,8 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
-            max_retry_attempts: 3,
-            base_retry_delay: Duration::from_millis(1000),
-            max_retry_delay: Duration::from_secs(30),
-            connection_timeout: Duration::from_secs(30),
+            default_retry_strategy: RetryStrategy::NoRetry,
+            connection_timeout: Duration::from_secs(10),
             max_persistent_connections: 10,
             connection_keepalive: Duration::from_secs(300), // 5 minutes
         }
@@ -192,18 +187,35 @@ impl NetworkManager {
         &self,
         peer_address: &str,
         message: Message,
-        _game_id: &str,
+        game_id: &str,
     ) -> Result<Message> {
+        // Determine retry strategy based on operation type
+        let operation = self.classify_operation(&message);
+        let retry_strategy = RetryStrategy::for_cli_operation(&operation);
+        
+        self.send_message_with_strategy(peer_address, message, game_id, retry_strategy).await
+    }
+
+    /// Send a message with a specific retry strategy
+    async fn send_message_with_strategy(
+        &self,
+        peer_address: &str,
+        message: Message,
+        _game_id: &str,
+        strategy: RetryStrategy,
+    ) -> Result<Message> {
+        let max_attempts = strategy.max_attempts();
+        let base_delay = strategy.base_delay();
         let mut last_error = None;
 
-        for attempt in 1..=self.config.max_retry_attempts {
+        for attempt in 1..=max_attempts {
             debug!(
-                "Attempting to send message to {} (attempt {}/{})",
-                peer_address, attempt, self.config.max_retry_attempts
+                "Attempting to send message to {} (attempt {}/{}, strategy: {:?})",
+                peer_address, attempt, max_attempts, strategy
             );
 
             // Try to get or create a connection
-            match self.get_or_create_connection(peer_address).await {
+            match self.get_or_create_connection_with_strategy(peer_address, strategy).await {
                 Ok(mut connection) => {
                     // Send the message
                     match connection.send_message(message.clone()).await {
@@ -220,6 +232,10 @@ impl NetworkManager {
                                         "Failed to receive response from {} (attempt {}): {}",
                                         peer_address, attempt, e
                                     );
+                                    let failure_class = FailureClass::classify_error(&anyhow::anyhow!("{}", e));
+                                    if failure_class == FailureClass::NoRetry {
+                                        return Err(anyhow::anyhow!("Receive failed: {}", e));
+                                    }
                                     last_error = Some(anyhow::anyhow!("Receive failed: {}", e));
                                     // Mark connection as unhealthy
                                     self.update_connection_health(peer_address, false).await;
@@ -233,6 +249,10 @@ impl NetworkManager {
                                 "Failed to send message to {} (attempt {}): {}",
                                 peer_address, attempt, e
                             );
+                            let failure_class = FailureClass::classify_error(&anyhow::anyhow!("{}", e));
+                            if failure_class == FailureClass::NoRetry {
+                                return Err(anyhow::anyhow!("Send failed: {}", e));
+                            }
                             last_error = Some(anyhow::anyhow!("Send failed: {}", e));
                             // Mark connection as unhealthy
                             self.update_connection_health(peer_address, false).await;
@@ -246,13 +266,17 @@ impl NetworkManager {
                         "Failed to establish connection to {} (attempt {}): {}",
                         peer_address, attempt, e
                     );
+                    let failure_class = FailureClass::classify_error(&e);
+                    if failure_class == FailureClass::NoRetry {
+                        return Err(e);
+                    }
                     last_error = Some(e);
                 }
             }
 
             // Wait before retrying (except on last attempt)
-            if attempt < self.config.max_retry_attempts {
-                let delay = self.calculate_retry_delay(attempt);
+            if attempt < max_attempts && base_delay > Duration::from_millis(0) {
+                let delay = self.calculate_retry_delay_for_strategy(attempt, strategy);
                 debug!("Waiting {}ms before retry", delay.as_millis());
                 tokio::time::sleep(delay).await;
             }
@@ -262,24 +286,29 @@ impl NetworkManager {
         let final_error = last_error.unwrap_or_else(|| {
             anyhow::anyhow!(
                 "Failed to send message after {} attempts",
-                self.config.max_retry_attempts
+                max_attempts
             )
         });
 
         error!(
-            "All retry attempts failed for {}: {}",
-            peer_address, final_error
+            "All retry attempts failed for {} (strategy: {:?}): {}",
+            peer_address, strategy, final_error
         );
         Err(final_error)
     }
 
     /// Get an existing healthy connection or create a new one
     async fn get_or_create_connection(&self, peer_address: &str) -> Result<Connection> {
+        self.get_or_create_connection_with_strategy(peer_address, self.config.default_retry_strategy).await
+    }
+
+    /// Get an existing healthy connection or create a new one with a specific retry strategy
+    async fn get_or_create_connection_with_strategy(&self, peer_address: &str, strategy: RetryStrategy) -> Result<Connection> {
         // Create a new connection each time since we can't clone connections
-        debug!("Creating new connection to {}", peer_address);
+        debug!("Creating new connection to {} (strategy: {:?})", peer_address, strategy);
         let connection = tokio::time::timeout(
             self.config.connection_timeout,
-            self.client.connect(peer_address),
+            self.client.connect_with_strategy(peer_address, strategy),
         )
         .await
         .context("Connection timeout")?
@@ -311,13 +340,6 @@ impl NetworkManager {
                 warn!("Error closing connection to {}: {}", peer_address, e);
             }
         }
-    }
-
-    /// Calculate retry delay with exponential backoff
-    fn calculate_retry_delay(&self, attempt: u32) -> Duration {
-        let delay = self.config.base_retry_delay.as_millis() as u64 * (2_u64.pow(attempt - 1));
-        let delay = Duration::from_millis(delay);
-        std::cmp::min(delay, self.config.max_retry_delay)
     }
 
     /// Store a message for sending when peer comes online
@@ -393,7 +415,8 @@ impl NetworkManager {
                     );
 
                     // If we haven't exceeded max attempts, put it back in pending
-                    if pending_msg.attempts < self.config.max_retry_attempts {
+                    let max_attempts = self.config.default_retry_strategy.max_attempts();
+                    if pending_msg.attempts < max_attempts {
                         let mut pending = self.pending_messages.lock().await;
                         pending
                             .entry(peer_address.to_string())
@@ -480,6 +503,33 @@ impl NetworkManager {
             healthy_connections,
             total_pending_messages,
         }
+    }
+
+    /// Classify a message to determine the appropriate operation type
+    fn classify_operation(&self, message: &Message) -> String {
+        match message {
+            Message::GameInvite(_) => "invite".to_string(),
+            Message::GameAccept(_) => "accept".to_string(),
+            Message::GameDecline(_) => "decline".to_string(),
+            Message::Move(_) => "move".to_string(),
+            Message::MoveAck(_) => "move_ack".to_string(),
+            Message::SyncRequest(_) => "sync".to_string(),
+            Message::SyncResponse(_) => "sync".to_string(),
+            Message::Ping { .. } => "ping".to_string(),
+            Message::Pong { .. } => "pong".to_string(),
+        }
+    }
+
+    /// Calculate retry delay for a specific strategy with exponential backoff
+    fn calculate_retry_delay_for_strategy(&self, attempt: u32, strategy: RetryStrategy) -> Duration {
+        let base_delay = strategy.base_delay();
+        if base_delay == Duration::from_millis(0) {
+            return Duration::from_millis(0);
+        }
+        
+        let delay = base_delay.as_millis() as u64 * (2_u64.pow(attempt - 1));
+        let max_delay = Duration::from_secs(30); // Cap at 30 seconds
+        std::cmp::min(Duration::from_millis(delay), max_delay)
     }
 }
 

@@ -8,10 +8,11 @@ use mate::chess::Color;
 use mate::cli::app::App;
 use mate::cli::network_manager::{NetworkConfig, NetworkManager};
 use mate::crypto::Identity;
-use mate::messages::chess::{GameAccept, GameInvite, Move as ChessMove};
+use mate::messages::{RetryStrategy, GameAccept, GameInvite};
+use mate::messages::chess::Move as ChessMove;
 use mate::messages::types::Message;
 use mate::network::{Client, Server};
-use mate::storage::models::{GameStatus, PlayerColor};
+use mate::storage::{GameStatus, models::PlayerColor};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -131,9 +132,7 @@ fn create_test_client(identity: Arc<Identity>) -> Client {
 /// Create a test network manager with custom configuration
 fn create_test_network_manager(identity: Arc<Identity>) -> NetworkManager {
     let config = NetworkConfig {
-        max_retry_attempts: 2,
-        base_retry_delay: Duration::from_millis(100),
-        max_retry_delay: Duration::from_secs(1),
+        default_retry_strategy: RetryStrategy::Quick, // Fast retries for tests
         connection_timeout: Duration::from_secs(5),
         max_persistent_connections: 5,
         connection_keepalive: Duration::from_secs(30),
@@ -378,9 +377,7 @@ async fn test_network_manager_configuration_behavior() {
 
     // Test with custom configuration - verify behavior differences
     let fast_config = NetworkConfig {
-        max_retry_attempts: 1, // Single attempt
-        base_retry_delay: Duration::from_millis(10),
-        max_retry_delay: Duration::from_millis(50),
+        default_retry_strategy: RetryStrategy::NoRetry, // Single attempt
         connection_timeout: Duration::from_millis(100),
         max_persistent_connections: 1,
         connection_keepalive: Duration::from_secs(1),
@@ -480,9 +477,7 @@ async fn test_timeout_behavior_consistency() {
     let identity = Arc::new(Identity::generate().expect("Failed to generate identity"));
 
     let config = NetworkConfig {
-        max_retry_attempts: 1,
-        base_retry_delay: Duration::from_millis(10),
-        max_retry_delay: Duration::from_millis(50),
+        default_retry_strategy: RetryStrategy::NoRetry,
         connection_timeout: Duration::from_millis(100), // Very short
         max_persistent_connections: 1,
         connection_keepalive: Duration::from_secs(1),
