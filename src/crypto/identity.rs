@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Unique identifier for a peer, derived from their public key
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -77,13 +78,10 @@ impl Identity {
         })
     }
 
-    /// Load identity from default storage location  
-    pub fn from_default_storage() -> Result<Self> {
-        let path = crate::crypto::storage::default_key_path()
-            .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
-
+    /// Load identity from custom storage location  
+    pub fn from_storage_path(path: &Path) -> Result<Self> {
         // Load using secure storage
-        let content = crate::crypto::storage::load_key_secure(&path)
+        let content = crate::crypto::storage::load_key_secure(path)
             .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
 
         let content_str = String::from_utf8(content).context("Invalid UTF-8 in identity file")?;
@@ -112,13 +110,10 @@ impl Identity {
         })
     }
 
-    /// Save identity to default storage location
-    pub fn save_to_default_storage(&self) -> Result<()> {
-        let path = crate::crypto::storage::default_key_path()
-            .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
-
+    /// Save identity to custom storage location
+    pub fn save_to_storage_path(&self, path: &Path) -> Result<()> {
         // Ensure directory exists
-        crate::crypto::storage::ensure_directory_exists(&path)
+        crate::crypto::storage::ensure_directory_exists(path)
             .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
 
         // Serialize identity data
@@ -130,10 +125,39 @@ impl Identity {
         let json = serde_json::to_string_pretty(&data).context("Failed to serialize identity")?;
 
         // Save using secure storage
-        crate::crypto::storage::save_key_secure(&path, json.as_bytes())
+        crate::crypto::storage::save_key_secure(path, json.as_bytes())
             .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
 
         Ok(())
+    }
+
+    /// Load or generate identity from custom data directory
+    pub fn load_or_generate_from_data_dir(data_dir: &Path) -> Result<Self> {
+        let identity_path = data_dir.join("identity.key");
+        match Self::from_storage_path(&identity_path) {
+            Ok(identity) => Ok(identity),
+            Err(_) => {
+                let identity = Self::generate()?;
+                identity.save_to_storage_path(&identity_path)?;
+                Ok(identity)
+            }
+        }
+    }
+
+    /// Load identity from default storage location  
+    pub fn from_default_storage() -> Result<Self> {
+        let path = crate::crypto::storage::default_key_path()
+            .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
+
+        Self::from_storage_path(&path)
+    }
+
+    /// Save identity to default storage location
+    pub fn save_to_default_storage(&self) -> Result<()> {
+        let path = crate::crypto::storage::default_key_path()
+            .map_err(|e| anyhow::anyhow!("Storage error: {}", e))?;
+
+        self.save_to_storage_path(&path)
     }
 
     /// Load or generate identity using secure storage

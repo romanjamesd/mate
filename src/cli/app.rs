@@ -132,11 +132,13 @@ impl App {
         // Ensure data directory exists
         Self::ensure_data_dir(&config.data_dir).context("Failed to create data directory")?;
 
-        // Load or generate identity
-        let identity =
-            Arc::new(Identity::load_or_generate().context("Failed to initialize identity")?);
+        // Load or generate identity using the specific data directory (no environment variables)
+        let identity = Arc::new(
+            Identity::load_or_generate_from_data_dir(&config.data_dir)
+                .context("Failed to initialize identity")?,
+        );
 
-        // Initialize database
+        // Initialize database with explicit path (no environment variables needed)
         let database =
             Database::new(identity.peer_id().as_str()).context("Failed to initialize database")?;
 
@@ -163,19 +165,11 @@ impl App {
         // Ensure data directory exists
         Self::ensure_data_dir(&config.data_dir).context("Failed to create data directory")?;
 
-        // Set environment variable temporarily for Identity to use the test directory
-        let original_data_dir = std::env::var("MATE_DATA_DIR").ok();
-        std::env::set_var("MATE_DATA_DIR", &data_dir);
-
-        // Load or generate identity (will use MATE_DATA_DIR)
-        let identity =
-            Arc::new(Identity::load_or_generate().context("Failed to initialize identity")?);
-
-        // Restore original environment variable immediately
-        match original_data_dir {
-            Some(original) => std::env::set_var("MATE_DATA_DIR", original),
-            None => std::env::remove_var("MATE_DATA_DIR"),
-        }
+        // Load or generate identity using the specific data directory (no environment variables)
+        let identity = Arc::new(
+            Identity::load_or_generate_from_data_dir(&data_dir)
+                .context("Failed to initialize identity")?,
+        );
 
         // Initialize database with explicit path (no environment variables needed)
         let db_path = data_dir.join("database.sqlite");
@@ -205,7 +199,10 @@ impl App {
         let test_file = data_dir.join(".write_test");
         std::fs::write(&test_file, "test")
             .with_context(|| format!("Data directory is not writable: {}", data_dir.display()))?;
-        std::fs::remove_file(&test_file).context("Failed to clean up write test file")?;
+
+        // Try to clean up test file, but don't fail if it can't be removed
+        // (test directories might be cleaned up by test framework)
+        let _ = std::fs::remove_file(&test_file);
 
         Ok(())
     }
