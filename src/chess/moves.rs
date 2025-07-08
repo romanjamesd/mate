@@ -190,7 +190,7 @@ impl fmt::Display for Move {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}{}", self.from, self.to)?;
         if let Some(promotion) = self.promotion {
-            write!(f, "{}", promotion)?;
+            write!(f, "{promotion}")?;
         }
         Ok(())
     }

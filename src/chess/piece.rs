@@ -155,6 +155,6 @@ impl fmt::Display for Piece {
             (Color::Black, PieceType::Queen) => "♛",
             (Color::Black, PieceType::King) => "♚",
         };
-        write!(f, "{}", symbol)
+        write!(f, "{symbol}")
     }
 }

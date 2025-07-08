@@ -248,14 +248,14 @@ impl App {
         }
 
         // Display header
-        println!("{}", "=".repeat(80));
+        println!("{header}", header = "=".repeat(80));
         println!("{:^80}", "CHESS GAMES");
-        println!("{}", "=".repeat(80));
+        println!("{header}", header = "=".repeat(80));
         println!(
             "{:<12} {:<20} {:<8} {:<10} {:<15} {:<10}",
             "GAME ID", "OPPONENT", "COLOR", "STATUS", "LAST UPDATED", "RESULT"
         );
-        println!("{}", "-".repeat(80));
+        println!("{line}", line = "-".repeat(80));
 
         // Display each game
         for game in &games {
@@ -294,12 +294,11 @@ impl App {
             };
 
             println!(
-                "{:<12} {:<20} {:<8} {:<10} {:<15} {:<10}",
-                game_id_short, opponent_short, color_str, status_str, updated_time, result_str
+                "{game_id_short:<12} {opponent_short:<20} {color_str:<8} {status_str:<10} {updated_time:<15} {result_str:<10}"
             );
         }
 
-        println!("{}", "-".repeat(80));
+        println!("{line}", line = "-".repeat(80));
         let game_count = games.len();
         println!("Total games: {game_count}");
         println!();
@@ -372,7 +371,7 @@ impl App {
         }
 
         // Display game information
-        println!("{}", "=".repeat(60));
+        println!("{header}", header = "=".repeat(60));
         let game_display = if target_game_id.len() > 8 {
             let short_id = &target_game_id[..8];
             format!("{short_id}...")
@@ -380,13 +379,13 @@ impl App {
             target_game_id.clone()
         };
         println!("{:^60}", format!("CHESS BOARD - GAME {game_display}"));
-        println!("{}", "=".repeat(60));
-        println!("Opponent: {}", game.opponent_peer_id);
-        println!("Your Color: {:?}", game.my_color);
-        println!("Status: {:?}", game.status);
-        println!("Moves Played: {}", move_count);
+        println!("{div}", let div = "=".repeat(60));
+        println!("Opponent: {opponent_peer_id}", opponent_peer_id = game.opponent_peer_id);
+        println!("Your Color: {my_color:?}", my_color = game.my_color);
+        println!("Status: {status:?}", status = game.status);
+        println!("Moves Played: {move_count}", move_count = move_count);
         if let Some(result) = &game.result {
-            println!("Result: {:?}", result);
+            println!("Result: {result:?}");
         }
         println!("{}", "-".repeat(60));
 
@@ -647,7 +646,7 @@ impl App {
                         game_id.clone()
                     }
                 );
-                println!("You are playing as: {:?}", accepted_color);
+                println!("You are playing as: {accepted_color:?}");
 
                 // Show if it's our turn to move
                 if accepted_color == Color::White {
@@ -658,7 +657,7 @@ impl App {
                     println!("Waiting for opponent to make the first move...");
                 }
 
-                println!("Use 'mate board --game-id {}' to view the board.", game_id);
+                println!("Use 'mate board --game-id {game_id}' to view the board.");
             }
             Err(e) => {
                 eprintln!("❌ Failed to send acceptance: {}", e);
@@ -711,9 +710,9 @@ impl App {
 
         if game.status != GameStatus::Active {
             anyhow::bail!(
-                "Game {} is not active (current status: {:?})",
-                target_game_id,
-                game.status
+                "Game {target_game_id} is not active (current status: {status:?})",
+                target_game_id = target_game_id,
+                status = game.status
             );
         }
 
@@ -750,9 +749,9 @@ impl App {
 
         if !is_our_turn {
             anyhow::bail!(
-                "It's not your turn to move. Current turn: {:?}, Your color: {:?}",
-                current_turn,
-                game.my_color
+                "It's not your turn to move. Current turn: {current_turn:?}, Your color: {my_color:?}",
+                current_turn = current_turn,
+                my_color = game.my_color
             );
         }
 
@@ -888,16 +887,16 @@ impl App {
         println!("{}", "=".repeat(70));
 
         // Display game metadata
-        println!("Game ID: {}", target_game_id);
-        println!("Opponent: {}", game.opponent_peer_id);
-        println!("Your Color: {:?}", game.my_color);
-        println!("Status: {:?}", game.status);
+        println!("Game ID: {target_game_id}", target_game_id = target_game_id);
+        println!("Opponent: {opponent_peer_id}", opponent_peer_id = game.opponent_peer_id);
+        println!("Your Color: {my_color:?}", my_color = game.my_color);
+        println!("Status: {status:?}", status = game.status);
         if let Some(result) = &game.result {
-            println!("Result: {:?}", result);
+            println!("Result: {result:?}", result = result);
         }
-        println!("Created: {}", format_timestamp(game.created_at));
+        println!("Created: {timestamp}", timestamp = format_timestamp(game.created_at));
         if let Some(completed_at) = game.completed_at {
-            println!("Completed: {}", format_timestamp(completed_at));
+            println!("Completed: {timestamp}", timestamp = format_timestamp(completed_at));
         }
         println!("{}", "-".repeat(70));
 
@@ -941,7 +940,7 @@ impl App {
         }
 
         println!("{}", "-".repeat(70));
-        println!("Total moves: {}", moves.len());
+        println!("Total moves: {move_count}", move_count = moves.len());
 
         if game.status == GameStatus::Active {
             let current_turn = if moves.len() % 2 == 0 {
@@ -957,8 +956,7 @@ impl App {
             if is_our_turn {
                 println!("It's your turn to move!");
                 println!(
-                    "Use 'mate move <move> --game-id {}' to make your next move.",
-                    target_game_id
+                    "Use 'mate move <move> --game-id {target_game_id}' to make your next move."
                 );
             } else {
                 println!("Waiting for opponent's move...");
@@ -966,8 +964,7 @@ impl App {
         }
 
         println!(
-            "Use 'mate board --game-id {}' to view the current board position.",
-            target_game_id
+            "Use 'mate board --game-id {target_game_id}' to view the current board position."
         );
 
         Ok(())
