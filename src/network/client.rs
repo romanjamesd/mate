@@ -252,6 +252,21 @@ impl Client {
     /// Internal helper method for a single connection attempt with fast-fail detection
     #[instrument(level = "debug", skip(self))]
     async fn try_connect_once_with_fast_fail(&self, addr: &str) -> Result<Connection> {
+        // Validate address length to prevent panics
+        const MAX_ADDR_LEN: usize = 256; // Reasonable limit for network addresses
+        if addr.len() > MAX_ADDR_LEN {
+            return Err(anyhow::anyhow!(
+                "Address too long ({} chars). Maximum allowed: {} characters",
+                addr.len(),
+                MAX_ADDR_LEN
+            ));
+        }
+
+        // Basic address format validation
+        if addr.trim().is_empty() {
+            return Err(anyhow::anyhow!("Address cannot be empty"));
+        }
+
         debug!(
             "Creating TCP connection to {} with fast-fail detection",
             addr

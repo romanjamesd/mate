@@ -423,6 +423,28 @@ impl App {
 
     /// Handle the 'invite' command - Send game invitation to a peer
     pub async fn handle_invite(&self, address: String, color: Option<String>) -> Result<()> {
+        // Validate address format and length
+        const MAX_ADDR_LEN: usize = 256;
+        if address.len() > MAX_ADDR_LEN {
+            anyhow::bail!(
+                "Address too long ({} characters). Maximum allowed: {} characters",
+                address.len(),
+                MAX_ADDR_LEN
+            );
+        }
+
+        if address.trim().is_empty() {
+            anyhow::bail!("Address cannot be empty");
+        }
+
+        // Basic format validation for host:port
+        if !address.contains(':') {
+            anyhow::bail!(
+                "Invalid address format '{}'. Expected format: host:port (e.g., 127.0.0.1:8080)",
+                address
+            );
+        }
+
         println!("Sending chess game invitation to {}...", address);
 
         // Parse color preference

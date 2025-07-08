@@ -219,7 +219,8 @@ impl<'a> GameOps<'a> {
             0 => Err(GameOpsError::GameNotFound(partial_id.to_string())),
             1 => Ok(matches.into_iter().next().unwrap()),
             _ => Err(GameOpsError::InvalidGameState(format!(
-                "Ambiguous game ID '{partial_id}' matches multiple games"))),
+                "Ambiguous game ID '{partial_id}' matches multiple games"
+            ))),
         }
     }
 

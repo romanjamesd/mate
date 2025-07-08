@@ -165,15 +165,23 @@ impl Database {
         if std::env::var("MATE_DATA_DIR").is_ok() {
             // In test mode, use DELETE journal mode to avoid persistent WAL files
             conn.pragma_update(None, "journal_mode", "DELETE")?;
+            // Set busy timeout for better concurrent access in tests
+            conn.pragma_update(None, "busy_timeout", 30000)?; // 30 seconds timeout
         } else {
             // In production, use WAL mode for better performance
             conn.pragma_update(None, "journal_mode", "WAL")?;
+            // Set busy timeout for better concurrent access
+            conn.pragma_update(None, "busy_timeout", 5000)?; // 5 seconds timeout
         }
 
         conn.pragma_update(None, "synchronous", "NORMAL")?; // Good balance of safety/speed
         conn.pragma_update(None, "cache_size", -64000)?; // 64MB cache
         conn.pragma_update(None, "temp_store", "memory")?; // Store temp tables in memory
         conn.pragma_update(None, "mmap_size", 268435456i64)?; // 256MB memory map
+
+        // Additional settings for better concurrency
+        conn.pragma_update(None, "lock_timeout", 10000)?; // 10 seconds lock timeout
+        conn.pragma_update(None, "wal_autocheckpoint", 1000)?; // Checkpoint every 1000 pages
 
         Ok(conn)
     }

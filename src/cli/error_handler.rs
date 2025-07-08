@@ -147,17 +147,61 @@ impl From<anyhow::Error> for CliError {
     fn from(err: anyhow::Error) -> Self {
         // For anyhow errors, create a generic user error with the error chain
         let root_cause = err.root_cause();
+        let error_string = err.to_string().to_lowercase();
+        let root_cause_string = root_cause.to_string().to_lowercase();
 
-        // Check if it's a specific error type we can format better
-        if root_cause.to_string().contains("Database") {
+        // Check for specific network errors first
+        if error_string.contains("failed to connect")
+            || root_cause_string.contains("connection refused")
+        {
+            return CliError::UserError {
+                message: "Failed to connect to server".to_string(),
+                suggestion: Some("Check that the address is correct and the peer is online. Verify network connectivity.".to_string()),
+            };
+        }
+
+        if error_string.contains("address too long")
+            || root_cause_string.contains("address too long")
+        {
+            return CliError::UserError {
+                message: "Network address is too long".to_string(),
+                suggestion: Some(
+                    "Use a shorter address format like 'host:port' (e.g., '127.0.0.1:8080')."
+                        .to_string(),
+                ),
+            };
+        }
+
+        if error_string.contains("timeout") || root_cause_string.contains("timeout") {
+            return CliError::UserError {
+                message: "Network operation timed out".to_string(),
+                suggestion: Some("The peer may be slow to respond or unreachable. Check connectivity and try again.".to_string()),
+            };
+        }
+
+        if error_string.contains("invalid address") || root_cause_string.contains("invalid address")
+        {
+            return CliError::UserError {
+                message: "Invalid network address format".to_string(),
+                suggestion: Some(
+                    "Use format 'host:port' (e.g., '192.168.1.100:8080' or 'example.com:8080')."
+                        .to_string(),
+                ),
+            };
+        }
+
+        // Check for database-related errors
+        if error_string.contains("database") || root_cause_string.contains("database") {
             return CliError::UserError {
                 message: "Database operation failed".to_string(),
                 suggestion: Some("Check file permissions and database integrity. Try restarting the application.".to_string()),
             };
         }
 
-        if root_cause.to_string().contains("Connection")
-            || root_cause.to_string().contains("network")
+        // Check for more specific network errors
+        if error_string.contains("connection")
+            || error_string.contains("network")
+            || root_cause_string.contains("connection")
         {
             return CliError::UserError {
                 message: "Network operation failed".to_string(),
@@ -168,10 +212,17 @@ impl From<anyhow::Error> for CliError {
             };
         }
 
-        // For other anyhow errors, create a generic user error
+        // For other anyhow errors, create a generic user error but avoid exposing raw technical details
+        let user_message = if error_string.contains("anyhow") || error_string.contains("error:") {
+            "An unexpected error occurred".to_string()
+        } else {
+            // Use the error message but clean it up
+            err.to_string()
+        };
+
         CliError::UserError {
-            message: format!("{err}"),
-            suggestion: Some("Check the error details above and try again.".to_string()),
+            message: user_message,
+            suggestion: Some("Check the error details above and try again. If the problem persists, this may be a bug.".to_string()),
         }
     }
 }
@@ -251,26 +302,28 @@ fn format_storage_error(error: &StorageError) -> String {
 /// Format connection errors with user-friendly messages
 fn format_connection_error(error: &ConnectionError) -> String {
     match error {
-        ConnectionError::WireProtocol(wire_err) => {
-            format!("🌐 Communication protocol error: {wire_err}\n   💡 Suggestion: Check network connection and ensure both players use compatible versions.")
+        ConnectionError::WireProtocol(_wire_err) => {
+            format!("🌐 Communication protocol error\n   💡 Suggestion: Check network connection and ensure both players use compatible versions.")
         }
-        ConnectionError::HandshakeFailed { reason } => {
-            format!("🤝 Connection handshake failed: {reason}\n   💡 Suggestion: Verify the peer address is correct and the peer is online. Check for network connectivity issues.")
+        ConnectionError::HandshakeFailed { reason: _ } => {
+            // Don't expose technical handshake details
+            format!("🤝 Failed to connect to peer\n   💡 Suggestion: Verify the peer address is correct and the peer is online. Check for network connectivity issues.")
         }
-        ConnectionError::AuthenticationFailed { peer_id } => {
-            format!("🔐 Authentication failed with peer {peer_id}\n   💡 Suggestion: The peer may be using different credentials. Ensure both players have compatible identities.")
+        ConnectionError::AuthenticationFailed { peer_id: _ } => {
+            format!("🔐 Authentication failed with peer\n   💡 Suggestion: The peer may be using different credentials. Ensure both players have compatible identities.")
         }
         ConnectionError::ConnectionClosed => {
             "🌐 Connection closed unexpectedly\n   💡 Suggestion: The peer may have disconnected. Try reconnecting to continue the game.".to_string()
         }
         ConnectionError::InvalidSignature => {
-            "🔒 Message signature verification failed\n   💡 Suggestion: This may indicate a security issue or incompatible software versions. Try reconnecting.".to_string()
+            "🔒 Message verification failed\n   💡 Suggestion: This may indicate a security issue or incompatible software versions. Try reconnecting.".to_string()
         }
         ConnectionError::InvalidTimestamp => {
-            "🕐 Message timestamp validation failed\n   💡 Suggestion: Check that your system clock is synchronized. The message may be too old or from the future.".to_string()
+            "🕐 Message timing validation failed\n   💡 Suggestion: Check that your system clock is synchronized. Try reconnecting.".to_string()
         }
-        ConnectionError::Io(io_err) => {
-            format!("🌐 Network I/O error: {io_err}\n   💡 Suggestion: Check network connection and try again. The peer may be unreachable.")
+        ConnectionError::Io(_) => {
+            // Don't expose raw I/O error details
+            "🌐 Failed to connect to server\n   💡 Suggestion: Check that the address is correct and the peer is reachable. Verify network connectivity.".to_string()
         }
     }
 }
