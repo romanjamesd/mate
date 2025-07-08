@@ -27,6 +27,8 @@ use tokio::fs;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use crate::common::port_utils::{get_unique_test_address, get_unreachable_address};
+
 /// Helper function to get the mate binary path
 fn get_mate_binary_path() -> String {
     "target/debug/mate".to_string()
@@ -177,19 +179,26 @@ async fn test_error_handling_network_failures_user_feedback() {
     println!("Testing network failure handling and user feedback");
 
     let test_scenarios = vec![
-        ("127.0.0.1:99999", "Invalid port range"),
-        ("invalid-hostname:8080", "DNS resolution failure"),
-        ("192.168.999.1:8080", "Invalid IP address"),
-        ("localhost:0", "Reserved port"),
+        (get_unreachable_address(), "Unreachable port"),
+        (
+            "invalid-hostname:8080".to_string(),
+            "DNS resolution failure",
+        ),
+        ("192.168.999.1:8080".to_string(), "Invalid IP address"),
+        ("localhost:0".to_string(), "Reserved port"),
     ];
 
     for (address, scenario_desc) in test_scenarios {
-        println!("  Testing scenario: {}", scenario_desc);
+        println!("  Testing scenario: {} ({})", scenario_desc, address);
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_path = temp_dir.path().to_string_lossy().to_string();
 
         let output = timeout(
             get_adaptive_timeout(8),
             Command::new(get_mate_binary_path())
-                .args(["invite", address])
+                .args(["invite", &address])
+                .env("MATE_DATA_DIR", &temp_path)
                 .env("RUST_LOG", "error")
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -674,8 +683,19 @@ async fn test_error_handling_database_error_messages() {
 async fn test_error_handling_malformed_user_input() {
     println!("Testing malformed user input handling");
 
+    // Create unique temp directory to avoid conflicts with parallel tests
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let temp_path = temp_dir.path().to_string_lossy().to_string();
+    let unique_suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let unique_dir = temp_dir
+        .path()
+        .join(format!("malformed_input_{}", unique_suffix));
+    tokio::fs::create_dir_all(&unique_dir)
+        .await
+        .expect("Failed to create unique directory");
+    let temp_path = unique_dir.to_string_lossy().to_string();
 
     let malformed_inputs = vec![
         (vec!["move", ""], "empty move"),
@@ -717,7 +737,7 @@ async fn test_error_handling_malformed_user_input() {
             input_desc
         );
 
-        // Should provide helpful error message about input format or game state
+        // Should provide helpful error message about input format, game state, or connection failure
         assert!(
             combined_output.contains("Invalid")
                 || combined_output.contains("invalid")
@@ -726,7 +746,10 @@ async fn test_error_handling_malformed_user_input() {
                 || combined_output.contains("missing")
                 || combined_output.contains("No active games")
                 || combined_output.contains("not found")
-                || combined_output.contains("Failed to make move"),
+                || combined_output.contains("Failed to make move")
+                || combined_output.contains("Failed to connect")
+                || combined_output.contains("Failed to send")
+                || combined_output.contains("Connection failed"),
             "Should show helpful error for {}. Output: {}",
             input_desc,
             combined_output

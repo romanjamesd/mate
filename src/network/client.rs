@@ -1,16 +1,15 @@
 use crate::crypto::Identity;
 use crate::messages::{
-    wire::{WireConfig, FAST_FAIL_CONNECTION_TIMEOUT,
-           FailureClass, RetryStrategy},
+    wire::{FailureClass, RetryStrategy, WireConfig, FAST_FAIL_CONNECTION_TIMEOUT},
     Message,
 };
 use crate::network::Connection;
 use anyhow::{Context, Result};
 use rand;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tracing::{debug, error, info, instrument, warn};
-use std::time::Duration;
 
 // Step 4.2: Error conversion is automatically provided by anyhow's blanket implementation
 // since ConnectionError implements std::error::Error via thiserror::Error
@@ -134,12 +133,17 @@ impl Client {
     /// Connect to a peer with smart retry logic and failure classification
     #[instrument(level = "info", skip(self))]
     pub async fn connect(&self, addr: &str) -> Result<Connection> {
-        self.connect_with_strategy(addr, RetryStrategy::Normal).await
+        self.connect_with_strategy(addr, RetryStrategy::Normal)
+            .await
     }
 
     /// Connect to a peer with a specific retry strategy
     #[instrument(level = "info", skip(self))]
-    pub async fn connect_with_strategy(&self, addr: &str, strategy: RetryStrategy) -> Result<Connection> {
+    pub async fn connect_with_strategy(
+        &self,
+        addr: &str,
+        strategy: RetryStrategy,
+    ) -> Result<Connection> {
         info!("Attempting to connect to {}", addr);
         debug!(
             "Using wire config - max_message_size: {}, read_timeout: {:?}, write_timeout: {:?}",
@@ -148,17 +152,17 @@ impl Client {
             self.wire_config.write_timeout
         );
 
-        // Use strategy-appropriate retry counts and delays  
+        // Use strategy-appropriate retry counts and delays
         let max_retry_attempts = match strategy {
             RetryStrategy::NoRetry => 1,
-            RetryStrategy::Quick => 2,   // Quick: 2 attempts, ~3 seconds total
-            RetryStrategy::Normal => 3,  // Normal: 3 attempts, ~7 seconds total
+            RetryStrategy::Quick => 2, // Quick: 2 attempts, ~3 seconds total
+            RetryStrategy::Normal => 3, // Normal: 3 attempts, ~7 seconds total
             RetryStrategy::Patient => 4, // Patient: 4 attempts, ~15 seconds total
         };
 
         let base_retry_delay = match strategy {
             RetryStrategy::NoRetry => Duration::from_millis(0),
-            RetryStrategy::Quick => Duration::from_millis(500),   // 0.5s base delay
+            RetryStrategy::Quick => Duration::from_millis(500), // 0.5s base delay
             RetryStrategy::Normal => Duration::from_millis(1000), // 1s base delay
             RetryStrategy::Patient => Duration::from_millis(2000), // 2s base delay
         };
@@ -189,7 +193,8 @@ impl Client {
                         Err(e) => {
                             error!("Handshake failed with {}: {}", addr, e);
                             last_error = Some(anyhow::anyhow!("Handshake failed: {}", e));
-                            failure_class = FailureClass::classify_error(&last_error.as_ref().unwrap());
+                            failure_class =
+                                FailureClass::classify_error(&last_error.as_ref().unwrap());
 
                             // If handshake fails and it's a no-retry error, exit immediately
                             if failure_class == FailureClass::NoRetry {
@@ -217,7 +222,10 @@ impl Client {
 
                     // If this is a no-retry error (DNS, invalid address), exit immediately
                     if failure_class == FailureClass::NoRetry {
-                        error!("Fast-failing on connection error: {}", last_error.as_ref().unwrap());
+                        error!(
+                            "Fast-failing on connection error: {}",
+                            last_error.as_ref().unwrap()
+                        );
                         return Err(last_error.unwrap());
                     }
                 }
@@ -244,13 +252,14 @@ impl Client {
     /// Internal helper method for a single connection attempt with fast-fail detection
     #[instrument(level = "debug", skip(self))]
     async fn try_connect_once_with_fast_fail(&self, addr: &str) -> Result<Connection> {
-        debug!("Creating TCP connection to {} with fast-fail detection", addr);
+        debug!(
+            "Creating TCP connection to {} with fast-fail detection",
+            addr
+        );
 
         // Use shorter timeout for initial connection attempt to detect obvious failures quickly
-        let connection_result = tokio::time::timeout(
-            FAST_FAIL_CONNECTION_TIMEOUT,
-            TcpStream::connect(addr)
-        ).await;
+        let connection_result =
+            tokio::time::timeout(FAST_FAIL_CONNECTION_TIMEOUT, TcpStream::connect(addr)).await;
 
         let stream = match connection_result {
             Ok(stream_result) => {
@@ -259,9 +268,9 @@ impl Client {
             Err(_) => {
                 // Timeout occurred - this could be a legitimate slow connection, retry with normal timeout
                 debug!("Fast connection attempt timed out, trying with normal timeout");
-                TcpStream::connect(addr)
-                    .await
-                    .with_context(|| format!("Failed to connect to {} (after fast-fail timeout)", addr))?
+                TcpStream::connect(addr).await.with_context(|| {
+                    format!("Failed to connect to {} (after fast-fail timeout)", addr)
+                })?
             }
         };
 

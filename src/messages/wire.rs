@@ -2422,7 +2422,7 @@ impl FailureClass {
     /// Classify an error for retry decisions
     pub fn classify_error(error: &anyhow::Error) -> Self {
         let error_str = error.to_string().to_lowercase();
-        
+
         // Check for immediate failures that should not be retried
         if error_str.contains("name or service not known")
             || error_str.contains("no such host")
@@ -2436,7 +2436,8 @@ impl FailureClass {
             || error_str.contains("could not resolve hostname")
             || error_str.contains("connection refused")  // Often means service not running
             || error_str.contains("network unreachable") // Network config issue
-            || error_str.contains("no route to host")     // Routing issue
+            || error_str.contains("no route to host")
+        // Routing issue
         {
             return FailureClass::NoRetry;
         }
