@@ -219,9 +219,7 @@ impl<'a> GameOps<'a> {
             0 => Err(GameOpsError::GameNotFound(partial_id.to_string())),
             1 => Ok(matches.into_iter().next().unwrap()),
             _ => Err(GameOpsError::InvalidGameState(format!(
-                "Ambiguous game ID '{}' matches multiple games",
-                partial_id
-            ))),
+                "Ambiguous game ID '{partial_id}' matches multiple games"))),
         }
     }
 
@@ -572,9 +570,9 @@ impl<'a> MoveProcessor<'a> {
         // Verify board hash matches message
         let actual_hash = crate::messages::chess::hash_board_state(&updated_board);
         if actual_hash != move_message.board_state_hash {
+            let expected_hash = move_message.board_state_hash.clone();
             return Err(MoveProcessingError::BoardStateError(format!(
-                "Board state hash mismatch. Expected: {}, Got: {}",
-                move_message.board_state_hash, actual_hash
+                "Board state hash mismatch. Expected: {expected_hash}, Got: {actual_hash}"
             )));
         }
 
