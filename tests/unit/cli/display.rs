@@ -410,7 +410,8 @@ fn test_unicode_support_detection() {
     let supports = supports_unicode();
 
     // Should return a boolean without error
-    assert!(supports == true || supports == false);
+    // Note: supports_unicode() returns a boolean based on environment detection
+    let _ = supports;
 }
 
 #[test]

@@ -4,108 +4,28 @@
 //! Based on step 3.2 of the testing plan
 
 use anyhow::Result;
-use mate::chess::Color;
 use mate::cli::app::App;
 use mate::cli::network_manager::{NetworkConfig, NetworkManager};
 use mate::crypto::Identity;
 use mate::messages::chess::Move as ChessMove;
-use mate::messages::types::Message;
 use mate::messages::{GameAccept, GameInvite, RetryStrategy};
-use mate::network::{Client, Server};
 use mate::storage::{models::PlayerColor, GameStatus};
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
-use crate::common::port_utils::{get_unique_test_address, get_unique_test_port};
+use crate::common::port_utils::get_unique_test_address;
 
 // =============================================================================
 // Test Utilities & Mock Infrastructure
 // =============================================================================
-
-/// Tracks network operations for testing
-#[derive(Debug, Default, Clone)]
-struct NetworkOperationTracker {
-    invite_attempts: Arc<Mutex<Vec<(String, String)>>>, // (peer_address, game_id)
-    accept_attempts: Arc<Mutex<Vec<(String, String)>>>, // (peer_address, game_id)
-    move_attempts: Arc<Mutex<Vec<(String, String)>>>,   // (peer_address, game_id)
-    connection_attempts: Arc<Mutex<Vec<String>>>,       // peer_addresses
-    retry_counts: Arc<Mutex<Vec<u32>>>,                 // retry attempt counts
-}
-
-impl NetworkOperationTracker {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn record_invite_attempt(&self, peer_address: &str, game_id: &str) {
-        self.invite_attempts
-            .lock()
-            .unwrap()
-            .push((peer_address.to_string(), game_id.to_string()));
-    }
-
-    fn record_accept_attempt(&self, peer_address: &str, game_id: &str) {
-        self.accept_attempts
-            .lock()
-            .unwrap()
-            .push((peer_address.to_string(), game_id.to_string()));
-    }
-
-    fn record_move_attempt(&self, peer_address: &str, game_id: &str) {
-        self.move_attempts
-            .lock()
-            .unwrap()
-            .push((peer_address.to_string(), game_id.to_string()));
-    }
-
-    fn record_connection_attempt(&self, peer_address: &str) {
-        self.connection_attempts
-            .lock()
-            .unwrap()
-            .push(peer_address.to_string());
-    }
-
-    fn record_retry(&self, attempt_count: u32) {
-        self.retry_counts.lock().unwrap().push(attempt_count);
-    }
-
-    fn get_invite_attempts(&self) -> Vec<(String, String)> {
-        self.invite_attempts.lock().unwrap().clone()
-    }
-
-    fn get_accept_attempts(&self) -> Vec<(String, String)> {
-        self.accept_attempts.lock().unwrap().clone()
-    }
-
-    fn get_move_attempts(&self) -> Vec<(String, String)> {
-        self.move_attempts.lock().unwrap().clone()
-    }
-
-    fn get_connection_attempts(&self) -> Vec<String> {
-        self.connection_attempts.lock().unwrap().clone()
-    }
-
-    fn get_retry_counts(&self) -> Vec<u32> {
-        self.retry_counts.lock().unwrap().clone()
-    }
-}
 
 /// Create a test app with isolated temporary directory
 async fn create_test_app() -> Result<(App, TempDir)> {
     let temp_dir = TempDir::new()?;
     let app = App::new_with_data_dir(temp_dir.path().to_path_buf()).await?;
     Ok((app, temp_dir))
-}
-
-/// Create a test server for network operations
-async fn create_test_server() -> Result<(Server, String)> {
-    let identity = Arc::new(Identity::generate()?);
-    let server = Server::bind("127.0.0.1:0", identity).await?;
-    let addr = server.local_addr()?.to_string();
-    Ok((server, addr))
 }
 
 /// Create a test game in the database
@@ -124,11 +44,6 @@ async fn create_test_game(
     }
 
     Ok(game.id)
-}
-
-/// Create a test client with custom configuration
-fn create_test_client(identity: Arc<Identity>) -> Client {
-    Client::new(identity)
 }
 
 /// Create a test network manager with custom configuration
@@ -444,23 +359,10 @@ async fn test_network_stats_structure_and_relationships() {
         "Healthy connections should not exceed active connections"
     );
 
-    // Verify stats are non-negative
-    assert!(
-        stats.active_connections >= 0,
-        "Active connections should be non-negative"
-    );
-    assert!(
-        stats.healthy_connections >= 0,
-        "Healthy connections should be non-negative"
-    );
-    assert!(
-        stats.total_pending_messages >= 0,
-        "Pending messages should be non-negative"
-    );
+    // Stats are always non-negative (unsigned types), so just verify they're accessible
 
     // Verify stats object can be used programmatically
-    let total_stats = stats.active_connections + stats.total_pending_messages;
-    assert!(total_stats >= 0, "Combined stats should be meaningful");
+    let _total_stats = stats.active_connections + stats.total_pending_messages;
 }
 
 // =============================================================================

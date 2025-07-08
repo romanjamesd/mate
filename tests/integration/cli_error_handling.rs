@@ -15,11 +15,11 @@ use mate::cli::error_handler::{
     create_input_validation_error, create_network_timeout_error, handle_chess_command_error,
     is_recoverable_error,
 };
-use mate::cli::{App, CliError, GameOpsError};
+use mate::cli::{CliError, GameOpsError};
 use mate::messages::wire::WireProtocolError;
 use mate::network::ConnectionError;
 use mate::storage::errors::StorageError;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -27,7 +27,7 @@ use tokio::fs;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::common::port_utils::{get_unique_test_address, get_unreachable_address};
+use crate::common::port_utils::get_unreachable_address;
 
 /// Helper function to get the mate binary path
 fn get_mate_binary_path() -> String {
@@ -67,14 +67,8 @@ fn get_adaptive_timeout(base_seconds: u64) -> Duration {
     Duration::from_secs_f64(base_seconds as f64 * multiplier)
 }
 
-/// Helper function to create test app with custom data directory
-async fn create_test_app_with_custom_dir(temp_dir: &TempDir) -> Result<App> {
-    let data_dir = temp_dir.path().to_path_buf();
-    App::new_with_data_dir(data_dir).await
-}
-
 /// Helper function to create corrupted database file
-async fn create_corrupted_database(data_dir: &PathBuf) -> Result<()> {
+async fn create_corrupted_database(data_dir: &Path) -> Result<()> {
     let db_path = data_dir.join("database.sqlite");
     fs::write(&db_path, b"This is not a valid SQLite database").await?;
     Ok(())
@@ -956,7 +950,7 @@ async fn test_error_handling_edge_cases() {
         // Should handle edge cases gracefully (not crash)
         let exit_code = command_output.status.code().unwrap_or(-1);
         assert!(
-            exit_code >= 0 && exit_code < 128,
+            (0..128).contains(&exit_code),
             "Should handle edge case '{}' gracefully, got exit code: {}",
             case_desc,
             exit_code

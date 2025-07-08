@@ -300,15 +300,6 @@ impl NetworkManager {
         Err(final_error)
     }
 
-    /// Get an existing healthy connection or create a new one
-    async fn get_or_create_connection(&self, peer_address: &str) -> Result<Connection> {
-        self.get_or_create_connection_with_strategy(
-            peer_address,
-            self.config.default_retry_strategy,
-        )
-        .await
-    }
-
     /// Get an existing healthy connection or create a new one with a specific retry strategy
     async fn get_or_create_connection_with_strategy(
         &self,

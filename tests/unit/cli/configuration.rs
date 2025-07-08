@@ -73,7 +73,7 @@ fn create_corrupted_config_toml(config_dir: &PathBuf) -> Result<PathBuf> {
     let config_file = config_dir.join("config.toml");
 
     // Write binary data that's not valid UTF-8
-    fs::write(&config_file, &[0xFF, 0xFE, 0xFD, 0xFC])?;
+    fs::write(&config_file, [0xFF, 0xFE, 0xFD, 0xFC])?;
     Ok(config_file)
 }
 

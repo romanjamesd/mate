@@ -168,7 +168,7 @@ impl Client {
         };
 
         let mut last_error = None;
-        let mut failure_class = FailureClass::Retriable;
+        let mut failure_class: FailureClass;
 
         for attempt in 1..=max_retry_attempts {
             debug!(
@@ -194,7 +194,7 @@ impl Client {
                             error!("Handshake failed with {}: {}", addr, e);
                             last_error = Some(anyhow::anyhow!("Handshake failed: {}", e));
                             failure_class =
-                                FailureClass::classify_error(&last_error.as_ref().unwrap());
+                                FailureClass::classify_error(last_error.as_ref().unwrap());
 
                             // If handshake fails and it's a no-retry error, exit immediately
                             if failure_class == FailureClass::NoRetry {
@@ -218,7 +218,7 @@ impl Client {
                         addr, attempt, e
                     );
                     last_error = Some(e);
-                    failure_class = FailureClass::classify_error(&last_error.as_ref().unwrap());
+                    failure_class = FailureClass::classify_error(last_error.as_ref().unwrap());
 
                     // If this is a no-retry error (DNS, invalid address), exit immediately
                     if failure_class == FailureClass::NoRetry {
@@ -705,43 +705,6 @@ impl Client {
         // ```
 
         false // Currently no pooling, so no cached connections
-    }
-
-    /// Get or create a connection to the specified address
-    ///
-    /// TODO: Future implementation should include:
-    /// - Connection reuse from pool if available and healthy
-    /// - Automatic reconnection for stale connections
-    /// - Connection limit enforcement
-    /// - Load balancing for multiple addresses
-    pub async fn get_or_create_connection(&self, addr: &str) -> Result<Connection> {
-        // Placeholder for future connection pooling implementation
-        //
-        // Implementation would:
-        // 1. Check pool for existing healthy connection
-        // 2. Return cached connection if available
-        // 3. Create new connection if needed
-        // 4. Add new connection to pool
-        // 5. Enforce pool size limits
-        //
-        // Example future implementation:
-        // ```rust
-        // if let Some(conn) = self.connection_pool.get_healthy(addr).await {
-        //     debug!("Reusing pooled connection to {}", addr);
-        //     return Ok(conn);
-        // }
-        //
-        // let new_conn = self.connect(addr).await?;
-        // self.connection_pool.insert(addr, new_conn.clone()).await;
-        // Ok(new_conn)
-        // ```
-
-        // For now, always create a new connection
-        debug!(
-            "Creating new connection to {} (pooling not yet implemented)",
-            addr
-        );
-        self.connect(addr).await
     }
 
     /// Perform health check on a connection

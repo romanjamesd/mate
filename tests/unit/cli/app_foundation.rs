@@ -46,11 +46,6 @@ impl TestEnvironment {
             test_data_dir: unique_test_dir,
         }
     }
-
-    /// Get the test data directory path
-    fn data_dir(&self) -> &std::path::Path {
-        &self.test_data_dir
-    }
 }
 
 impl Drop for TestEnvironment {

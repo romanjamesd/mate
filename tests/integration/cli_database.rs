@@ -68,38 +68,6 @@ impl TestEnvironment {
 
         game.id
     }
-
-    fn create_test_game_with_moves(&self, db: &Database, move_count: u32) -> String {
-        let game_id = self.create_test_game(db, "test_opponent", GameStatus::Active);
-
-        for i in 0..move_count {
-            let move_notation = if i % 2 == 0 { "e2e4" } else { "e7e5" };
-            let sender = if i % 2 == 0 {
-                "test_peer_cli"
-            } else {
-                "test_opponent"
-            };
-
-            db.store_message(
-                game_id.clone(),
-                "Move".to_string(),
-                json!({
-                    "game_id": game_id,
-                    "chess_move": move_notation,
-                    "board_state_hash": format!("hash_{}", i)
-                })
-                .to_string(),
-                format!("sig_{}", i),
-                sender.to_string(),
-            )
-            .expect("Failed to store test move");
-
-            // Small delay to ensure different timestamps
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-
-        game_id
-    }
 }
 
 impl Drop for TestEnvironment {

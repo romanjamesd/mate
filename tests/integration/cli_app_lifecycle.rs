@@ -577,7 +577,7 @@ async fn test_cli_resource_management_across_commands() {
     // Test mixed command types for resource management
     println!("  Testing resource management with mixed command types...");
 
-    let mixed_commands = vec![
+    let mixed_commands = [
         vec!["games"],
         vec!["board"],
         vec!["history"],
@@ -619,7 +619,7 @@ async fn test_cli_resource_management_across_commands() {
     println!("  Testing database resource management...");
 
     // Create multiple database operations to test connection handling
-    let db_operations = vec![
+    let db_operations = [
         vec!["games"],
         vec!["board"],
         vec!["games"],
