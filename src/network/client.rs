@@ -263,13 +263,13 @@ impl Client {
 
         let stream = match connection_result {
             Ok(stream_result) => {
-                stream_result.with_context(|| format!("Failed to connect to {}", addr))?
+                stream_result.with_context(|| format!("Failed to connect to {addr}"))?
             }
             Err(_) => {
                 // Timeout occurred - this could be a legitimate slow connection, retry with normal timeout
                 debug!("Fast connection attempt timed out, trying with normal timeout");
                 TcpStream::connect(addr).await.with_context(|| {
-                    format!("Failed to connect to {} (after fast-fail timeout)", addr)
+                    format!("Failed to connect to {addr} (after fast-fail timeout)")
                 })?
             }
         };
@@ -548,7 +548,7 @@ impl Client {
         let mut connection = self
             .connect(addr)
             .await
-            .with_context(|| format!("Failed to connect to {}", addr))?;
+            .with_context(|| format!("Failed to connect to {addr}"))?;
 
         let peer_id = connection.peer_identity().unwrap_or("unknown").to_string();
 
@@ -558,7 +558,7 @@ impl Client {
         connection
             .send_message(message)
             .await
-            .with_context(|| format!("Failed to send message to {}", addr))?;
+            .with_context(|| format!("Failed to send message to {addr}"))?;
 
         debug!("Message sent successfully, waiting for response");
 
@@ -566,7 +566,7 @@ impl Client {
         let (response_message, response_sender) = connection
             .receive_message()
             .await
-            .with_context(|| format!("Failed to receive response from {}", addr))?;
+            .with_context(|| format!("Failed to receive response from {addr}"))?;
 
         info!(
             "Received response from {} (type: {}, nonce: {})",

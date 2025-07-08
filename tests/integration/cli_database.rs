@@ -175,10 +175,10 @@ fn test_database_game_state_reconstruction() {
             json!({
                 "game_id": game_id,
                 "chess_move": move_notation,
-                "board_state_hash": format!("hash_{}", i)
+                "board_state_hash": format!("hash_{i}")
             })
             .to_string(),
-            format!("sig_{}", i),
+            format!("sig_{i}"),
             sender.to_string(),
         )
         .expect("Failed to store test move");

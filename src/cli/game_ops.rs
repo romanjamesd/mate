@@ -160,7 +160,7 @@ impl<'a> GameOps<'a> {
             if message.message_type == "Move" {
                 let move_msg: MoveMessage =
                     serde_json::from_str(&message.content).map_err(|e| {
-                        GameOpsError::Serialization(format!("Failed to parse move message: {}", e))
+                        GameOpsError::Serialization(format!("Failed to parse move message: {e}"))
                     })?;
 
                 // Parse the chess move from algebraic notation
@@ -237,7 +237,7 @@ impl<'a> GameOps<'a> {
             if let Some(invite_msg) = messages.iter().find(|m| m.message_type == "GameInvite") {
                 let invite: GameInvite =
                     serde_json::from_str(&invite_msg.content).map_err(|e| {
-                        GameOpsError::Serialization(format!("Failed to parse invitation: {}", e))
+                        GameOpsError::Serialization(format!("Failed to parse invitation: {e}"))
                     })?;
 
                 let suggested_color = invite.suggested_color.map(|c| match c {
@@ -548,7 +548,7 @@ impl<'a> MoveProcessor<'a> {
     ) -> MoveResult<MoveProcessingResult> {
         // Validate message format and security
         crate::messages::chess::validate_move_message(move_message).map_err(|e| {
-            MoveProcessingError::InvalidMove(format!("Message validation failed: {}", e))
+            MoveProcessingError::InvalidMove(format!("Message validation failed: {e}"))
         })?;
 
         // Reconstruct current game state
@@ -629,7 +629,7 @@ impl<'a> MoveProcessor<'a> {
             if message.message_type == "Move" {
                 let move_message: MoveMessage =
                     serde_json::from_str(&message.content).map_err(|e| {
-                        MoveProcessingError::HistoryError(format!("Failed to parse move: {}", e))
+                        MoveProcessingError::HistoryError(format!("Failed to parse move: {e}"))
                     })?;
 
                 let chess_move =
@@ -688,7 +688,7 @@ impl<'a> MoveProcessor<'a> {
         // Security validation
         crate::messages::chess::security::validate_secure_chess_move(move_notation, game_id)
             .map_err(|e| {
-                MoveProcessingError::InvalidMove(format!("Security validation failed: {}", e))
+                MoveProcessingError::InvalidMove(format!("Security validation failed: {e}"))
             })?;
 
         Ok(())
@@ -697,10 +697,7 @@ impl<'a> MoveProcessor<'a> {
     /// Parse and validate move notation
     fn parse_and_validate_move(&self, move_notation: &str, board: &Board) -> MoveResult<ChessMove> {
         ChessMove::from_str_with_color(move_notation, board.active_color()).map_err(|e| {
-            MoveProcessingError::InvalidMove(format!(
-                "Failed to parse move '{}': {}",
-                move_notation, e
-            ))
+            MoveProcessingError::InvalidMove(format!("Failed to parse move '{move_notation}': {e}"))
         })
     }
 
@@ -712,7 +709,7 @@ impl<'a> MoveProcessor<'a> {
     ) -> MoveResult<()> {
         // Serialize move message
         let content = serde_json::to_string(move_message).map_err(|e| {
-            MoveProcessingError::TransactionError(format!("Failed to serialize move: {}", e))
+            MoveProcessingError::TransactionError(format!("Failed to serialize move: {e}"))
         })?;
 
         // Store in database
@@ -727,14 +724,14 @@ impl<'a> MoveProcessor<'a> {
                 "".to_string(),     // Signature would be added in networking layer
                 "self".to_string(), // Sender peer ID would be determined by context
             )
-            .map_err(|e| MoveProcessingError::TransactionError(format!("Database error: {}", e)))?;
+            .map_err(|e| MoveProcessingError::TransactionError(format!("Database error: {e}")))?;
 
         // Update game timestamp
         self.game_ops
             .database
             .update_game_status(game_id, GameStatus::Active)
             .map_err(|e| {
-                MoveProcessingError::TransactionError(format!("Failed to update game: {}", e))
+                MoveProcessingError::TransactionError(format!("Failed to update game: {e}"))
             })?;
 
         Ok(())

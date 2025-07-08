@@ -78,7 +78,7 @@ impl<'a> InputValidator<'a> {
         // Use existing chess message validation for format checking
         if let Err(e) = validate_chess_move_format(trimmed) {
             return Err(ValidationError::InvalidMove(
-                format!("{}\n\nValid move formats:\n  • Basic moves: e2e4, d7d5\n  • Promotion: e7e8q (queen), e7e8n (knight)\n  • Castling: O-O (kingside), O-O-O (queenside)", e)
+                format!("{e}\n\nValid move formats:\n  • Basic moves: e2e4, d7d5\n  • Promotion: e7e8q (queen), e7e8n (knight)\n  • Castling: O-O (kingside), O-O-O (queenside)")
             ));
         }
 
@@ -119,8 +119,7 @@ impl<'a> InputValidator<'a> {
             "random" | "rand" | "r" => Ok(None),
             "" => Ok(None), // Empty string means random
             _ => Err(ValidationError::InvalidColor(format!(
-                "Invalid color '{}'. Use 'white', 'black', or 'random'",
-                color_str
+                "Invalid color '{color_str}'. Use 'white', 'black', or 'random'"
             ))),
         }
     }
@@ -147,8 +146,7 @@ impl<'a> InputValidator<'a> {
                     Ok(addr)
                 } else {
                     Err(ValidationError::InvalidPeerAddress(format!(
-                        "Could not resolve address '{}'. Check the hostname and port",
-                        trimmed
+                        "Could not resolve address '{trimmed}'. Check the hostname and port"
                     )))
                 }
             }
@@ -156,18 +154,15 @@ impl<'a> InputValidator<'a> {
                 // Provide helpful error messages for common mistakes
                 if !trimmed.contains(':') {
                     Err(ValidationError::InvalidPeerAddress(format!(
-                        "Missing port number in '{}'. Use format like '127.0.0.1:8080'",
-                        trimmed
+                        "Missing port number in '{trimmed}'. Use format like '127.0.0.1:8080'"
                     )))
                 } else if trimmed.ends_with(':') {
                     Err(ValidationError::InvalidPeerAddress(format!(
-                        "Missing port number after ':' in '{}'. Use format like '127.0.0.1:8080'",
-                        trimmed
+                        "Missing port number after ':' in '{trimmed}'. Use format like '127.0.0.1:8080'"
                     )))
                 } else {
                     Err(ValidationError::InvalidPeerAddress(format!(
-                        "Invalid address '{}': {}. Use format like '127.0.0.1:8080'",
-                        trimmed, e
+                        "Invalid address '{trimmed}': {e}. Use format like '127.0.0.1:8080'"
                     )))
                 }
             }
@@ -219,15 +214,14 @@ impl<'a> InputValidator<'a> {
 
         match partial_matches.len() {
             0 => Err(ValidationError::GameNotFound(format!(
-                "No game found matching '{}'. Use 'mate games' to see available games",
-                trimmed
+                "No game found matching '{trimmed}'. Use 'mate games' to see available games"
             ))),
             1 => Ok(partial_matches[0].clone()),
             _ => {
                 let suggestions = partial_matches.join(", ");
                 Err(ValidationError::AmbiguousGameId(
                     trimmed.to_string(),
-                    format!("Please be more specific. Matching games: {}", suggestions),
+                    format!("Please be more specific. Matching games: {suggestions}"),
                 ))
             }
         }
@@ -267,8 +261,7 @@ impl<'a> InputValidator<'a> {
         // Use existing game ID validation from messages module
         if !validate_game_id(trimmed) {
             return Err(ValidationError::InvalidGameId(format!(
-                "'{}' is not a valid game ID format. Game IDs should be UUIDs",
-                trimmed
+                "'{trimmed}' is not a valid game ID format. Game IDs should be UUIDs"
             )));
         }
 
@@ -362,7 +355,7 @@ impl<'a> InputValidator<'a> {
         match Move::from_str_with_color(&validated_move, board_color) {
             Ok(chess_move) => Ok(chess_move),
             Err(e) => Err(ValidationError::InvalidMove(
-                format!("Cannot parse move '{}': {}\n\nTip: Use moves like 'e2e4', 'e7e8q' (promotion), or 'O-O' (castling)", validated_move, e)
+                format!("Cannot parse move '{validated_move}': {e}\n\nTip: Use moves like 'e2e4', 'e7e8q' (promotion), or 'O-O' (castling)")
             ))
         }
     }
@@ -457,9 +450,10 @@ impl InputValidationUtils {
             suggestions.push("Move too long (most moves are 4-5 characters)");
         }
 
-        let mut message = format!("Invalid move '{}'", invalid_move);
+        let mut message = format!("Invalid move '{invalid_move}'");
         if !suggestions.is_empty() {
-            message.push_str(&format!("\nSuggestions: {}", suggestions.join(", ")));
+            let suggestion_list = suggestions.join(", ");
+            message.push_str(&format!("\nSuggestions: {suggestion_list}"));
         }
 
         message.push_str("\n\nValid formats:\n  • Basic: e2e4, d7d5\n  • Promotion: e7e8q\n  • Castling: O-O, O-O-O");

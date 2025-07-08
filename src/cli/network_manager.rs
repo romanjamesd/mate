@@ -317,7 +317,7 @@ impl NetworkManager {
         )
         .await
         .context("Connection timeout")?
-        .with_context(|| format!("Failed to connect to {}", peer_address))?;
+        .with_context(|| format!("Failed to connect to {peer_address}"))?;
 
         Ok(connection)
     }

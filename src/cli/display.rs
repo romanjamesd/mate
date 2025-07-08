@@ -85,7 +85,10 @@ pub fn display_games_list(games: &[GameRecord]) {
             .as_ref()
             .map(|n| {
                 if n.len() > opponent_width {
-                    format!("{}...", &n[..opponent_width - 3])
+                    {
+                        let truncated = &n[..opponent_width - 3];
+                        format!("{truncated}...")
+                    }
                 } else {
                     n.clone()
                 }

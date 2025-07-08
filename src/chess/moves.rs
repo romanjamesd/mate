@@ -180,7 +180,7 @@ impl Move {
         }
 
         Err(ChessError::InvalidMove(format!(
-            "Invalid move format '{}'. Expected 'e2e4', 'e7e8q' for promotion, or 'O-O'/'O-O-O' for castling.", s
+            "Invalid move format '{s}'. Expected 'e2e4', 'e7e8q' for promotion, or 'O-O'/'O-O-O' for castling."
         )))
     }
 }

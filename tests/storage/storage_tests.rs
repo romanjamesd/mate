@@ -506,8 +506,8 @@ fn test_message_pagination() {
         db.store_message(
             game.id.clone(),
             "move".to_string(),
-            format!(r#"{{"move": {}}}"#, i),
-            format!("sig_{}", i),
+            format!(r#"{{"move": {i}}}"#),
+            format!("sig_{i}"),
             "sender".to_string(),
         )
         .unwrap_or_else(|_| panic!("Failed to store message {}", i));

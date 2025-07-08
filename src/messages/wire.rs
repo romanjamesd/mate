@@ -508,27 +508,26 @@ impl From<anyhow::Error> for WireProtocolError {
     fn from(err: anyhow::Error) -> Self {
         // Try to downcast to known error types first
         if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
-            return WireProtocolError::Io(std::io::Error::new(io_err.kind(), format!("{}", err)));
+            return WireProtocolError::Io(std::io::Error::new(io_err.kind(), format!("{err}")));
         }
 
         if let Some(_bincode_err) = err.downcast_ref::<bincode::Error>() {
             // Create a new serialization error with the context from anyhow
             return WireProtocolError::invalid_message_format(format!(
-                "Serialization failed: {}",
-                err
+                "Serialization failed: {err}"
             ));
         }
 
         if let Some(_timeout_err) = err.downcast_ref::<tokio::time::error::Elapsed>() {
             // Create a generic timeout error since we don't have the specific timeout duration
             return WireProtocolError::ProtocolViolation {
-                description: format!("Operation timed out: {}", err),
+                description: format!("Operation timed out: {err}"),
             };
         }
 
         // For other anyhow errors, create a generic protocol violation
         WireProtocolError::ProtocolViolation {
-            description: format!("Unexpected error: {}", err),
+            description: format!("Unexpected error: {err}"),
         }
     }
 }
@@ -787,7 +786,7 @@ impl FramedMessage {
                 "Failed to deserialize data to SignedEnvelope"
             );
             WireProtocolError::CorruptedData {
-                reason: format!("Failed to deserialize SignedEnvelope: {}", e),
+                reason: format!("Failed to deserialize SignedEnvelope: {e}"),
             }
         })?;
 
@@ -867,9 +866,7 @@ impl FramedMessage {
                         "Write operation returned 0 bytes, indicating writer is closed"
                     );
                     return Err(anyhow::anyhow!(
-                        "Write failed: writer closed after writing {} of {} bytes",
-                        total_written,
-                        data_len
+                        "Write failed: writer closed after writing {total_written} of {data_len} bytes"
                     ));
                 }
                 Ok(written) => {
@@ -897,10 +894,7 @@ impl FramedMessage {
                         "Write operation failed"
                     );
                     return Err(anyhow::anyhow!(
-                        "Write failed after writing {} of {} bytes: {}",
-                        total_written,
-                        data_len,
-                        e
+                        "Write failed after writing {total_written} of {data_len} bytes: {e}"
                     ));
                 }
             }
@@ -936,9 +930,7 @@ impl FramedMessage {
                         remaining.len()
                     );
                     return Err(anyhow::anyhow!(
-                        "Unexpected EOF while reading: got {} of {} expected bytes",
-                        total_read,
-                        buffer_len
+                        "Unexpected EOF while reading: got {total_read} of {buffer_len} expected bytes"
                     ));
                 }
                 Ok(read) => {
@@ -966,10 +958,7 @@ impl FramedMessage {
                         "Read operation failed"
                     );
                     return Err(anyhow::anyhow!(
-                        "Read failed after reading {} of {} bytes: {}",
-                        total_read,
-                        buffer_len,
-                        e
+                        "Read failed after reading {total_read} of {buffer_len} bytes: {e}"
                     ));
                 }
             }
@@ -1033,18 +1022,14 @@ impl FramedMessage {
         // Write the length prefix first with recovery logic
         Self::write_all_with_recovery(writer, &length_prefix)
             .await
-            .with_context(|| {
-                format!("Failed to write 4-byte length prefix ({})", message_length)
-            })?;
+            .with_context(|| format!("Failed to write 4-byte length prefix ({message_length})"))?;
 
         // Write the message bytes with recovery logic
         Self::write_all_with_recovery(writer, &message_bytes)
             .await
             .with_context(|| {
-                format!(
-                    "Failed to write message data ({} bytes)",
-                    message_bytes.len()
-                )
+                let message_bytes_len = message_bytes.len();
+                format!("Failed to write message data ({message_bytes_len} bytes)")
             })?;
 
         // Ensure all data is flushed to the underlying writer
@@ -1082,12 +1067,12 @@ impl FramedMessage {
         // Validate the length with enhanced DoS protection
         let validated_length = self
             .validate_length(message_length)
-            .with_context(|| format!("Invalid message length received: {}", message_length))?;
+            .with_context(|| format!("Invalid message length received: {message_length}"))?;
 
         // Safe allocation with DoS protection
         let mut message_buffer = self
             .safe_allocate(validated_length)
-            .with_context(|| format!("Failed to allocate {} byte buffer", validated_length))?;
+            .with_context(|| format!("Failed to allocate {validated_length} byte buffer"))?;
         debug!(
             "Safely allocated buffer for {} byte message",
             validated_length
@@ -1097,16 +1082,13 @@ impl FramedMessage {
         Self::read_exact_with_recovery(reader, &mut message_buffer)
             .await
             .with_context(|| {
-                format!(
-                    "Failed to read message data: expected {} bytes",
-                    validated_length
-                )
+                format!("Failed to read message data: expected {validated_length} bytes")
             })?;
 
         // Deserialize the message bytes back to SignedEnvelope with enhanced validation
         let envelope = self
             .deserialize_envelope(&message_buffer)
-            .with_context(|| format!("Failed to deserialize {} byte message", validated_length))?;
+            .with_context(|| format!("Failed to deserialize {validated_length} byte message"))?;
 
         debug!("Message read operation completed successfully with DoS protection");
         Ok(envelope)
@@ -1580,8 +1562,7 @@ impl FramedMessage {
                     return Err(err);
                 } else {
                     return Err(WireProtocolError::connection_closed(format!(
-                        "write_message - connection in unusable state: {:?}",
-                        connection_state
+                        "write_message - connection in unusable state: {connection_state:?}"
                     )));
                 }
             }
@@ -1832,8 +1813,7 @@ impl FramedMessage {
                     return Err(err);
                 } else {
                     return Err(WireProtocolError::connection_closed(format!(
-                        "write_message_with_timeout - connection in unusable state: {:?}",
-                        connection_state
+                        "write_message_with_timeout - connection in unusable state: {connection_state:?}"
                     )));
                 }
             }
@@ -2247,7 +2227,7 @@ impl ConnectionState {
 
                     if *error_count >= 3 {
                         *self = ConnectionState::Broken {
-                            reason: format!("Too many recoverable errors: {}", last_error),
+                            reason: format!("Too many recoverable errors: {last_error}"),
                         };
                     }
                 } else {
@@ -2262,7 +2242,7 @@ impl ConnectionState {
             ConnectionState::Recovering => {
                 // If we get an error while recovering, mark as broken
                 *self = ConnectionState::Broken {
-                    reason: format!("Error during recovery: {}", error),
+                    reason: format!("Error during recovery: {error}"),
                 };
             }
         }

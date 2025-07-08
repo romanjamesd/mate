@@ -31,7 +31,10 @@ impl GameIdGenerator {
 
         let counter = self.counter.fetch_add(1, Ordering::SeqCst);
 
-        format!("{}-{}-{:03}", self.peer_id_short, timestamp, counter)
+        format!(
+            "{peer_id_short}-{timestamp}-{counter:03}",
+            peer_id_short = self.peer_id_short
+        )
     }
 }
 

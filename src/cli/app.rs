@@ -190,15 +190,16 @@ impl App {
     /// Ensure data directory exists with proper permissions
     pub fn ensure_data_dir(data_dir: &PathBuf) -> Result<()> {
         if !data_dir.exists() {
-            std::fs::create_dir_all(data_dir).with_context(|| {
-                format!("Failed to create data directory: {}", data_dir.display())
-            })?;
+            let dir_display = data_dir.display();
+            std::fs::create_dir_all(data_dir)
+                .with_context(|| format!("Failed to create data directory: {dir_display}"))?;
         }
 
         // Verify directory is writable
         let test_file = data_dir.join(".write_test");
+        let dir_display = data_dir.display();
         std::fs::write(&test_file, "test")
-            .with_context(|| format!("Data directory is not writable: {}", data_dir.display()))?;
+            .with_context(|| format!("Data directory is not writable: {dir_display}"))?;
 
         // Try to clean up test file, but don't fail if it can't be removed
         // (test directories might be cleaned up by test framework)
@@ -259,13 +260,15 @@ impl App {
         // Display each game
         for game in &games {
             let game_id_short = if game.id.len() > 8 {
-                format!("{}...", &game.id[..8])
+                let short_id = &game.id[..8];
+                format!("{short_id}...")
             } else {
                 game.id.clone()
             };
 
             let opponent_short = if game.opponent_peer_id.len() > 16 {
-                format!("{}...", &game.opponent_peer_id[..16])
+                let short_opponent = &game.opponent_peer_id[..16];
+                format!("{short_opponent}...")
             } else {
                 game.opponent_peer_id.clone()
             };
@@ -286,7 +289,7 @@ impl App {
             let updated_time = format_timestamp(game.updated_at);
 
             let result_str = match &game.result {
-                Some(result) => format!("{:?}", result),
+                Some(result) => format!("{result:?}"),
                 None => "-".to_string(),
             };
 
@@ -297,7 +300,8 @@ impl App {
         }
 
         println!("{}", "-".repeat(80));
-        println!("Total games: {}", games.len());
+        let game_count = games.len();
+        println!("Total games: {game_count}");
         println!();
         println!("Use 'mate board --game-id <id>' to view a specific game board.");
         println!("Use 'mate history --game-id <id>' to view game move history.");
@@ -369,17 +373,13 @@ impl App {
 
         // Display game information
         println!("{}", "=".repeat(60));
-        println!(
-            "{:^60}",
-            format!(
-                "CHESS BOARD - GAME {}",
-                if target_game_id.len() > 8 {
-                    format!("{}...", &target_game_id[..8])
-                } else {
-                    target_game_id.clone()
-                }
-            )
-        );
+        let game_display = if target_game_id.len() > 8 {
+            let short_id = &target_game_id[..8];
+            format!("{short_id}...")
+        } else {
+            target_game_id.clone()
+        };
+        println!("{:^60}", format!("CHESS BOARD - GAME {game_display}"));
         println!("{}", "=".repeat(60));
         println!("Opponent: {}", game.opponent_peer_id);
         println!("Your Color: {:?}", game.my_color);
@@ -458,15 +458,14 @@ impl App {
             )
             .context("Failed to create game record")?;
 
-        println!(
-            "Created game {} with ID: {}",
-            if game.id.len() > 8 {
-                format!("{}...", &game.id[..8])
-            } else {
-                game.id.clone()
-            },
-            game.id
-        );
+        let game_display = if game.id.len() > 8 {
+            let short_id = &game.id[..8];
+            format!("{short_id}...")
+        } else {
+            game.id.clone()
+        };
+        let game_full_id = &game.id;
+        println!("Created game {game_display} with ID: {game_full_id}");
 
         // Create game invitation
         let invite = GameInvite::new(game.id.clone(), suggested_color);
@@ -489,10 +488,11 @@ impl App {
                     "local".to_string(), // Placeholder signature for sent messages
                     self.peer_id().to_string(),
                 ) {
-                    eprintln!("Warning: Failed to store invitation message: {}", e);
+                    eprintln!("Warning: Failed to store invitation message: {e}");
                 }
 
-                println!("Game ID: {}", game.id);
+                let game_id_str = &game.id;
+                println!("Game ID: {game_id_str}");
                 match suggested_color {
                     Some(Color::White) => println!("You will play as Black if they accept"),
                     Some(Color::Black) => println!("You will play as White if they accept"),
@@ -510,7 +510,7 @@ impl App {
                             .database
                             .update_game_status(&game.id, GameStatus::Active)
                         {
-                            eprintln!("Warning: Failed to update game status: {}", e);
+                            eprintln!("Warning: Failed to update game status: {e}");
                         }
                     }
                     Message::GameDecline(_) => {
@@ -520,7 +520,7 @@ impl App {
                             .database
                             .update_game_status(&game.id, GameStatus::Abandoned)
                         {
-                            eprintln!("Warning: Failed to update game status: {}", e);
+                            eprintln!("Warning: Failed to update game status: {e}");
                         }
                     }
                     _ => {
@@ -529,15 +529,15 @@ impl App {
                 }
             }
             Err(e) => {
-                eprintln!("❌ Failed to send invitation: {}", e);
+                eprintln!("❌ Failed to send invitation: {e}");
                 // Update game status to abandoned since we couldn't send
                 if let Err(db_err) = self
                     .database
                     .update_game_status(&game.id, GameStatus::Abandoned)
                 {
-                    eprintln!("Warning: Failed to update game status: {}", db_err);
+                    eprintln!("Warning: Failed to update game status: {db_err}");
                 }
-                anyhow::bail!("Could not send invitation to {}: {}", address, e);
+                anyhow::bail!("Could not send invitation to {address}: {e}");
             }
         }
 
@@ -546,24 +546,20 @@ impl App {
 
     /// Handle the 'accept' command - Accept a pending game invitation
     pub async fn handle_accept(&self, game_id: String, color: Option<String>) -> Result<()> {
-        println!(
-            "Accepting game invitation {}...",
-            if game_id.len() > 8 {
-                format!("{}...", &game_id[..8])
-            } else {
-                game_id.clone()
-            }
-        );
+        let game_display = if game_id.len() > 8 {
+            let short_id = &game_id[..8];
+            format!("{short_id}...")
+        } else {
+            game_id.clone()
+        };
+        println!("Accepting game invitation {game_display}...");
 
         // Validate game ID exists and is pending
         let game = self.database.get_game(&game_id).context("Game not found")?;
 
         if game.status != GameStatus::Pending {
-            anyhow::bail!(
-                "Game {} is not in pending status (current: {:?})",
-                game_id,
-                game.status
-            );
+            let current_status = game.status;
+            anyhow::bail!("Game {game_id} is not in pending status (current: {current_status:?})");
         }
 
         // Parse color preference
@@ -623,7 +619,8 @@ impl App {
                 println!(
                     "Game {} is now active!",
                     if game_id.len() > 8 {
-                        format!("{}...", &game_id[..8])
+                        let truncated = &game_id[..8];
+                        format!("{truncated}...")
                     } else {
                         game_id.clone()
                     }
@@ -677,7 +674,8 @@ impl App {
             "Making move '{}' in game {}...",
             chess_move,
             if target_game_id.len() > 8 {
-                format!("{}...", &target_game_id[..8])
+                let truncated = &target_game_id[..8];
+                format!("{truncated}...")
             } else {
                 target_game_id.clone()
             }
@@ -858,7 +856,8 @@ impl App {
             format!(
                 "MOVE HISTORY - GAME {}",
                 if target_game_id.len() > 8 {
-                    format!("{}...", &target_game_id[..8])
+                    let truncated = &target_game_id[..8];
+                    format!("{truncated}...")
                 } else {
                     target_game_id.clone()
                 }
@@ -964,11 +963,14 @@ fn format_timestamp(timestamp: i64) -> String {
             if elapsed.as_secs() < 60 {
                 "Just now".to_string()
             } else if elapsed.as_secs() < 3600 {
-                format!("{}m ago", elapsed.as_secs() / 60)
+                let minutes = elapsed.as_secs() / 60;
+                format!("{minutes}m ago")
             } else if elapsed.as_secs() < 86400 {
-                format!("{}h ago", elapsed.as_secs() / 3600)
+                let hours = elapsed.as_secs() / 3600;
+                format!("{hours}h ago")
             } else {
-                format!("{}d ago", elapsed.as_secs() / 86400)
+                let days = elapsed.as_secs() / 86400;
+                format!("{days}d ago")
             }
         }
         None => "Unknown".to_string(),

@@ -18,12 +18,12 @@ fn format_round_trip_time(duration: std::time::Duration) -> String {
     let micros = duration.as_micros();
 
     if millis == 0 {
-        format!("{}μs", micros)
+        format!("{micros}μs")
     } else if millis < 1000 {
-        format!("{}ms", millis)
+        format!("{millis}ms")
     } else {
         let seconds = duration.as_secs_f64();
-        format!("{:.2}s", seconds)
+        format!("{seconds:.2}s")
     }
 }
 

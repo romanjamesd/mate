@@ -58,8 +58,7 @@ impl FromStr for Color {
             "white" | "w" => Ok(Color::White),
             "black" | "b" => Ok(Color::Black),
             _ => Err(ChessError::InvalidColor(format!(
-                "Expected 'white' or 'black', got '{}'",
-                s
+                "Expected 'white' or 'black', got '{s}'"
             ))),
         }
     }
@@ -116,8 +115,7 @@ impl FromStr for PieceType {
             "Q" | "QUEEN" => Ok(PieceType::Queen),
             "K" | "KING" => Ok(PieceType::King),
             _ => Err(ChessError::InvalidPieceType(format!(
-                "Expected one of: P, R, N, B, Q, K, got '{}'",
-                s
+                "Expected one of: P, R, N, B, Q, K, got '{s}'"
             ))),
         }
     }

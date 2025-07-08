@@ -23,7 +23,7 @@ pub fn get_unique_test_port() -> u16 {
 /// Returns a formatted string like "127.0.0.1:50001"
 pub fn get_unique_test_address() -> String {
     let port = get_unique_test_port();
-    format!("127.0.0.1:{}", port)
+    format!("127.0.0.1:{port}")
 }
 
 /// Helper function to get a unique unreachable address for testing failures
@@ -58,7 +58,7 @@ pub fn get_unique_temp_suffix() -> String {
         .unwrap()
         .as_millis();
     let port = get_unique_test_port();
-    format!("test_{}_{}", timestamp, port)
+    format!("test_{timestamp}_{port}")
 }
 
 #[cfg(test)]

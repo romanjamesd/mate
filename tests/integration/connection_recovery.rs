@@ -94,7 +94,7 @@ async fn test_reconnection_behavior_when_sending_fails() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Reconnection when sending fails output:\n{}",
@@ -193,7 +193,7 @@ async fn test_reconnection_behavior_when_receiving_fails() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Reconnection when receiving fails output:\n{}",

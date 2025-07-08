@@ -170,7 +170,7 @@ impl From<anyhow::Error> for CliError {
 
         // For other anyhow errors, create a generic user error
         CliError::UserError {
-            message: format!("{}", err),
+            message: format!("{err}"),
             suggestion: Some("Check the error details above and try again.".to_string()),
         }
     }
@@ -183,15 +183,15 @@ fn format_game_ops_error(error: &GameOpsError) -> String {
             "🎮 No active games found.\n   💡 Suggestion: Start a new game with 'mate invite <address>' or use --game-id to specify a game.".to_string()
         }
         GameOpsError::GameNotFound(id) => {
-            format!("🎮 Game '{}' not found.\n   💡 Suggestion: Use 'mate games' to see available games, or check the game ID.", id)
+            format!("🎮 Game '{id}' not found.\n   💡 Suggestion: Use 'mate games' to see available games, or check the game ID.")
         }
         GameOpsError::InvalidGameState(msg) => {
-            format!("🎮 Invalid game state: {}\n   💡 Suggestion: Check the game status with 'mate games' and ensure the game is active.", msg)
+            format!("🎮 Invalid game state: {msg}\n   💡 Suggestion: Check the game status with 'mate games' and ensure the game is active.")
         }
         GameOpsError::Database(e) => format_storage_error(e),
         GameOpsError::Chess(e) => format_chess_error(e),
         GameOpsError::Serialization(msg) => {
-            format!("🔧 Data format error: {}\n   💡 Suggestion: This may be a bug. Please report this issue.", msg)
+            format!("🔧 Data format error: {msg}\n   💡 Suggestion: This may be a bug. Please report this issue.")
         }
     }
 }
@@ -200,10 +200,10 @@ fn format_game_ops_error(error: &GameOpsError) -> String {
 fn format_chess_error(error: &ChessError) -> String {
     match error {
         ChessError::InvalidMove(msg) => {
-            format!("♟️  Invalid move: {}\n   💡 Suggestion: Use standard algebraic notation (e.g., 'e4', 'Nf3', 'O-O'). Use 'mate board' to see the current position.", msg)
+            format!("♟️  Invalid move: {msg}\n   💡 Suggestion: Use standard algebraic notation (e.g., 'e4', 'Nf3', 'O-O'). Use 'mate board' to see the current position.")
         }
         ChessError::InvalidPosition(msg) => {
-            format!("♟️  Invalid position: {}\n   💡 Suggestion: Check the board position with 'mate board' command.", msg)
+            format!("♟️  Invalid position: {msg}\n   💡 Suggestion: Check the board position with 'mate board' command.")
         }
         ChessError::InvalidFen(msg) => {
             format!(
@@ -212,13 +212,13 @@ fn format_chess_error(error: &ChessError) -> String {
             )
         }
         ChessError::InvalidColor(msg) => {
-            format!("♟️  Invalid color: {}\n   💡 Suggestion: Use 'white' or 'black' for color selection.", msg)
+            format!("♟️  Invalid color: {msg}\n   💡 Suggestion: Use 'white' or 'black' for color selection.")
         }
         ChessError::InvalidPieceType(msg) => {
-            format!("♟️  Invalid piece: {}\n   💡 Suggestion: Use standard piece letters (K, Q, R, B, N, P).", msg)
+            format!("♟️  Invalid piece: {msg}\n   💡 Suggestion: Use standard piece letters (K, Q, R, B, N, P).")
         }
         ChessError::BoardStateError(msg) => {
-            format!("♟️  Board state error: {}\n   💡 Suggestion: The game state may be corrupted. Try 'mate board' to see the current position.", msg)
+            format!("♟️  Board state error: {msg}\n   💡 Suggestion: The game state may be corrupted. Try 'mate board' to see the current position.")
         }
     }
 }
@@ -227,22 +227,23 @@ fn format_chess_error(error: &ChessError) -> String {
 fn format_storage_error(error: &StorageError) -> String {
     match error {
         StorageError::GameNotFound { id } => {
-            format!("🗃️  Game '{}' not found in database.\n   💡 Suggestion: Use 'mate games' to see available games.", id)
+            format!("🗃️  Game '{id}' not found in database.\n   💡 Suggestion: Use 'mate games' to see available games.")
         }
         StorageError::MessageNotFound { id } => {
-            format!("🗃️  Message '{}' not found.\n   💡 Suggestion: Check the message ID or game history.", id)
+            format!("🗃️  Message '{id}' not found.\n   💡 Suggestion: Check the message ID or game history.")
         }
         StorageError::ConnectionFailed(_) => {
             "🗃️  Database connection failed.\n   💡 Suggestion: Check file permissions and disk space. Try restarting the application.".to_string()
         }
         StorageError::DatabaseLocked { operation, timeout_ms } => {
-            format!("🗃️  Database is locked during {}.\n   Timeout: {}ms\n   💡 Suggestion: Another process may be using the database. Wait a moment and try again.", operation, timeout_ms)
+            format!("🗃️  Database is locked during {operation}.\n   Timeout: {timeout_ms}ms\n   💡 Suggestion: Another process may be using the database. Wait a moment and try again.")
         }
         StorageError::InvalidData { field, reason } => {
-            format!("🗃️  Invalid data in {}: {}\n   💡 Suggestion: Check the data format and try again.", field, reason)
+            format!("🗃️  Invalid data in {field}: {reason}\n   💡 Suggestion: Check the data format and try again.")
         }
         _ => {
-            format!("🗃️  Database error: {}\n   💡 Suggestion: {}", error, error.recovery_suggestion())
+            let recovery = error.recovery_suggestion();
+            format!("🗃️  Database error: {error}\n   💡 Suggestion: {recovery}")
         }
     }
 }
@@ -251,13 +252,13 @@ fn format_storage_error(error: &StorageError) -> String {
 fn format_connection_error(error: &ConnectionError) -> String {
     match error {
         ConnectionError::WireProtocol(wire_err) => {
-            format!("🌐 Communication protocol error: {}\n   💡 Suggestion: Check network connection and ensure both players use compatible versions.", wire_err)
+            format!("🌐 Communication protocol error: {wire_err}\n   💡 Suggestion: Check network connection and ensure both players use compatible versions.")
         }
         ConnectionError::HandshakeFailed { reason } => {
-            format!("🤝 Connection handshake failed: {}\n   💡 Suggestion: Verify the peer address is correct and the peer is online. Check for network connectivity issues.", reason)
+            format!("🤝 Connection handshake failed: {reason}\n   💡 Suggestion: Verify the peer address is correct and the peer is online. Check for network connectivity issues.")
         }
         ConnectionError::AuthenticationFailed { peer_id } => {
-            format!("🔐 Authentication failed with peer {}\n   💡 Suggestion: The peer may be using different credentials. Ensure both players have compatible identities.", peer_id)
+            format!("🔐 Authentication failed with peer {peer_id}\n   💡 Suggestion: The peer may be using different credentials. Ensure both players have compatible identities.")
         }
         ConnectionError::ConnectionClosed => {
             "🌐 Connection closed unexpectedly\n   💡 Suggestion: The peer may have disconnected. Try reconnecting to continue the game.".to_string()
@@ -269,7 +270,7 @@ fn format_connection_error(error: &ConnectionError) -> String {
             "🕐 Message timestamp validation failed\n   💡 Suggestion: Check that your system clock is synchronized. The message may be too old or from the future.".to_string()
         }
         ConnectionError::Io(io_err) => {
-            format!("🌐 Network I/O error: {}\n   💡 Suggestion: Check network connection and try again. The peer may be unreachable.", io_err)
+            format!("🌐 Network I/O error: {io_err}\n   💡 Suggestion: Check network connection and try again. The peer may be unreachable.")
         }
     }
 }
@@ -278,22 +279,22 @@ fn format_connection_error(error: &ConnectionError) -> String {
 fn format_protocol_error(error: &ChessProtocolError) -> String {
     match error {
         ChessProtocolError::Validation(msg) => {
-            format!("🔒 Message validation failed: {}\n   💡 Suggestion: This may indicate a communication issue. Try reconnecting.", msg)
+            format!("🔒 Message validation failed: {msg}\n   💡 Suggestion: This may indicate a communication issue. Try reconnecting.")
         }
         ChessProtocolError::Timeout {
             operation,
             duration_ms,
         } => {
-            format!("⏱️  Operation '{}' timed out after {}ms\n   💡 Suggestion: The peer may be slow to respond. Try again or check network connection.", operation, duration_ms)
+            format!("⏱️  Operation '{operation}' timed out after {duration_ms}ms\n   💡 Suggestion: The peer may be slow to respond. Try again or check network connection.")
         }
         ChessProtocolError::GameStateError { game_id, error } => {
-            format!("🎮 Game state error in {}: {}\n   💡 Suggestion: The game state may be corrupted. Try 'mate board' to see current state.", game_id, error)
+            format!("🎮 Game state error in {game_id}: {error}\n   💡 Suggestion: The game state may be corrupted. Try 'mate board' to see current state.")
         }
         ChessProtocolError::SecurityViolation { game_id, violation } => {
-            format!("🔒 Security violation in game {}: {}\n   💡 Suggestion: This may indicate a malicious peer. Consider ending the game.", game_id, violation)
+            format!("🔒 Security violation in game {game_id}: {violation}\n   💡 Suggestion: This may indicate a malicious peer. Consider ending the game.")
         }
         _ => {
-            format!("🔒 Protocol error: {}\n   💡 Suggestion: This may be a communication issue. Try reconnecting to the peer.", error)
+            format!("🔒 Protocol error: {error}\n   💡 Suggestion: This may be a communication issue. Try reconnecting to the peer.")
         }
     }
 }
@@ -305,16 +306,16 @@ fn format_wire_error(error: &WireProtocolError) -> String {
             "📡 Invalid message format received\n   💡 Suggestion: This may indicate incompatible versions. Ensure both players are using the same version.".to_string()
         }
         WireProtocolError::MessageTooLarge { size, max_size } => {
-            format!("📡 Message too large: {} bytes (max: {} bytes)\n   💡 Suggestion: The message is too big to send. This may be a bug.", size, max_size)
+            format!("📡 Message too large: {size} bytes (max: {max_size} bytes)\n   💡 Suggestion: The message is too big to send. This may be a bug.")
         }
         WireProtocolError::Io(_) => {
             "📡 Network I/O error\n   💡 Suggestion: Check network connection and try again.".to_string()
         }
         WireProtocolError::ProtocolViolation { description } => {
-            format!("📡 Protocol violation: {}\n   💡 Suggestion: This may indicate incompatible clients. Ensure both players use the same version.", description)
+            format!("📡 Protocol violation: {description}\n   💡 Suggestion: This may indicate incompatible clients. Ensure both players use the same version.")
         }
         _ => {
-            format!("📡 Communication error: {}\n   💡 Suggestion: Check network connection and try reconnecting.", error)
+            format!("📡 Communication error: {error}\n   💡 Suggestion: Check network connection and try reconnecting.")
         }
     }
 }
