@@ -321,7 +321,8 @@ fn test_game_with_extensive_message_history() {
             db.store_message(
                 game.id.clone(),
                 "chat".to_string(),
-                serde_json::json!({"message": format!("Good move #{val}", val = i + 1)}).to_string(),
+                serde_json::json!({"message": format!("Good move #{val}", val = i + 1)})
+                    .to_string(),
                 format!("chat_sig_{chat_count}"),
                 sender.to_string(),
             )

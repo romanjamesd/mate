@@ -574,8 +574,7 @@ mod tests {
     #[test]
     fn test_format_compatibility_with_large_data() {
         let game_id = generate_game_id();
-        let large_history: Vec<String> = (0..100).map(|i| format!("move{i:03}"))
-            .collect();
+        let large_history: Vec<String> = (0..100).map(|i| format!("move{:03}", i)).collect();
         let board = Board::new();
 
         let large_msg = Message::new_sync_response(

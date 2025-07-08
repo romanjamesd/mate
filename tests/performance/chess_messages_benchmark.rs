@@ -730,9 +730,8 @@ mod memory_usage_tests {
         for history_size in history_sizes {
             println!("  Testing scaling with {} moves...", history_size);
 
-            let move_history: Vec<String> = (0..history_size)
-                .map(|i| format!("move_{i:04}"))
-                .collect();
+            let move_history: Vec<String> =
+                (0..history_size).map(|i| format!("move_{i:04}")).collect();
 
             let sync_response = SyncResponse::new(
                 game_id.clone(),

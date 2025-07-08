@@ -177,9 +177,7 @@ fn test_corrupted_database_handling() {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("Time went backwards")
         .as_nanos();
-    let unique_temp_dir = temp_dir
-        .path()
-        .join(format!("test_corrupted_{timestamp}"));
+    let unique_temp_dir = temp_dir.path().join(format!("test_corrupted_{timestamp}"));
     std::fs::create_dir_all(&unique_temp_dir).expect("Failed to create unique test dir");
 
     _env_guard.set_data_dir(&unique_temp_dir);

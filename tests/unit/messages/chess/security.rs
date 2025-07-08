@@ -484,9 +484,9 @@ mod board_hash_security_tests {
 
         // Test various tampering attempts
         let tampered_hashes = [
-            &correct_hash[1..],                   // Missing first character
-            &format!("a{first}", first = &correct_hash[1..]),  // Wrong first character
-            &format!("{last}a", last = &correct_hash[..63]), // Wrong last character
+            &correct_hash[1..],                               // Missing first character
+            &format!("a{first}", first = &correct_hash[1..]), // Wrong first character
+            &format!("{last}a", last = &correct_hash[..63]),  // Wrong last character
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", // Valid format but wrong hash
         ];
 
