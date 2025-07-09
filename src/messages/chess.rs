@@ -2404,8 +2404,8 @@ pub mod security {
             // Basic format validation for each move
             validate_chess_move_format(chess_move).map_err(|_| {
                 SecurityViolation::SuspiciousPattern {
-                    field: format!("move_history[{}]", i),
-                    pattern: format!("Invalid move format: {}", chess_move),
+                    field: format!("move_history[{i}]"),
+                    pattern: format!("Invalid move format: {chess_move}"),
                 }
             })?;
         }

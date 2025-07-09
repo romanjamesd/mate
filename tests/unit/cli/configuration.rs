@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use mate::cli::app::Config;
+use rand;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -16,8 +17,22 @@ static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
 /// Helper function to create a temporary config directory without environment variables
 fn setup_test_dirs(temp_dir: &TempDir) -> (PathBuf, PathBuf) {
-    let config_dir = temp_dir.path().join("config");
-    let data_dir = temp_dir.path().join("data");
+    // Add additional uniqueness to prevent any possible conflicts
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_nanos();
+    let thread_id = std::thread::current().id();
+    let random_suffix: u64 = rand::random();
+
+    let config_dir = temp_dir.path().join(format!(
+        "config_{}_{:?}_{}",
+        timestamp, thread_id, random_suffix
+    ));
+    let data_dir = temp_dir.path().join(format!(
+        "data_{}_{:?}_{}",
+        timestamp, thread_id, random_suffix
+    ));
     (config_dir, data_dir)
 }
 
