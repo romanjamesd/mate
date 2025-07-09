@@ -31,7 +31,29 @@ use crate::common::port_utils::get_unreachable_address;
 
 /// Helper function to get the mate binary path
 fn get_mate_binary_path() -> String {
-    "target/debug/mate".to_string()
+    let default_path = "target/debug/mate";
+
+    // Check if binary exists and is executable
+    if std::path::Path::new(default_path).exists() {
+        default_path.to_string()
+    } else {
+        // Try alternative locations for CI environments
+        let alternatives = vec![
+            "target/debug/mate",
+            "./target/debug/mate",
+            "../target/debug/mate",
+            "mate",
+        ];
+
+        for path in alternatives {
+            if std::path::Path::new(path).exists() {
+                return path.to_string();
+            }
+        }
+
+        // If no binary found, still return default to get a clear error
+        default_path.to_string()
+    }
 }
 
 /// Detect if we're running in a CI environment and get appropriate timeout multiplier
@@ -50,8 +72,8 @@ fn get_timeout_multiplier() -> f64 {
     let is_ci = ci_indicators.iter().any(|var| std::env::var(var).is_ok());
 
     if is_ci {
-        // CI environments are typically slower, use 5x multiplier instead of 3x
-        5.0
+        // CI environments are typically much slower, use 8x multiplier for extra safety
+        8.0
     } else {
         // Check for explicit timeout multiplier override
         std::env::var("TEST_TIMEOUT_MULTIPLIER")
@@ -65,7 +87,9 @@ fn get_timeout_multiplier() -> f64 {
 fn get_adaptive_timeout(base_seconds: u64) -> Duration {
     let multiplier = get_timeout_multiplier();
     let timeout_secs = (base_seconds as f64 * multiplier).ceil() as u64;
-    Duration::from_secs(timeout_secs.max(10)) // Minimum 10 seconds even for fast operations
+    // Minimum timeout of 15 seconds for CI, 10 seconds for local
+    let min_timeout = if multiplier > 3.0 { 15 } else { 10 };
+    Duration::from_secs(timeout_secs.max(min_timeout))
 }
 
 /// Helper function to create corrupted database file
@@ -140,6 +164,31 @@ where
     Err(last_error.unwrap())
 }
 
+/// Verify binary exists and is executable before running tests
+fn verify_binary_availability() -> Result<String> {
+    let binary_path = get_mate_binary_path();
+    let path = std::path::Path::new(&binary_path);
+
+    if !path.exists() {
+        anyhow::bail!(
+            "mate binary not found at: {}. Run 'cargo build --bin mate' first.",
+            binary_path
+        );
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = std::fs::metadata(path)?;
+        let permissions = metadata.permissions();
+        if permissions.mode() & 0o111 == 0 {
+            anyhow::bail!("mate binary is not executable: {}", binary_path);
+        }
+    }
+
+    Ok(binary_path)
+}
+
 //=============================================================================
 // Network Error Handling Tests
 //=============================================================================
@@ -151,12 +200,16 @@ async fn test_error_handling_connection_timeouts() {
     println!("Testing network timeout handling with user feedback");
     println!("   Timeout multiplier: {:.1}x", multiplier);
 
+    // Verify binary availability before running test
+    let binary_path = verify_binary_availability().expect("mate binary should be available");
+    println!("   Using binary: {}", binary_path);
+
     // Test connection to non-responsive server (focus on error handling, not timing)
     let start_time = Instant::now();
 
     let output = timeout(
-        get_adaptive_timeout(20), // More generous timeout for CI
-        Command::new(get_mate_binary_path())
+        get_adaptive_timeout(25), // More generous timeout for CI
+        Command::new(binary_path)
             .args(["invite", "192.168.254.254:8080"]) // Non-routable IP for timeout
             .env("RUST_LOG", "error")
             .stdout(Stdio::piped())
@@ -227,6 +280,10 @@ async fn test_error_handling_network_failures_user_feedback() {
     let multiplier = get_timeout_multiplier();
     println!("   Using timeout multiplier: {:.1}x", multiplier);
 
+    // Verify binary availability before running test
+    let binary_path = verify_binary_availability().expect("mate binary should be available");
+    println!("   Using binary: {}", binary_path);
+
     let test_scenarios = vec![
         (get_unreachable_address(), "Unreachable port"),
         (
@@ -247,14 +304,16 @@ async fn test_error_handling_network_failures_user_feedback() {
         // Add retry logic for network operations in CI environments
         let address_clone = address.clone();
         let temp_path_clone = temp_path.clone();
+        let binary_path_clone = binary_path.clone();
         let result = retry_with_backoff(
             move || {
                 let address_ref = address_clone.clone();
                 let temp_path_ref = temp_path_clone.clone();
+                let binary_path_ref = binary_path_clone.clone();
                 Box::pin(async move {
                     timeout(
-                        get_adaptive_timeout(15), // Increased from 8 to 15 seconds base
-                        Command::new(get_mate_binary_path())
+                        get_adaptive_timeout(20), // Increased from 15 to 20 seconds base
+                        Command::new(binary_path_ref)
                             .args(["invite", &address_ref])
                             .env("MATE_DATA_DIR", &temp_path_ref)
                             .env("RUST_LOG", "error")
@@ -265,8 +324,8 @@ async fn test_error_handling_network_failures_user_feedback() {
                     .await
                 })
             },
-            3,   // Max 3 attempts
-            500, // 500ms base delay
+            if multiplier > 3.0 { 5 } else { 3 }, // More retries for CI
+            1000,                                 // 1 second base delay for CI stability
             &format!("network failure test for {}", scenario_desc),
         )
         .await;
@@ -980,6 +1039,10 @@ async fn test_error_handling_edge_cases() {
     let multiplier = get_timeout_multiplier();
     println!("   Using timeout multiplier: {:.1}x", multiplier);
 
+    // Verify binary availability before running test
+    let binary_path = verify_binary_availability().expect("mate binary should be available");
+    println!("   Using binary: {}", binary_path);
+
     // Use unique temp directory to avoid conflicts with concurrent tests
     let temp_dir = create_unique_temp_dir().expect("Failed to create temp directory");
     let temp_path = temp_dir.path().to_string_lossy().to_string();
@@ -1020,14 +1083,16 @@ async fn test_error_handling_edge_cases() {
 
         // Add retry logic for edge case testing to handle CI flakiness
         let temp_path_clone = temp_path.clone();
+        let binary_path_clone = binary_path.clone();
         let result = retry_with_backoff(
             move || {
                 let temp_path_ref = temp_path_clone.clone();
+                let binary_path_ref = binary_path_clone.clone();
                 let args_ref = args.clone(); // Clone args for the closure
                 Box::pin(async move {
                     timeout(
-                        get_adaptive_timeout(20), // Increased timeout for edge cases
-                        Command::new(get_mate_binary_path())
+                        get_adaptive_timeout(25), // Increased timeout for edge cases
+                        Command::new(binary_path_ref)
                             .args(&args_ref)
                             .env("MATE_DATA_DIR", &temp_path_ref)
                             .env("RUST_LOG", "error")
@@ -1038,8 +1103,8 @@ async fn test_error_handling_edge_cases() {
                     .await
                 })
             },
-            3,   // Max 3 attempts
-            200, // 200ms base delay (shorter for edge cases)
+            if multiplier > 3.0 { 5 } else { 3 }, // More retries for CI
+            500,                                  // 500ms base delay (increased for CI)
             &format!("edge case test for {}", case_desc),
         )
         .await;

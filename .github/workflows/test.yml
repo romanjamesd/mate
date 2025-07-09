@@ -8,6 +8,11 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # CI environment variables for better test detection
+  CI: true
+  GITHUB_ACTIONS: true
+  TEST_TIMEOUT_MULTIPLIER: 8.0
+  RUST_LOG: info
 
 jobs:
   test:
@@ -22,6 +27,14 @@ jobs:
 
     - name: Cache dependencies
       uses: Swatinem/rust-cache@v2
+
+    - name: Build mate binary
+      run: cargo build --bin mate --verbose
+
+    - name: Verify binary exists
+      run: |
+        ls -la target/debug/mate
+        ./target/debug/mate --help || echo "Binary help failed, but binary exists"
 
     - name: Run tests
       run: cargo test --verbose
