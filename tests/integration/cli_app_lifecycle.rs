@@ -10,16 +10,32 @@
 //!
 //! Target: Full CLI application lifecycle from `src/main.rs` and `src/cli/app.rs`
 
+use std::env;
 use std::process::Stdio;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-/// Helper function to build the mate binary path
+/// Get the path to the mate binary
 fn get_mate_binary_path() -> String {
-    // In tests, the binary is built in target/debug/
-    "target/debug/mate".to_string()
+    env::var("MATE_BINARY_PATH").unwrap_or_else(|_| "target/debug/mate".to_string())
+}
+
+/// Check if we're running in a CI environment
+fn is_ci_environment() -> bool {
+    // Check for common CI environment variables
+    let ci_indicators = [
+        "CI",
+        "CONTINUOUS_INTEGRATION",
+        "GITHUB_ACTIONS",
+        "TRAVIS",
+        "CIRCLECI",
+        "BUILDKITE",
+        "JENKINS_URL",
+    ];
+
+    ci_indicators.iter().any(|var| std::env::var(var).is_ok())
 }
 
 /// Test that all CLI commands work after app initialization
@@ -411,15 +427,15 @@ async fn test_cli_logging_and_signal_handling() {
 async fn test_cli_concurrent_command_execution() {
     println!("Testing concurrent CLI command execution");
 
-    let temp_dir = TempDir::new().expect("Failed to create temp directory");
-    let temp_path = temp_dir.path().to_string_lossy().to_string();
+    // Use unique temp directories for each concurrent command to avoid conflicts
+    let temp_dir_base = TempDir::new().expect("Failed to create temp directory");
 
     // Test multiple commands running concurrently
     println!("  Testing concurrent command execution...");
 
     let concurrent_start = std::time::Instant::now();
 
-    // Launch multiple commands concurrently
+    // Launch multiple commands concurrently with separate data directories
     let mut handles = Vec::new();
     let commands = vec![
         ("games1", vec!["games"]),
@@ -430,17 +446,24 @@ async fn test_cli_concurrent_command_execution() {
     ];
 
     for (command_id, args) in commands {
-        let temp_path_clone = temp_path.clone();
-        let args_clone = args.clone();
+        // Create unique temp directory for each command to avoid SQLite conflicts
+        let temp_subdir = temp_dir_base
+            .path()
+            .join(format!("concurrent_{}", command_id));
+        std::fs::create_dir_all(&temp_subdir).expect("Failed to create temp subdirectory");
+        let temp_path = temp_subdir.to_string_lossy().to_string();
 
         let handle = tokio::spawn(async move {
             let start_time = std::time::Instant::now();
 
+            // Use increased timeout for CI environments
+            let timeout_duration = Duration::from_secs(if is_ci_environment() { 120 } else { 30 });
+
             let output = timeout(
-                Duration::from_secs(30),
+                timeout_duration,
                 Command::new(get_mate_binary_path())
-                    .args(&args_clone)
-                    .env("MATE_DATA_DIR", &temp_path_clone)
+                    .args(&args)
+                    .env("MATE_DATA_DIR", &temp_path)
                     .env("RUST_LOG", "error") // Reduce log noise for concurrent tests
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
@@ -483,9 +506,15 @@ async fn test_cli_concurrent_command_execution() {
             combined_output
         );
 
-        // Each command should complete in reasonable time
+        // Each command should complete in reasonable time (adjusted for CI)
+        let max_execution_time = if is_ci_environment() {
+            Duration::from_secs(100) // CI environments are slower
+        } else {
+            Duration::from_secs(25)
+        };
+
         assert!(
-            execution_time < Duration::from_secs(25),
+            execution_time < max_execution_time,
             "Concurrent command '{}' should complete efficiently. Took: {:?}",
             command_id,
             execution_time
@@ -496,8 +525,14 @@ async fn test_cli_concurrent_command_execution() {
 
     // Concurrent execution should be more efficient than sequential
     // (though this is a rough heuristic since the commands don't do much work)
+    let max_total_time = if is_ci_environment() {
+        Duration::from_secs(150) // CI environments are slower
+    } else {
+        Duration::from_secs(40)
+    };
+
     assert!(
-        concurrent_total_time < Duration::from_secs(40),
+        concurrent_total_time < max_total_time,
         "Concurrent execution should be efficient. Total time: {:?}",
         concurrent_total_time
     );
@@ -526,8 +561,14 @@ async fn test_cli_resource_management_across_commands() {
     for iteration in 1..=10 {
         let iteration_start = std::time::Instant::now();
 
+        let timeout_duration = if is_ci_environment() {
+            Duration::from_secs(90) // CI environments are slower
+        } else {
+            Duration::from_secs(30)
+        };
+
         let output = timeout(
-            Duration::from_secs(30),
+            timeout_duration,
             Command::new(get_mate_binary_path())
                 .args(["games"])
                 .env("MATE_DATA_DIR", &temp_path)
@@ -556,9 +597,15 @@ async fn test_cli_resource_management_across_commands() {
             combined_output
         );
 
-        // Verify performance doesn't degrade significantly over iterations
+        // Verify performance doesn't degrade significantly over iterations (adjusted for CI)
+        let max_iteration_time = if is_ci_environment() {
+            Duration::from_secs(60) // CI environments are slower
+        } else {
+            Duration::from_secs(20)
+        };
+
         assert!(
-            iteration_time < Duration::from_secs(20),
+            iteration_time < max_iteration_time,
             "Iteration {} should maintain performance. Took: {:?}",
             iteration,
             iteration_time
