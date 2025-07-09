@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use clap::Parser;

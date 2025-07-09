@@ -3,6 +3,9 @@ name = "mate"
 version = "0.1.0"
 edition = "2021"
 
+[lints.clippy]
+uninlined-format-args = "allow"
+
 [[bin]]
 name = "mate"
 path = "src/main.rs"

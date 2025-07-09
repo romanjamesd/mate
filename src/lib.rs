@@ -1,4 +1,3 @@
-#![allow(clippy::uninlined_format_args)]
 pub mod chess;
 pub mod cli;
 pub mod crypto;
