@@ -107,10 +107,10 @@ async fn test_cli_commands_trigger_network_operations() {
     .await;
 
     // Network operation was attempted (even if failed)
-    match accept_result {
-        Ok(result) => assert!(result.is_err(), "Should fail with unavailable peer"),
-        Err(_) => {} // Timeout is acceptable
+    if let Ok(result) = accept_result {
+        assert!(result.is_err(), "Should fail with unavailable peer");
     }
+    // Timeout is acceptable (Err case ignored)
 
     // Test 3: Move command with active game
     let move_game_id = create_test_game(
@@ -129,10 +129,10 @@ async fn test_cli_commands_trigger_network_operations() {
     .await;
 
     // Network operation was attempted
-    match move_result {
-        Ok(result) => assert!(result.is_err(), "Should fail with unavailable peer"),
-        Err(_) => {} // Timeout is acceptable
+    if let Ok(result) = move_result {
+        assert!(result.is_err(), "Should fail with unavailable peer");
     }
+    // Timeout is acceptable (Err case ignored)
 }
 
 #[tokio::test]
