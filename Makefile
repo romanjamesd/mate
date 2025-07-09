@@ -1,7 +1,7 @@
-.PHONY: check clippy fmt test ci
+.PHONY: check clippy fmt test test-ci ci
 
-# Run the same checks as CI
-ci: fmt clippy test
+# Run the same checks as CI (with CI environment simulation)
+ci: fmt clippy test-ci
 
 # Format check (matches CI)
 fmt:
@@ -11,7 +11,11 @@ fmt:
 clippy:
 	cargo clippy --all-targets --all-features -- -D warnings
 
-# Run tests
+# Run tests with CI environment variables (simulates CI exactly)
+test-ci:
+	CI=true GITHUB_ACTIONS=true TEST_TIMEOUT_MULTIPLIER=8.0 RUST_LOG=debug cargo test
+
+# Run tests (normal local development)
 test:
 	cargo test
 
