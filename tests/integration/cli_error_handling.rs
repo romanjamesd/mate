@@ -27,6 +27,7 @@ use tokio::fs;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use crate::common::ci_utils::{contains_user_facing_errors, validate_error_output};
 use crate::common::port_utils::get_unreachable_address;
 
 /// Helper function to get the mate binary path
@@ -364,10 +365,10 @@ async fn test_error_handling_network_failures_user_feedback() {
 
         // Verify no stack traces or internal error details leak to user
         assert!(
-            !combined_output.contains("panic")
-                && !combined_output.contains("SIGABRT")
-                && !combined_output.contains("backtrace")
-                && !combined_output.contains("rust backtrace"),
+            validate_error_output(
+                &combined_output,
+                &format!("network_failure_{}", scenario_desc.replace(" ", "_"))
+            ),
             "Should not expose internal errors for {}. Output: {}",
             scenario_desc,
             combined_output
@@ -1128,11 +1129,7 @@ async fn test_error_handling_edge_cases() {
 
         // Should not contain stack traces or panics
         assert!(
-            !combined_output.contains("panic")
-                && !combined_output.contains("SIGABRT")
-                && !combined_output.contains("backtrace")
-                && !combined_output.contains("rust backtrace")
-                && !combined_output.contains("thread panicked"),
+            !contains_user_facing_errors(&combined_output),
             "Edge case '{}' should not cause panic. Output: {}",
             case_desc,
             combined_output

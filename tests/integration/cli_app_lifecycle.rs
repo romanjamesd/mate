@@ -17,6 +17,8 @@ use tempfile::TempDir;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use crate::common::ci_utils::validate_error_output;
+
 /// Get the path to the mate binary
 fn get_mate_binary_path() -> String {
     env::var("MATE_BINARY_PATH").unwrap_or_else(|_| "target/debug/mate".to_string())
@@ -655,7 +657,7 @@ async fn test_cli_resource_management_across_commands() {
 
         // Verify consistent resource management across different command types
         assert!(
-            !combined_output.contains("panic"),
+            validate_error_output(&combined_output, &format!("mixed_command_{}", i + 1)),
             "Mixed command {} should manage resources properly. Output: {}",
             i + 1,
             combined_output
@@ -742,10 +744,15 @@ async fn test_comprehensive_cli_lifecycle() {
             .expect("Initialization command should complete")
             .expect("Initialization command should execute");
 
+        let stderr = String::from_utf8_lossy(&command_output.stderr);
+        let stdout = String::from_utf8_lossy(&command_output.stdout);
+        let combined_output = format!("{stdout}{stderr}");
+
         assert!(
-            !String::from_utf8_lossy(&command_output.stderr).contains("panic"),
-            "Initialization command '{}' should work correctly",
-            cmd
+            validate_error_output(&combined_output, &format!("initialization_{}", cmd)),
+            "Initialization command '{}' should work correctly. Output: {}",
+            cmd,
+            combined_output
         );
     }
 
@@ -772,10 +779,15 @@ async fn test_comprehensive_cli_lifecycle() {
             .expect("Concurrent task should complete")
             .expect("Concurrent command should execute");
 
+        let stderr = String::from_utf8_lossy(&command_output.stderr);
+        let stdout = String::from_utf8_lossy(&command_output.stdout);
+        let combined_output = format!("{stdout}{stderr}");
+
         assert!(
-            !String::from_utf8_lossy(&command_output.stderr).contains("panic"),
-            "Concurrent operation {} should work correctly",
-            i
+            validate_error_output(&combined_output, &format!("concurrent_operation_{}", i)),
+            "Concurrent operation {} should work correctly. Output: {}",
+            i,
+            combined_output
         );
     }
 
@@ -797,9 +809,14 @@ async fn test_comprehensive_cli_lifecycle() {
             .expect("Resource stress command should complete")
             .expect("Resource stress command should execute");
 
+        let stderr = String::from_utf8_lossy(&command_output.stderr);
+        let stdout = String::from_utf8_lossy(&command_output.stdout);
+        let combined_output = format!("{stdout}{stderr}");
+
         assert!(
-            !String::from_utf8_lossy(&command_output.stderr).contains("panic"),
-            "Resource stress operation should work correctly"
+            validate_error_output(&combined_output, "resource_stress_operation"),
+            "Resource stress operation should work correctly. Output: {}",
+            combined_output
         );
     }
 

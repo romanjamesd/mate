@@ -3,8 +3,6 @@
 //! This module contains integration tests that verify the behavior of
 //! the complete system with multiple components working together.
 
-// Placeholder for future integration tests
-
 // Server integration tests
 pub mod server_shutdown;
 
