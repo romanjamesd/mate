@@ -65,10 +65,8 @@ pub fn initialize_schema(conn: &Connection) -> Result<()> {
             StorageError::migration_failed(0, format!("Failed to enable foreign keys: {e}"))
         })?;
 
-    conn.pragma_update(None, "journal_mode", "WAL")
-        .map_err(|e| {
-            StorageError::migration_failed(0, format!("Failed to enable WAL mode: {e}"))
-        })?;
+    // Don't override journal mode here - let the connection setup handle it
+    // The journal mode was already set in create_optimized_connection based on environment
 
     // Check if schema_migrations table exists
     let migrations_exist = conn

@@ -41,7 +41,8 @@ impl TestEnvironment {
 
         std::env::set_var("MATE_DATA_DIR", &unique_temp_dir);
 
-        let db = Database::new("test_peer_cli").expect("Failed to create test database");
+        // Add retry mechanism for database creation to handle temporary lock issues
+        let db = Self::create_database_with_retry("test_peer_cli", 3);
 
         let env = TestEnvironment {
             _temp_dir: temp_dir,
@@ -50,6 +51,29 @@ impl TestEnvironment {
         };
 
         (db, env)
+    }
+
+    fn create_database_with_retry(peer_id: &str, max_retries: u32) -> Database {
+        let mut last_error = None;
+
+        for attempt in 0..max_retries {
+            match Database::new(peer_id) {
+                Ok(db) => return db,
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < max_retries - 1 {
+                        // Wait a bit before retrying, with exponential backoff
+                        let wait_ms = 10 * (1 << attempt);
+                        std::thread::sleep(std::time::Duration::from_millis(wait_ms));
+                    }
+                }
+            }
+        }
+
+        panic!(
+            "Failed to create test database after {} attempts: {:?}",
+            max_retries, last_error
+        );
     }
 
     fn create_test_game(&self, db: &Database, opponent: &str, status: GameStatus) -> String {
@@ -68,14 +92,24 @@ impl TestEnvironment {
 
 impl Drop for TestEnvironment {
     fn drop(&mut self) {
-        // Clean up database files
+        // Clean up database files more thoroughly
         let db_path = self.test_data_dir.join("database.sqlite");
         let wal_path = db_path.with_extension("sqlite-wal");
         let shm_path = db_path.with_extension("sqlite-shm");
+        let journal_path = db_path.with_extension("sqlite-journal");
 
+        // Wait a moment for any ongoing operations to complete
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Remove all SQLite auxiliary files
         let _ = std::fs::remove_file(&wal_path);
         let _ = std::fs::remove_file(&shm_path);
+        let _ = std::fs::remove_file(&journal_path);
 
+        // Remove the main database file
+        let _ = std::fs::remove_file(&db_path);
+
+        // Restore original environment
         match &self.original_data_dir {
             Some(original) => std::env::set_var("MATE_DATA_DIR", original),
             None => std::env::remove_var("MATE_DATA_DIR"),
