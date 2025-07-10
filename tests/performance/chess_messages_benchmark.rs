@@ -39,6 +39,11 @@ fn get_performance_multiplier() -> u32 {
     }
 }
 
+/// Get CI-aware performance threshold for validation operations
+fn get_ci_aware_threshold(base_micros: u32) -> u32 {
+    base_micros * get_performance_multiplier()
+}
+
 // =============================================================================
 // Serialization Performance Tests
 // =============================================================================
@@ -118,11 +123,28 @@ mod serialization_performance_tests {
                 binary_per_op,
                 multiplier
             );
-            assert!(
-                binary_duration <= json_duration,
-                "Binary should be faster than JSON for {}",
-                type_name
-            );
+            // Binary should generally be faster than JSON, but allow some variance in CI environments
+            // for small messages where serialization overhead might affect results
+            if is_ci_environment() {
+                // In CI, allow binary to be up to 50% slower than JSON for small messages
+                let tolerance_factor = 1.5;
+                let binary_nanos = binary_duration.as_nanos() as f64;
+                let json_nanos = json_duration.as_nanos() as f64;
+                let ratio = binary_nanos / json_nanos;
+
+                assert!(
+                    ratio <= tolerance_factor,
+                    "Binary should be reasonably competitive with JSON for {} (ratio: {:.2}x, max: {:.2}x)",
+                    type_name, ratio, tolerance_factor
+                );
+            } else {
+                // In local environments, maintain the strict requirement
+                assert!(
+                    binary_duration <= json_duration,
+                    "Binary should be faster than JSON for {}",
+                    type_name
+                );
+            }
         }
 
         println!("✓ JSON vs Binary serialization benchmark completed");
@@ -309,11 +331,12 @@ mod validation_performance_tests {
 
             // Security validation should not add excessive overhead
             // Note: CI environments may have different performance characteristics
-            let max_micros = if cfg!(debug_assertions) { 500 } else { 100 };
+            let base_max_micros = if cfg!(debug_assertions) { 500 } else { 100 };
+            let max_micros = get_ci_aware_threshold(base_max_micros);
             let max_ratio = if cfg!(debug_assertions) { 20.0 } else { 10.0 };
 
             assert!(
-                security_per_op.as_micros() < max_micros,
+                security_per_op.as_micros() < max_micros as u128,
                 "Security validation should be reasonably fast (< {}μs), got {:?}",
                 max_micros,
                 security_per_op
