@@ -56,7 +56,7 @@ mod high_volume_tests {
             let handle = tokio::spawn(async move {
                 for i in 0..messages_per_worker {
                     let game_id = generate_game_id();
-                    let chess_move = format!("e2e4_{worker_id}_{i})");
+                    let chess_move = format!("e2e4_{worker_id}_{i}");
                     let board_hash = hash_board_state(&Board::new());
 
                     // Create and process different message types

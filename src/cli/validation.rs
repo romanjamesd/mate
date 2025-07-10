@@ -272,29 +272,28 @@ impl<'a> InputValidator<'a> {
     ///
     /// Returns true if user confirms, false if they decline
     /// Supports both y/n and yes/no responses (case insensitive)
-    #[allow(clippy::only_used_in_recursion)]
     pub fn confirm_action(&self, prompt: &str) -> ValidationResult<bool> {
-        print!("{} (y/n): ", prompt);
-        io::stdout().flush()?;
+        loop {
+            print!("{} (y/n): ", prompt);
+            io::stdout().flush()?;
 
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
 
-        let response = input.trim().to_lowercase();
-        match response.as_str() {
-            "y" | "yes" => Ok(true),
-            "n" | "no" => Ok(false),
-            "" => {
-                // Empty response - ask again with default
-                println!("Please enter 'y' for yes or 'n' for no.");
-                self.confirm_action(prompt)
-            }
-            _ => {
-                println!(
-                    "Invalid response '{}'. Please enter 'y' for yes or 'n' for no.",
-                    response
-                );
-                self.confirm_action(prompt)
+            let response = input.trim().to_lowercase();
+            match response.as_str() {
+                "y" | "yes" => return Ok(true),
+                "n" | "no" => return Ok(false),
+                "" => {
+                    // Empty response - ask again with default
+                    println!("Please enter 'y' for yes or 'n' for no.");
+                }
+                _ => {
+                    println!(
+                        "Invalid response '{}'. Please enter 'y' for yes or 'n' for no.",
+                        response
+                    );
+                }
             }
         }
     }
