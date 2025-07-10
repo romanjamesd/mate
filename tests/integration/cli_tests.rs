@@ -92,7 +92,7 @@ async fn test_successful_message_send_with_timing() {
 
     // Verify message was sent and response received
     assert!(
-        combined_output.contains("Received echo") || combined_output.contains("Sending message"),
+        combined_output.contains("Received echo") || combined_output.contains("Sending message:"),
         "Output should show message sending/receiving. combined: {}",
         combined_output
     );
@@ -495,7 +495,7 @@ async fn test_appropriate_logging() {
     let expected_log_patterns = vec![
         "Connecting to",     // Connection initiation
         "Connected to peer", // Connection establishment
-        "Sending message",   // Message sending
+        "Sending message:",  // Message sending
         "Received echo",     // Response receiving
     ];
 

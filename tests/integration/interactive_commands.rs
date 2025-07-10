@@ -16,6 +16,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+// Import our new test helpers
+use crate::common::test_helpers::*;
+
 /// Helper function to start a test server
 async fn start_test_server(bind_addr: &str) -> Result<Server> {
     let identity = Arc::new(Identity::generate()?);
@@ -99,8 +102,8 @@ async fn test_help_command_displays_functionality() {
 
     // Verify it's local help display (not sent to peer)
     assert!(
-        !combined_output.contains("Sending message") && !combined_output.contains("echo"),
-        "Help command should not send messages to peer. Output: {}",
+        verify_local_command_execution(&combined_output, "Available Commands"),
+        "Help command should execute locally without sending user messages. Output: {}",
         combined_output
     );
 
@@ -175,8 +178,8 @@ async fn test_info_command_shows_connection_details() {
 
     // Verify it's local info display (not sent to peer)
     assert!(
-        !combined_output.contains("Sending message") && !combined_output.contains("echo"),
-        "Info command should not send messages to peer. Output: {}",
+        verify_local_command_execution(&combined_output, "Connection Information"),
+        "Info command should execute locally without sending user messages. Output: {}",
         combined_output
     );
 

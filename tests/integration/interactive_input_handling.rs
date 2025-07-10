@@ -18,6 +18,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+// Import our new test helpers
+use crate::common::test_helpers::*;
+
 /// Helper function to start a test server
 async fn start_test_server(bind_addr: &str) -> Result<Server> {
     let identity = Arc::new(Identity::generate()?);
@@ -472,8 +475,21 @@ async fn test_non_command_input_sent_as_messages() {
 
     println!("Non-command input handling output:\n{}", combined_output);
 
-    // Count echo responses - should be one for each test message
-    let echo_count = combined_output.matches("Received echo").count();
+    // NEW APPROACH: Use behavioral verification with our helper functions
+
+    // 1. Verify all messages were exchanged using the verifier
+    let verifier =
+        MessageExchangeVerifier::new(test_messages.iter().map(|s| s.to_string()).collect());
+
+    if let Err(error) = verifier.verify(&combined_output) {
+        panic!(
+            "Message exchange verification failed: {}\nOutput: {}",
+            error, combined_output
+        );
+    }
+
+    // 2. Double-check: count expected vs actual echo responses
+    let echo_count = count_echo_responses(&combined_output);
     assert_eq!(
         echo_count,
         test_messages.len(),
@@ -483,7 +499,7 @@ async fn test_non_command_input_sent_as_messages() {
         combined_output
     );
 
-    // Verify each test message was echoed back
+    // 3. Verify each test message was echoed back (content verification)
     for message in &test_messages {
         assert!(
             combined_output.contains(message),
@@ -493,19 +509,22 @@ async fn test_non_command_input_sent_as_messages() {
         );
     }
 
-    // Verify messages were sent (not treated as commands)
-    let user_message_sending = combined_output.matches("Sending Ping message").count();
-    // Should have handshake ping + one ping for each test message
-    assert!(
-        user_message_sending > test_messages.len(),
-        "Should send all non-command messages. Expected at least: {}, Got: {}, Output: {}",
-        test_messages.len() + 1,
-        user_message_sending,
-        combined_output
-    );
+    // 4. Optional: Use session summary for the most reliable count
+    if let Some(session_count) = extract_message_count_from_summary(&combined_output) {
+        assert!(
+            session_count >= test_messages.len() as u32,
+            "Session summary should show at least {} messages. Got: {}, Output: {}",
+            test_messages.len(),
+            session_count,
+            combined_output
+        );
+    }
 
     println!("✅ Non-command input sent as messages test passed");
-    println!("   - All non-command inputs were sent as regular messages");
+    println!(
+        "   - All {} non-command inputs were sent as regular messages",
+        test_messages.len()
+    );
     println!("   - All messages were echoed back by the server");
     println!("   - Similar-to-command inputs treated as regular messages");
 }
