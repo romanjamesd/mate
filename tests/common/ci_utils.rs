@@ -7,7 +7,7 @@ use std::env;
 /// Check if we're in a CI environment with backtrace enabled
 pub fn is_ci_with_backtrace() -> bool {
     let is_ci = env::var("CI").is_ok() || env::var("GITHUB_ACTIONS").is_ok();
-    let has_backtrace = env::var("RUST_BACKTRACE").map_or(false, |v| v == "1" || v == "full");
+    let has_backtrace = env::var("RUST_BACKTRACE").is_ok_and(|v| v == "1" || v == "full");
     is_ci && has_backtrace
 }
 
