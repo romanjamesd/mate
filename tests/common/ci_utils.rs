@@ -19,7 +19,7 @@ pub fn is_ci_with_backtrace_explicit(
     rust_backtrace: Option<&str>,
 ) -> bool {
     let is_ci = ci_set || github_actions_set;
-    let has_backtrace = rust_backtrace.map_or(false, |v| v == "1" || v == "full");
+    let has_backtrace = rust_backtrace.is_some_and(|v| v == "1" || v == "full");
     is_ci && has_backtrace
 }
 
