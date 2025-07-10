@@ -405,11 +405,7 @@ fn test_game_state_transition_errors() {
     let game_id = uuid::Uuid::new_v4().to_string();
 
     let game = db
-        .create_game(
-            game_id,
-            PlayerColor::White,
-            None,
-        )
+        .create_game(game_id, PlayerColor::White, None)
         .expect("Failed to create game");
 
     // Complete the game
@@ -517,11 +513,7 @@ fn test_message_data_validation_errors() {
     let game_id = uuid::Uuid::new_v4().to_string();
 
     let game = db
-        .create_game(
-            game_id,
-            PlayerColor::White,
-            None,
-        )
+        .create_game(game_id, PlayerColor::White, None)
         .expect("Failed to create game");
 
     // Test with extremely long content
@@ -711,11 +703,7 @@ fn test_concurrent_query_and_modification() {
     let game_id = uuid::Uuid::new_v4().to_string();
 
     let game = db
-        .create_game(
-            game_id,
-            PlayerColor::White,
-            None,
-        )
+        .create_game(game_id, PlayerColor::White, None)
         .expect("Failed to create game");
 
     // Add some messages
