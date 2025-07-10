@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use clap::Parser;
-use mate::cli::{app::App, Cli, Commands, KeyCommand};
+use mate::cli::{app::App, display_error_and_exit, Cli, CliError, Commands, KeyCommand};
 use mate::crypto::Identity;
 use mate::messages::Message;
 use mate::network::Client;
@@ -762,8 +762,11 @@ async fn main() -> Result<()> {
                 debug!("Chess command lifecycle: Cleanup completed successfully");
             }
 
-            // Return the command result
-            command_result?;
+            // Return the command result - handle errors gracefully
+            if let Err(e) = command_result {
+                let cli_error = CliError::from(e);
+                display_error_and_exit(cli_error, 1);
+            }
             info!("Chess command lifecycle: Operation completed successfully");
         }
     }

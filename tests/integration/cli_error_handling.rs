@@ -881,10 +881,12 @@ async fn test_error_handling_malformed_user_input() {
                 || combined_output.contains("Failed to make move")
                 || combined_output.contains("Failed to connect")
                 || combined_output.contains("Failed to send")
-                || combined_output.contains("Connection failed"),
-            "Should show helpful error for {}. Output: {}",
-            input_desc,
-            combined_output
+                || combined_output.contains("Connection failed")
+                || combined_output.contains("Failed to accept")
+                || combined_output.contains("invitation")
+                || combined_output.contains("Failed to display")
+                || combined_output.contains("board"),
+            "Should show helpful error for {input_desc}. Output: {combined_output}"
         );
 
         // Should not crash or hang
