@@ -84,15 +84,17 @@ impl AdvancedGameState {
         // Create a large move history for testing purposes by generating fake moves
         // Since we're testing message handling, not chess logic, we can add moves directly to history
         for i in 0..move_count {
+            let move_one = (i % 6) + 2;
+            let move_two = (i % 6) + 3;
             let fake_move = match i % 8 {
-                0 => format!("e{}e{}", (i % 6) + 2, (i % 6) + 3),
-                1 => format!("d{}d{}", (i % 6) + 2, (i % 6) + 3),
-                2 => format!("f{}f{}", (i % 6) + 2, (i % 6) + 3),
-                3 => format!("c{}c{}", (i % 6) + 2, (i % 6) + 3),
-                4 => format!("g{}g{}", (i % 6) + 2, (i % 6) + 3),
-                5 => format!("h{}h{}", (i % 6) + 2, (i % 6) + 3),
-                6 => format!("a{}a{}", (i % 6) + 2, (i % 6) + 3),
-                _ => format!("b{}b{}", (i % 6) + 2, (i % 6) + 3),
+                0 => format!("e{move_one}e{move_two}"),
+                1 => format!("d{move_one}d{move_two}"),
+                2 => format!("f{move_one}f{move_two}"),
+                3 => format!("c{move_one}c{move_two}"),
+                4 => format!("g{move_one}g{move_two}"),
+                5 => format!("h{move_one}h{move_two}"),
+                6 => format!("a{move_one}a{move_two}"),
+                _ => format!("b{move_one}b{move_two}"),
             };
 
             self.move_history.push(fake_move);
@@ -411,8 +413,8 @@ async fn test_multiple_simultaneous_games() -> Result<()> {
         let manager = game_manager.clone();
 
         let handle = tokio::spawn(async move {
-            let white_player = format!("white_player_{}", i);
-            let black_player = format!("black_player_{}", i);
+            let white_player = format!("white_player_{i}");
+            let black_player = format!("black_player_{i}");
 
             // Create game
             manager
@@ -494,8 +496,8 @@ async fn test_concurrent_sync_message_generation() -> Result<()> {
         manager
             .create_game(
                 game_id.clone(),
-                format!("player_a_{}", i),
-                format!("player_b_{}", i),
+                format!("player_a_{i}"),
+                format!("player_b_{i}"),
             )
             .await?;
 
@@ -575,8 +577,8 @@ async fn test_resource_management_under_load() -> Result<()> {
             let result = manager
                 .create_game(
                     game_id.clone(),
-                    format!("player1_{}", i),
-                    format!("player2_{}", i),
+                    format!("player1_{i}"),
+                    format!("player2_{i}"),
                 )
                 .await;
 
@@ -889,7 +891,7 @@ async fn test_high_volume_message_processing() -> Result<()> {
             let message = match message_num % 3 {
                 0 => Message::new_game_invite(game_id, Some(Color::White)),
                 1 => Message::new_move(game_id, "e2e4".to_string(), "dummy_hash".to_string()),
-                _ => Message::new_move_ack(game_id, Some(format!("move_{}", message_num))),
+                _ => Message::new_move_ack(game_id, Some(format!("move_{message_num}"))),
             };
 
             let envelope = SignedEnvelope::create(&message, &identity, None)?;

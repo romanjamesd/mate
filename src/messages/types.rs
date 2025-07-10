@@ -513,59 +513,50 @@ impl Message {
     /// ```
     pub fn log_summary(&self) -> String {
         match self {
-            Message::Ping { nonce, .. } => format!("Ping(nonce={})", nonce),
-            Message::Pong { nonce, .. } => format!("Pong(nonce={})", nonce),
+            Message::Ping { nonce, .. } => format!("Ping(nonce={nonce})"),
+            Message::Pong { nonce, .. } => format!("Pong(nonce={nonce})"),
             Message::GameInvite(invite) => {
                 let color_str = invite
                     .suggested_color
-                    .map_or("any".to_string(), |c| format!("{:?}", c));
-                format!(
-                    "GameInvite(game={}, color={})",
-                    &invite.game_id[..8.min(invite.game_id.len())],
-                    color_str
-                )
+                    .map_or("any".to_string(), |c| format!("{c:?}"));
+                let game_id_short = &invite.game_id[..8.min(invite.game_id.len())];
+                format!("GameInvite(game={game_id_short}, color={color_str})")
             }
-            Message::GameAccept(accept) => format!(
-                "GameAccept(game={}, color={:?})",
-                &accept.game_id[..8.min(accept.game_id.len())],
-                accept.accepted_color
-            ),
+            Message::GameAccept(accept) => {
+                let game_id_short = &accept.game_id[..8.min(accept.game_id.len())];
+                let accepted_color = accept.accepted_color;
+                format!("GameAccept(game={game_id_short}, color={accepted_color:?})")
+            }
             Message::GameDecline(decline) => {
-                let reason_info = decline
-                    .reason
-                    .as_ref()
-                    .map_or("none".to_string(), |r| format!("{}chars", r.len()));
-                format!(
-                    "GameDecline(game={}, reason={})",
-                    &decline.game_id[..8.min(decline.game_id.len())],
-                    reason_info
-                )
+                let reason_info = decline.reason.as_ref().map_or("none".to_string(), |r| {
+                    let len = r.len();
+                    format!("{len}chars")
+                });
+                let game_id_short = &decline.game_id[..8.min(decline.game_id.len())];
+                format!("GameDecline(game={game_id_short}, reason={reason_info})")
             }
-            Message::Move(mv) => format!(
-                "Move(game={}, move={})",
-                &mv.game_id[..8.min(mv.game_id.len())],
-                mv.chess_move
-            ),
+            Message::Move(mv) => {
+                let game_id_short = &mv.game_id[..8.min(mv.game_id.len())];
+                let chess_move = &mv.chess_move;
+                format!("Move(game={game_id_short}, move={chess_move})")
+            }
             Message::MoveAck(ack) => {
-                let move_id_info = ack
-                    .move_id
-                    .as_ref()
-                    .map_or("none".to_string(), |id| format!("{}chars", id.len()));
-                format!(
-                    "MoveAck(game={}, move_id={})",
-                    &ack.game_id[..8.min(ack.game_id.len())],
-                    move_id_info
-                )
+                let move_id_info = ack.move_id.as_ref().map_or("none".to_string(), |id| {
+                    let len = id.len();
+                    format!("{len}chars")
+                });
+                let game_id_short = &ack.game_id[..8.min(ack.game_id.len())];
+                format!("MoveAck(game={game_id_short}, move_id={move_id_info})")
             }
-            Message::SyncRequest(req) => format!(
-                "SyncRequest(game={})",
-                &req.game_id[..8.min(req.game_id.len())]
-            ),
-            Message::SyncResponse(resp) => format!(
-                "SyncResponse(game={}, moves={})",
-                &resp.game_id[..8.min(resp.game_id.len())],
-                resp.move_history.len()
-            ),
+            Message::SyncRequest(req) => {
+                let game_id_short = &req.game_id[..8.min(req.game_id.len())];
+                format!("SyncRequest(game={game_id_short})")
+            }
+            Message::SyncResponse(resp) => {
+                let game_id_short = &resp.game_id[..8.min(resp.game_id.len())];
+                let moves_len = resp.move_history.len();
+                format!("SyncResponse(game={game_id_short}, moves={moves_len})")
+            }
         }
     }
 
@@ -620,8 +611,7 @@ impl Message {
         crate::messages::chess::security::validate_message_security(self).map_err(
             |security_error| {
                 crate::messages::chess::ValidationError::InvalidMessageFormat(format!(
-                    "Security validation failed: {}",
-                    security_error
+                    "Security validation failed: {security_error}"
                 ))
             },
         )?;
@@ -667,10 +657,9 @@ impl SignedEnvelope {
 
         // Validate signature length
         if signature.len() != ED25519_SIGNATURE_LENGTH {
+            let signature_len = signature.len();
             return Err(anyhow::anyhow!(
-                "Invalid signature length: expected {} bytes, got {}",
-                ED25519_SIGNATURE_LENGTH,
-                signature.len()
+                "Invalid signature length: expected {ED25519_SIGNATURE_LENGTH} bytes, got {signature_len}"
             ));
         }
 
@@ -759,7 +748,7 @@ impl SignedEnvelope {
     /// * `Result<Message>` - Deserialized message or error
     pub fn get_message(&self) -> Result<Message> {
         Message::deserialize(&self.message)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {}", e))
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e}"))
     }
 
     /// Get the sender PeerId

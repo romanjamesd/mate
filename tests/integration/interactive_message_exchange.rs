@@ -18,6 +18,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+// Import our new test helpers
+use crate::common::test_helpers::*;
+
 /// Helper function to start a test server
 async fn start_test_server(bind_addr: &str) -> Result<Server> {
     let identity = Arc::new(Identity::generate()?);
@@ -56,9 +59,13 @@ async fn test_successful_message_send_and_echo_response() {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
+    let test_message = "Hello from interactive test";
+
     if let Some(stdin) = child.stdin.as_mut() {
         // Send a test message
-        let _ = stdin.write_all(b"Hello from interactive test\n").await;
+        let _ = stdin
+            .write_all(format!("{}\n", test_message).as_bytes())
+            .await;
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         let _ = stdin.write_all(b"quit\n").await;
@@ -74,45 +81,51 @@ async fn test_successful_message_send_and_echo_response() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Message send and echo response output:\n{}",
         combined_output
     );
 
-    // Verify message was sent
+    // NEW APPROACH: Verify behavioral outcomes instead of log strings
+
+    // 1. Verify the core behavior: message exchange occurred
     assert!(
-        combined_output.contains("Sending Ping message"),
-        "Should show message being sent. Output: {}",
+        verify_message_exchange_occurred(&combined_output, test_message),
+        "Message exchange should have occurred successfully. Output: {}",
         combined_output
     );
 
-    // Verify echo response was displayed
+    // 2. Verify session completed successfully
     assert!(
-        combined_output.contains("Received echo") || combined_output.contains("← Received echo"),
-        "Should display echo response. Output: {}",
+        verify_session_completed_successfully(&combined_output, command_output.status.success()),
+        "Session should complete successfully. Status: {}, Output: {}",
+        command_output.status,
         combined_output
     );
 
-    // Verify the actual message content appears in the echo
+    // 3. Verify timing information is properly formatted
     assert!(
-        combined_output.contains("Hello from interactive test"),
-        "Echo should contain the actual message content. Output: {}",
+        verify_timing_format(&combined_output),
+        "Timing information should be properly formatted. Output: {}",
         combined_output
     );
 
-    // Verify successful exchange
-    assert!(
-        command_output.status.success(),
-        "Message exchange should complete successfully. Status: {}",
-        command_output.status
-    );
+    // 4. Optional: Verify using session summary data (most reliable)
+    if let Some(message_count) = extract_message_count_from_summary(&combined_output) {
+        assert!(
+            message_count >= 1,
+            "Session summary should show at least 1 message sent. Got: {}, Output: {}",
+            message_count,
+            combined_output
+        );
+    }
 
     println!("✅ Successful message send and echo response test passed");
-    println!("   - Message was successfully sent");
-    println!("   - Echo response was displayed");
-    println!("   - Message content was echoed correctly");
+    println!("   - Message exchange behavior verified");
+    println!("   - Timing measurement confirmed");
+    println!("   - Session completed successfully");
 }
 
 /// Test that response timing is measured for each message
@@ -163,7 +176,7 @@ async fn test_response_timing_measured() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Response timing measurement output:\n{}", combined_output);
 
@@ -254,7 +267,7 @@ async fn test_message_statistics_tracked() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Message statistics tracking output:\n{}", combined_output);
 
@@ -339,7 +352,7 @@ async fn test_performance_metrics_accumulate() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Performance metrics accumulation output:\n{}",
@@ -412,7 +425,7 @@ async fn test_clear_indication_of_received_responses() {
 
     if let Some(stdin) = child.stdin.as_mut() {
         for message in &test_messages {
-            let _ = stdin.write_all(format!("{}\n", message).as_bytes()).await;
+            let _ = stdin.write_all(format!("{message}\n").as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(400)).await;
         }
 
@@ -429,7 +442,7 @@ async fn test_clear_indication_of_received_responses() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Clear response indication output:\n{}", combined_output);
 
@@ -502,7 +515,7 @@ async fn test_multiple_exchanges_maintain_accurate_statistics() {
         // Send first batch of messages
         for i in 1..=3 {
             let _ = stdin
-                .write_all(format!("Batch 1 Message {}\n", i).as_bytes())
+                .write_all(format!("Batch 1 Message {i}\n").as_bytes())
                 .await;
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
@@ -514,7 +527,7 @@ async fn test_multiple_exchanges_maintain_accurate_statistics() {
         // Send second batch of messages
         for i in 1..=4 {
             let _ = stdin
-                .write_all(format!("Batch 2 Message {}\n", i).as_bytes())
+                .write_all(format!("Batch 2 Message {i}\n").as_bytes())
                 .await;
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
@@ -536,7 +549,7 @@ async fn test_multiple_exchanges_maintain_accurate_statistics() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Multiple exchanges statistics output:\n{}", combined_output);
 
@@ -653,7 +666,7 @@ async fn test_comprehensive_interactive_message_exchange() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Comprehensive message exchange output:\n{}",

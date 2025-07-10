@@ -295,7 +295,7 @@ pub fn hash_board_state(board: &Board) -> String {
 
     // Get the hash result and convert to lowercase hex string
     let result = hasher.finalize();
-    format!("{:x}", result)
+    format!("{result:x}")
 }
 
 /// Verify that a board state matches the expected hash
@@ -357,18 +357,17 @@ pub enum ValidationError {
 impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ValidationError::InvalidGameId(msg) => write!(f, "Invalid game ID: {}", msg),
-            ValidationError::InvalidMove(msg) => write!(f, "Invalid chess move: {}", msg),
-            ValidationError::InvalidBoardHash(msg) => write!(f, "Invalid board hash: {}", msg),
-            ValidationError::InvalidFen(msg) => write!(f, "Invalid FEN notation: {}", msg),
+            ValidationError::InvalidGameId(msg) => write!(f, "Invalid game ID: {msg}"),
+            ValidationError::InvalidMove(msg) => write!(f, "Invalid chess move: {msg}"),
+            ValidationError::InvalidBoardHash(msg) => write!(f, "Invalid board hash: {msg}"),
+            ValidationError::InvalidFen(msg) => write!(f, "Invalid FEN notation: {msg}"),
             ValidationError::InvalidMessageFormat(msg) => {
-                write!(f, "Invalid message format: {}", msg)
+                write!(f, "Invalid message format: {msg}")
             }
             ValidationError::BoardHashMismatch { expected, actual } => {
                 write!(
                     f,
-                    "Board hash mismatch: expected '{}', got '{}'",
-                    expected, actual
+                    "Board hash mismatch: expected '{expected}', got '{actual}'"
                 )
             }
         }
@@ -406,9 +405,9 @@ impl std::error::Error for ValidationError {}
 pub fn validate_game_invite(invite: &GameInvite) -> Result<(), ValidationError> {
     // Validate game ID format
     if !validate_game_id(&invite.game_id) {
+        let game_id = &invite.game_id;
         return Err(ValidationError::InvalidGameId(format!(
-            "Game ID '{}' is not a valid UUID format",
-            invite.game_id
+            "Game ID '{game_id}' is not a valid UUID format"
         )));
     }
 
@@ -460,9 +459,9 @@ pub fn validate_game_invite(invite: &GameInvite) -> Result<(), ValidationError> 
 pub fn validate_move_message(msg: &Move) -> Result<(), ValidationError> {
     // Validate game ID format
     if !validate_game_id(&msg.game_id) {
+        let game_id = &msg.game_id;
         return Err(ValidationError::InvalidGameId(format!(
-            "Game ID '{}' is not a valid UUID format",
-            msg.game_id
+            "Game ID '{game_id}' is not a valid UUID format"
         )));
     }
 
@@ -528,8 +527,7 @@ pub fn validate_chess_move_format(chess_move: &str) -> Result<(), ValidationErro
 
     // If we get here, the move format is invalid
     Err(ValidationError::InvalidMove(format!(
-        "Invalid chess move format '{}'. Expected formats: 'e2e4', 'd7d8q' (with promotion), 'O-O' (kingside castling), or 'O-O-O' (queenside castling)",
-        chess_move
+        "Invalid chess move format '{chess_move}'. Expected formats: 'e2e4', 'd7d8q' (with promotion), 'O-O' (kingside castling), or 'O-O-O' (queenside castling)"
     )))
 }
 
@@ -616,17 +614,16 @@ fn validate_board_hash_format(hash: &str) -> Result<(), ValidationError> {
 
     // SHA-256 hash should be exactly 64 characters
     if trimmed_hash.len() != 64 {
+        let hash_len = trimmed_hash.len();
         return Err(ValidationError::InvalidBoardHash(format!(
-            "Board state hash must be exactly 64 characters (SHA-256), got {} characters",
-            trimmed_hash.len()
+            "Board state hash must be exactly 64 characters (SHA-256), got {hash_len} characters"
         )));
     }
 
     // Hash should contain only hexadecimal characters
     if !trimmed_hash.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(ValidationError::InvalidBoardHash(format!(
-            "Board state hash '{}' contains invalid characters (must be hexadecimal)",
-            trimmed_hash
+            "Board state hash '{trimmed_hash}' contains invalid characters (must be hexadecimal)"
         )));
     }
 
@@ -649,9 +646,9 @@ fn validate_board_hash_format(hash: &str) -> Result<(), ValidationError> {
 pub fn validate_game_accept(accept: &GameAccept) -> Result<(), ValidationError> {
     // Validate game ID format
     if !validate_game_id(&accept.game_id) {
+        let game_id = &accept.game_id;
         return Err(ValidationError::InvalidGameId(format!(
-            "Game ID '{}' is not a valid UUID format",
-            accept.game_id
+            "Game ID '{game_id}' is not a valid UUID format"
         )));
     }
 
@@ -681,9 +678,9 @@ pub fn validate_game_accept(accept: &GameAccept) -> Result<(), ValidationError> 
 pub fn validate_game_decline(decline: &GameDecline) -> Result<(), ValidationError> {
     // Validate game ID format
     if !validate_game_id(&decline.game_id) {
+        let game_id = &decline.game_id;
         return Err(ValidationError::InvalidGameId(format!(
-            "Game ID '{}' is not a valid UUID format",
-            decline.game_id
+            "Game ID '{game_id}' is not a valid UUID format"
         )));
     }
 
@@ -698,9 +695,9 @@ pub fn validate_game_decline(decline: &GameDecline) -> Result<(), ValidationErro
     if let Some(reason) = &decline.reason {
         // Check for excessively long reasons (reasonable limit: 1000 characters)
         if reason.len() > 1000 {
+            let reason_len = reason.len();
             return Err(ValidationError::InvalidMessageFormat(format!(
-                "Decline reason is too long ({} characters, maximum 1000)",
-                reason.len()
+                "Decline reason is too long ({reason_len} characters, maximum 1000)"
             )));
         }
 
@@ -730,9 +727,9 @@ pub fn validate_game_decline(decline: &GameDecline) -> Result<(), ValidationErro
 pub fn validate_sync_request(request: &SyncRequest) -> Result<(), ValidationError> {
     // Validate game ID format
     if !validate_game_id(&request.game_id) {
+        let game_id = &request.game_id;
         return Err(ValidationError::InvalidGameId(format!(
-            "Game ID '{}' is not a valid UUID format",
-            request.game_id
+            "Game ID '{game_id}' is not a valid UUID format"
         )));
     }
 
@@ -765,9 +762,9 @@ pub fn validate_sync_request(request: &SyncRequest) -> Result<(), ValidationErro
 pub fn validate_sync_response(response: &SyncResponse) -> Result<(), ValidationError> {
     // Validate game ID format
     if !validate_game_id(&response.game_id) {
+        let game_id = &response.game_id;
         return Err(ValidationError::InvalidGameId(format!(
-            "Game ID '{}' is not a valid UUID format",
-            response.game_id
+            "Game ID '{game_id}' is not a valid UUID format"
         )));
     }
 
@@ -788,9 +785,9 @@ pub fn validate_sync_response(response: &SyncResponse) -> Result<(), ValidationE
     // Try to parse the FEN to validate its format
     use crate::chess::Board;
     if Board::from_fen(&response.board_state).is_err() {
+        let board_state = &response.board_state;
         return Err(ValidationError::InvalidFen(format!(
-            "Invalid FEN notation: '{}'",
-            response.board_state
+            "Invalid FEN notation: '{board_state}'"
         )));
     }
 
@@ -798,8 +795,7 @@ pub fn validate_sync_response(response: &SyncResponse) -> Result<(), ValidationE
     for (index, chess_move) in response.move_history.iter().enumerate() {
         if let Err(e) = validate_chess_move_format(chess_move) {
             return Err(ValidationError::InvalidMove(format!(
-                "Invalid move at position {}: {}",
-                index, e
+                "Invalid move at position {index}: {e}"
             )));
         }
     }
@@ -809,9 +805,9 @@ pub fn validate_sync_response(response: &SyncResponse) -> Result<(), ValidationE
 
     // Validate that the board state hash matches the provided board state
     let board = Board::from_fen(&response.board_state).map_err(|_| {
+        let board_state = &response.board_state;
         ValidationError::InvalidFen(format!(
-            "Could not parse board state for hash verification: '{}'",
-            response.board_state
+            "Could not parse board state for hash verification: '{board_state}'"
         ))
     })?;
 
@@ -842,9 +838,9 @@ pub fn validate_sync_response(response: &SyncResponse) -> Result<(), ValidationE
 pub fn validate_move_ack(ack: &MoveAck) -> Result<(), ValidationError> {
     // Validate game ID
     if !validate_game_id(&ack.game_id) {
+        let game_id = &ack.game_id;
         return Err(ValidationError::InvalidGameId(format!(
-            "Invalid game ID format: '{}'",
-            ack.game_id
+            "Invalid game ID format: '{game_id}'"
         )));
     }
 
@@ -2056,7 +2052,7 @@ pub mod security {
             if input_lower.contains(&pattern.to_lowercase()) {
                 return Err(SecurityViolation::InjectionAttempt {
                     field: field_name.to_string(),
-                    content: format!("Contains injection pattern: {}", pattern),
+                    content: format!("Contains injection pattern: {pattern}"),
                 });
             }
         }
@@ -2159,9 +2155,10 @@ pub mod security {
 
         for operator in &basic_sql_operators {
             if input_lower.contains(operator) {
+                let operator_trimmed = operator.trim();
                 return Err(SecurityViolation::InjectionAttempt {
                     field: field_name.to_string(),
-                    content: format!("Contains potential SQL operator: {}", operator.trim()),
+                    content: format!("Contains potential SQL operator: {operator_trimmed}"),
                 });
             }
         }
@@ -2196,7 +2193,7 @@ pub mod security {
             if input_lower.contains(pattern) {
                 return Err(SecurityViolation::InjectionAttempt {
                     field: field_name.to_string(),
-                    content: format!("Detected {}: contains '{}'", description, pattern),
+                    content: format!("Detected {description}: contains '{pattern}'"),
                 });
             }
         }
@@ -2400,15 +2397,15 @@ pub mod security {
         for (i, chess_move) in move_history.iter().enumerate() {
             validate_safe_text_input(
                 chess_move,
-                &format!("move_history[{}]", i),
+                &format!("move_history[{i}]"),
                 MAX_MOVE_NOTATION_LENGTH,
             )?;
 
             // Basic format validation for each move
             validate_chess_move_format(chess_move).map_err(|_| {
                 SecurityViolation::SuspiciousPattern {
-                    field: format!("move_history[{}]", i),
-                    pattern: format!("Invalid move format: {}", chess_move),
+                    field: format!("move_history[{i}]"),
+                    pattern: format!("Invalid move format: {chess_move}"),
                 }
             })?;
         }

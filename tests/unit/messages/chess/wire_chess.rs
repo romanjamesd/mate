@@ -79,7 +79,7 @@ async fn test_chess_sync_configuration() {
     let game_id = generate_game_id();
     let board = Board::new();
     let large_move_history: Vec<String> = (0..500)
-        .map(|i| format!("e{}{}", 2 + (i % 6), 4 + (i % 4)))
+        .map(|i| format!("e{move_one}{move_two}", move_one = 2 + (i % 6), move_two = 4 + (i % 4)))
         .collect();
     let sync_response = SyncResponse::new(
         game_id,

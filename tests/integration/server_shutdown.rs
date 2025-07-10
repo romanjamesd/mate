@@ -104,7 +104,8 @@ async fn test_server_multiple_bind_attempts() {
     );
 
     // Verify the error is related to address already in use
-    let error_msg = format!("{}", result.err().unwrap());
+    let result_err = result.err().unwrap();
+    let error_msg = format!("{result_err}");
     println!("Expected bind error: {}", error_msg);
 
     // The first server should still be valid

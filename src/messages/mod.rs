@@ -46,11 +46,13 @@ pub use wire::{
     ConnectionState,
     DosProtectionConfig,
 
+    FailureClass,
     // Core wire protocol types
     FramedMessage,
     ResilientSession,
     // Graceful degradation types (Step 4.3)
     RetryConfig,
+    RetryStrategy,
     SessionSummary,
 
     WireConfig,
@@ -58,9 +60,18 @@ pub use wire::{
     CLIENT_RETRY_BASE_DELAY,
     // Client retry constants
     CLIENT_RETRY_MAX_ATTEMPTS,
+    CLI_NORMAL_RETRY_BASE_DELAY,
+    CLI_NORMAL_RETRY_MAX_ATTEMPTS,
+    CLI_PATIENT_RETRY_BASE_DELAY,
+    CLI_PATIENT_RETRY_MAX_ATTEMPTS,
+    CLI_QUICK_RETRY_BASE_DELAY,
+    CLI_QUICK_RETRY_MAX_ATTEMPTS,
     DEFAULT_READ_TIMEOUT,
     DEFAULT_WRITE_TIMEOUT,
 
+    FAST_FAIL_CONNECTION_TIMEOUT,
+    FAST_FAIL_DNS_TIMEOUT,
+    FAST_FAIL_HANDSHAKE_TIMEOUT,
     LENGTH_PREFIX_SIZE,
     MAX_ALLOCATION_SIZE,
     MAX_CONCURRENT_CONNECTIONS,

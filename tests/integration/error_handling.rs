@@ -76,7 +76,7 @@ async fn test_graceful_connection_establishment_failure_handling() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify error message contains useful information
         assert!(
@@ -160,7 +160,7 @@ async fn test_appropriate_program_exit_behavior_on_connection_failure() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify no partial output from successful operations
         assert!(
@@ -212,7 +212,7 @@ async fn test_appropriate_program_exit_behavior_on_connection_failure() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify doesn't enter interactive mode
         assert!(
@@ -262,7 +262,7 @@ async fn test_errors_logged_at_appropriate_levels() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify error-level logging is present
         if log_level == "error"
@@ -345,7 +345,7 @@ async fn test_user_friendly_error_communication() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify error message is user-friendly (not just technical errors)
         assert!(
@@ -457,7 +457,7 @@ async fn test_cleanup_failures_dont_prevent_termination() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Program may exit with success or failure code, but should exit cleanly
     let exit_code = command_output.status.code().unwrap_or(-1);
@@ -536,7 +536,7 @@ async fn test_errors_dont_cause_crashes_or_undefined_behavior() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Verify no crashes, panics, or undefined behavior
         assert!(
@@ -615,7 +615,7 @@ async fn test_comprehensive_error_handling() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Comprehensive checks for all error handling features
     let checks = vec![

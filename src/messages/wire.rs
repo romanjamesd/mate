@@ -34,6 +34,19 @@ pub const CLIENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const CLIENT_RETRY_MAX_ATTEMPTS: u32 = 3;
 pub const CLIENT_RETRY_BASE_DELAY: Duration = Duration::from_millis(1000);
 
+// Smart retry configuration for CLI operations
+pub const CLI_QUICK_RETRY_MAX_ATTEMPTS: u32 = 1; // Single attempt for interactive operations
+pub const CLI_QUICK_RETRY_BASE_DELAY: Duration = Duration::from_millis(0);
+pub const CLI_NORMAL_RETRY_MAX_ATTEMPTS: u32 = 2; // Reduced from 3 to 2
+pub const CLI_NORMAL_RETRY_BASE_DELAY: Duration = Duration::from_millis(500); // Reduced from 1000ms
+pub const CLI_PATIENT_RETRY_MAX_ATTEMPTS: u32 = 3; // Reduced from 5 to 3
+pub const CLI_PATIENT_RETRY_BASE_DELAY: Duration = Duration::from_millis(1000); // Reduced from 2000ms
+
+// Fast-fail detection timeouts for obvious failures
+pub const FAST_FAIL_CONNECTION_TIMEOUT: Duration = Duration::from_secs(3);
+pub const FAST_FAIL_DNS_TIMEOUT: Duration = Duration::from_secs(2);
+pub const FAST_FAIL_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+
 // DoS Protection Constants
 pub const MIN_MESSAGE_SIZE: usize = 1; // Minimum message size (1 byte)
 pub const MAX_REASONABLE_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB for reasonable messages
@@ -236,7 +249,7 @@ impl WireConfig {
 /// - Backpressure mechanisms for high load
 ///
 /// Example future configuration:
-/// ```rust,ignore
+/// ```rust
 /// pub struct RateLimitConfig {
 ///     pub max_messages_per_second: u32,
 ///     pub max_bytes_per_second: u64,
@@ -495,27 +508,26 @@ impl From<anyhow::Error> for WireProtocolError {
     fn from(err: anyhow::Error) -> Self {
         // Try to downcast to known error types first
         if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
-            return WireProtocolError::Io(std::io::Error::new(io_err.kind(), format!("{}", err)));
+            return WireProtocolError::Io(std::io::Error::new(io_err.kind(), format!("{err}")));
         }
 
         if let Some(_bincode_err) = err.downcast_ref::<bincode::Error>() {
             // Create a new serialization error with the context from anyhow
             return WireProtocolError::invalid_message_format(format!(
-                "Serialization failed: {}",
-                err
+                "Serialization failed: {err}"
             ));
         }
 
         if let Some(_timeout_err) = err.downcast_ref::<tokio::time::error::Elapsed>() {
             // Create a generic timeout error since we don't have the specific timeout duration
             return WireProtocolError::ProtocolViolation {
-                description: format!("Operation timed out: {}", err),
+                description: format!("Operation timed out: {err}"),
             };
         }
 
         // For other anyhow errors, create a generic protocol violation
         WireProtocolError::ProtocolViolation {
-            description: format!("Unexpected error: {}", err),
+            description: format!("Unexpected error: {err}"),
         }
     }
 }
@@ -774,7 +786,7 @@ impl FramedMessage {
                 "Failed to deserialize data to SignedEnvelope"
             );
             WireProtocolError::CorruptedData {
-                reason: format!("Failed to deserialize SignedEnvelope: {}", e),
+                reason: format!("Failed to deserialize SignedEnvelope: {e}"),
             }
         })?;
 
@@ -854,9 +866,7 @@ impl FramedMessage {
                         "Write operation returned 0 bytes, indicating writer is closed"
                     );
                     return Err(anyhow::anyhow!(
-                        "Write failed: writer closed after writing {} of {} bytes",
-                        total_written,
-                        data_len
+                        "Write failed: writer closed after writing {total_written} of {data_len} bytes"
                     ));
                 }
                 Ok(written) => {
@@ -884,10 +894,7 @@ impl FramedMessage {
                         "Write operation failed"
                     );
                     return Err(anyhow::anyhow!(
-                        "Write failed after writing {} of {} bytes: {}",
-                        total_written,
-                        data_len,
-                        e
+                        "Write failed after writing {total_written} of {data_len} bytes: {e}"
                     ));
                 }
             }
@@ -923,9 +930,7 @@ impl FramedMessage {
                         remaining.len()
                     );
                     return Err(anyhow::anyhow!(
-                        "Unexpected EOF while reading: got {} of {} expected bytes",
-                        total_read,
-                        buffer_len
+                        "Unexpected EOF while reading: got {total_read} of {buffer_len} expected bytes"
                     ));
                 }
                 Ok(read) => {
@@ -953,10 +958,7 @@ impl FramedMessage {
                         "Read operation failed"
                     );
                     return Err(anyhow::anyhow!(
-                        "Read failed after reading {} of {} bytes: {}",
-                        total_read,
-                        buffer_len,
-                        e
+                        "Read failed after reading {total_read} of {buffer_len} bytes: {e}"
                     ));
                 }
             }
@@ -1020,18 +1022,14 @@ impl FramedMessage {
         // Write the length prefix first with recovery logic
         Self::write_all_with_recovery(writer, &length_prefix)
             .await
-            .with_context(|| {
-                format!("Failed to write 4-byte length prefix ({})", message_length)
-            })?;
+            .with_context(|| format!("Failed to write 4-byte length prefix ({message_length})"))?;
 
         // Write the message bytes with recovery logic
         Self::write_all_with_recovery(writer, &message_bytes)
             .await
             .with_context(|| {
-                format!(
-                    "Failed to write message data ({} bytes)",
-                    message_bytes.len()
-                )
+                let message_bytes_len = message_bytes.len();
+                format!("Failed to write message data ({message_bytes_len} bytes)")
             })?;
 
         // Ensure all data is flushed to the underlying writer
@@ -1069,12 +1067,12 @@ impl FramedMessage {
         // Validate the length with enhanced DoS protection
         let validated_length = self
             .validate_length(message_length)
-            .with_context(|| format!("Invalid message length received: {}", message_length))?;
+            .with_context(|| format!("Invalid message length received: {message_length}"))?;
 
         // Safe allocation with DoS protection
         let mut message_buffer = self
             .safe_allocate(validated_length)
-            .with_context(|| format!("Failed to allocate {} byte buffer", validated_length))?;
+            .with_context(|| format!("Failed to allocate {validated_length} byte buffer"))?;
         debug!(
             "Safely allocated buffer for {} byte message",
             validated_length
@@ -1084,16 +1082,13 @@ impl FramedMessage {
         Self::read_exact_with_recovery(reader, &mut message_buffer)
             .await
             .with_context(|| {
-                format!(
-                    "Failed to read message data: expected {} bytes",
-                    validated_length
-                )
+                format!("Failed to read message data: expected {validated_length} bytes")
             })?;
 
         // Deserialize the message bytes back to SignedEnvelope with enhanced validation
         let envelope = self
             .deserialize_envelope(&message_buffer)
-            .with_context(|| format!("Failed to deserialize {} byte message", validated_length))?;
+            .with_context(|| format!("Failed to deserialize {validated_length} byte message"))?;
 
         debug!("Message read operation completed successfully with DoS protection");
         Ok(envelope)
@@ -1113,14 +1108,7 @@ impl FramedMessage {
     /// * `Ok(SignedEnvelope)` - Successfully read and deserialized message
     /// * `Err(anyhow::Error)` - Read timeout, IO error, or deserialization error
     ///
-    /// # Examples
-    /// ```rust,ignore
-    /// use std::time::Duration;
-    ///
-    /// let framed = FramedMessage::default();
-    /// let timeout = Duration::from_secs(10);
-    /// let envelope = framed.read_message_with_timeout(&mut reader, timeout).await?;
-    /// ```
+
     #[instrument(level = "debug", skip(self, reader), fields(timeout_secs = timeout_duration.as_secs()))]
     pub async fn read_message_with_timeout(
         &self,
@@ -1171,14 +1159,7 @@ impl FramedMessage {
     /// * `Ok(())` - Successfully serialized and written message
     /// * `Err(anyhow::Error)` - Write timeout, IO error, or serialization error
     ///
-    /// # Examples
-    /// ```rust,ignore
-    /// use std::time::Duration;
-    ///
-    /// let framed = FramedMessage::default();
-    /// let timeout = Duration::from_secs(10);
-    /// framed.write_message_with_timeout(&mut writer, &envelope, timeout).await?;
-    /// ```
+
     #[instrument(level = "debug", skip(self, writer, envelope), fields(timeout_secs = timeout_duration.as_secs()))]
     pub async fn write_message_with_timeout(
         &self,
@@ -1581,8 +1562,7 @@ impl FramedMessage {
                     return Err(err);
                 } else {
                     return Err(WireProtocolError::connection_closed(format!(
-                        "write_message - connection in unusable state: {:?}",
-                        connection_state
+                        "write_message - connection in unusable state: {connection_state:?}"
                     )));
                 }
             }
@@ -1833,8 +1813,7 @@ impl FramedMessage {
                     return Err(err);
                 } else {
                     return Err(WireProtocolError::connection_closed(format!(
-                        "write_message_with_timeout - connection in unusable state: {:?}",
-                        connection_state
+                        "write_message_with_timeout - connection in unusable state: {connection_state:?}"
                     )));
                 }
             }
@@ -2248,7 +2227,7 @@ impl ConnectionState {
 
                     if *error_count >= 3 {
                         *self = ConnectionState::Broken {
-                            reason: format!("Too many recoverable errors: {}", last_error),
+                            reason: format!("Too many recoverable errors: {last_error}"),
                         };
                     }
                 } else {
@@ -2263,7 +2242,7 @@ impl ConnectionState {
             ConnectionState::Recovering => {
                 // If we get an error while recovering, mark as broken
                 *self = ConnectionState::Broken {
-                    reason: format!("Error during recovery: {}", error),
+                    reason: format!("Error during recovery: {error}"),
                 };
             }
         }
@@ -2363,4 +2342,105 @@ pub struct SessionSummary {
     pub max_attempts: u32,
     pub base_delay_ms: u64,
     pub can_attempt_operations: bool,
+}
+
+/// Retry strategy for CLI operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryStrategy {
+    /// Quick retries for interactive CLI operations (2 attempts, 500ms delay)
+    Quick,
+    /// Normal retries for standard operations (3 attempts, 1s delay)
+    Normal,
+    /// Patient retries for important operations (5 attempts, 2s delay)
+    Patient,
+    /// No retries - fail fast
+    NoRetry,
+}
+
+impl RetryStrategy {
+    pub fn max_attempts(&self) -> u32 {
+        match self {
+            RetryStrategy::Quick => CLI_QUICK_RETRY_MAX_ATTEMPTS,
+            RetryStrategy::Normal => CLI_NORMAL_RETRY_MAX_ATTEMPTS,
+            RetryStrategy::Patient => CLI_PATIENT_RETRY_MAX_ATTEMPTS,
+            RetryStrategy::NoRetry => 1,
+        }
+    }
+
+    pub fn base_delay(&self) -> Duration {
+        match self {
+            RetryStrategy::Quick => CLI_QUICK_RETRY_BASE_DELAY,
+            RetryStrategy::Normal => CLI_NORMAL_RETRY_BASE_DELAY,
+            RetryStrategy::Patient => CLI_PATIENT_RETRY_BASE_DELAY,
+            RetryStrategy::NoRetry => Duration::from_millis(0),
+        }
+    }
+
+    /// Get the appropriate strategy for a CLI operation
+    pub fn for_cli_operation(operation: &str) -> Self {
+        match operation {
+            "invite" | "accept" | "move" => RetryStrategy::Normal,
+            "games" | "board" | "history" => RetryStrategy::NoRetry,
+            "sync" => RetryStrategy::Patient,
+            _ => RetryStrategy::Quick,
+        }
+    }
+}
+
+/// Classification of network failures for smart retry decisions
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FailureClass {
+    /// Immediate failures that should not be retried (DNS, invalid address)
+    NoRetry,
+    /// Transient failures that can be retried (timeouts, connection refused)
+    Retriable,
+    /// Critical failures that need patient retries (handshake, protocol errors)
+    Critical,
+}
+
+impl FailureClass {
+    /// Classify an error for retry decisions
+    pub fn classify_error(error: &anyhow::Error) -> Self {
+        let error_str = error.to_string().to_lowercase();
+
+        // Check for immediate failures that should not be retried
+        if error_str.contains("name or service not known")
+            || error_str.contains("no such host")
+            || error_str.contains("invalid port")
+            || error_str.contains("invalid ip address")
+            || error_str.contains("address family not supported")
+            || error_str.contains("invalid hostname")
+            || error_str.contains("nodename nor servname provided")
+            || error_str.contains("name resolution failed")
+            || error_str.contains("temporary failure in name resolution")
+            || error_str.contains("could not resolve hostname")
+            || error_str.contains("connection refused")  // Often means service not running
+            || error_str.contains("network unreachable") // Network config issue
+            || error_str.contains("no route to host")
+        // Routing issue
+        {
+            return FailureClass::NoRetry;
+        }
+
+        // Check for critical failures that need patient retries
+        if error_str.contains("handshake")
+            || error_str.contains("protocol")
+            || error_str.contains("authentication")
+            || error_str.contains("identity")
+        {
+            return FailureClass::Critical;
+        }
+
+        // Default to retriable for connection issues, timeouts, etc.
+        FailureClass::Retriable
+    }
+
+    /// Get the appropriate retry strategy for this failure class
+    pub fn retry_strategy(&self) -> RetryStrategy {
+        match self {
+            FailureClass::NoRetry => RetryStrategy::NoRetry,
+            FailureClass::Retriable => RetryStrategy::Quick,
+            FailureClass::Critical => RetryStrategy::Normal,
+        }
+    }
 }

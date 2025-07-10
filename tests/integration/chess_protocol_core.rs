@@ -284,7 +284,7 @@ async fn test_wire_protocol_integration_with_chess_messages() -> Result<()> {
 
     // Test large sync response handling
     println!("  Testing large sync response handling...");
-    let large_move_history: Vec<String> = (1..=500).map(|i| format!("move_{}", i)).collect();
+    let large_move_history: Vec<String> = (1..=500).map(|i| format!("move_{i}")).collect();
 
     let large_sync_msg = Message::new_sync_response(
         game_id.clone(),
@@ -526,7 +526,7 @@ async fn test_realistic_usage_performance() -> Result<()> {
             } else {
                 &player2_identity
             };
-            let chess_move = format!("move_{}", i);
+            let chess_move = format!("move_{i}");
             let board_hash = hash_board_state(&Board::new());
 
             let move_msg = Message::new_move(game_id.clone(), chess_move, board_hash);

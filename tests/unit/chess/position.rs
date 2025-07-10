@@ -79,7 +79,7 @@ fn test_position_algebraic_notation_parsing() {
 
     for (file_idx, file_char) in files.iter().enumerate() {
         for (rank_idx, rank_char) in ranks.iter().enumerate() {
-            let algebraic = format!("{}{}", file_char, rank_char);
+            let algebraic = format!("{file_char}{rank_char}");
             let pos = algebraic
                 .parse::<Position>()
                 .unwrap_or_else(|_| panic!("Should parse {}", algebraic));
@@ -124,7 +124,7 @@ fn test_position_algebraic_notation_display() {
     for (file_idx, file_char) in files.iter().enumerate() {
         for (rank_idx, rank_char) in ranks.iter().enumerate() {
             let pos = Position::new(file_idx as u8, rank_idx as u8).unwrap();
-            let expected = format!("{}{}", file_char, rank_char);
+            let expected = format!("{file_char}{rank_char}");
             assert_eq!(pos.to_string(), expected);
         }
     }
@@ -414,7 +414,7 @@ fn test_position_trait_implementations() {
     let e4 = Position::new(4, 3).unwrap();
 
     // Test Debug
-    let debug_str = format!("{:?}", a1);
+    let debug_str = format!("{a1:?}");
     assert!(debug_str.contains("Position"));
     assert!(debug_str.contains("file"));
     assert!(debug_str.contains("rank"));

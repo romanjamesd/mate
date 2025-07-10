@@ -56,7 +56,7 @@ mod high_volume_tests {
             let handle = tokio::spawn(async move {
                 for i in 0..messages_per_worker {
                     let game_id = generate_game_id();
-                    let chess_move = format!("e2e4_{}_{})", worker_id, i);
+                    let chess_move = format!("e2e4_{worker_id}_{i}");
                     let board_hash = hash_board_state(&Board::new());
 
                     // Create and process different message types
@@ -137,7 +137,7 @@ mod high_volume_tests {
 
             // Create large move history
             let move_history: Vec<String> = (0..moves_per_game)
-                .map(|move_idx| format!("move_{}_{}", game_idx, move_idx))
+                .map(|move_idx| format!("move_{game_idx}_{move_idx}"))
                 .collect();
 
             let sync_response =
@@ -234,7 +234,7 @@ mod high_volume_tests {
                 // Simulate moves
                 for move_idx in 0..moves_per_game {
                     let board_hash = hash_board_state(&Board::new());
-                    let chess_move = format!("move_{}_{}", game_idx, move_idx);
+                    let chess_move = format!("move_{game_idx}_{move_idx}");
                     let _move_msg =
                         Message::Move(Move::new(game_id.clone(), chess_move, board_hash));
 
@@ -315,7 +315,7 @@ mod memory_pressure_tests {
             let move_history: Vec<String> = (0..moves_per_history)
                 .map(|move_idx| {
                     // Create longer move strings to increase memory pressure
-                    format!("move_{}_{}_with_long_notation_string", i, move_idx)
+                    format!("move_{i}_{move_idx}_with_long_notation_string")
                 })
                 .collect();
 
@@ -388,7 +388,7 @@ mod memory_pressure_tests {
                     0 => Message::GameInvite(GameInvite::new(game_id, Some(Color::White))),
                     1 => {
                         let board_hash = hash_board_state(&Board::new());
-                        Message::Move(Move::new(game_id, format!("move_{}", i), board_hash))
+                        Message::Move(Move::new(game_id, format!("move_{i}"), board_hash))
                     }
                     _ => Message::SyncRequest(SyncRequest::new(game_id)),
                 };
@@ -464,7 +464,7 @@ mod long_running_tests {
             let game_id = generate_game_id();
             let message = if message_count % 5 == 0 {
                 // Periodically create large sync responses
-                let move_history: Vec<String> = (0..100).map(|i| format!("move_{}", i)).collect();
+                let move_history: Vec<String> = (0..100).map(|i| format!("move_{i}")).collect();
                 let board_hash = hash_board_state(&Board::new());
                 Message::SyncResponse(SyncResponse::new(
                     game_id,
@@ -551,7 +551,7 @@ mod long_running_tests {
             for _i in 0..objects_per_cycle {
                 let game_id = generate_game_id();
                 let move_history: Vec<String> =
-                    (0..50).map(|j| format!("move_{}_{}", cycle, j)).collect();
+                    (0..50).map(|j| format!("move_{cycle}_{j}")).collect();
 
                 let sync_response = SyncResponse::new(
                     game_id,
@@ -618,8 +618,8 @@ mod rate_limiter_stress_tests {
             let blocked_counter = Arc::clone(&blocked_counter);
 
             let handle = tokio::spawn(async move {
-                let _game_id = format!("stress_game_{}", attacker_id);
-                let _player_id = format!("stress_player_{}", attacker_id);
+                let _game_id = format!("stress_game_{attacker_id}");
+                let _player_id = format!("stress_player_{attacker_id}");
 
                 // Note: We need to handle the mutable limiter across async boundaries
                 // For this test, we'll simulate the behavior rather than actually use the limiter
@@ -713,8 +713,9 @@ mod rate_limiter_stress_tests {
 
         // Generate large number of rate limit checks
         for i in 0..game_count {
-            let game_id = format!("game_{}", i);
-            let player_id = format!("player_{}", i % player_count);
+            let game_id = format!("game_{i}");
+            let temp_id = i % player_count;
+            let player_id = format!("player_{temp_id}");
 
             // Test different rate limiting functions
             limiter.check_move_rate_limit(&game_id);

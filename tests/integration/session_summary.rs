@@ -73,7 +73,7 @@ async fn test_session_duration_calculated_and_displayed() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Session duration test output:\n{}", combined_output);
 
@@ -166,7 +166,7 @@ async fn test_message_count_accurately_reported() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Message count test output:\n{}", combined_output);
 
@@ -250,7 +250,7 @@ async fn test_performance_statistics_summarized() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Performance statistics test output:\n{}", combined_output);
 
@@ -345,7 +345,7 @@ async fn test_appropriate_summary_no_messages_sent() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("No messages summary test output:\n{}", combined_output);
 
@@ -436,7 +436,7 @@ async fn test_clear_session_termination_indication() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Session termination test output:\n{}", combined_output);
 
@@ -529,7 +529,7 @@ async fn test_summary_information_well_formatted() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Well-formatted summary test output:\n{}", combined_output);
 
@@ -653,7 +653,7 @@ async fn test_comprehensive_session_summary() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Comprehensive session summary test output:\n{}",

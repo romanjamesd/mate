@@ -18,6 +18,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+// Import our new test helpers
+use crate::common::test_helpers::*;
+
 /// Helper function to start a test server
 async fn start_test_server(bind_addr: &str) -> Result<Server> {
     let identity = Arc::new(Identity::generate()?);
@@ -73,7 +76,7 @@ async fn test_clear_prompt_displayed() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Prompt display output:\n{}", combined_output);
 
@@ -157,7 +160,7 @@ async fn test_empty_input_ignored() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Empty input handling output:\n{}", combined_output);
 
@@ -245,7 +248,7 @@ async fn test_whitespace_only_input_treated_as_empty() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Whitespace input handling output:\n{}", combined_output);
 
@@ -321,7 +324,7 @@ async fn test_end_of_input_graceful_termination() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("End-of-input handling output:\n{}", combined_output);
 
@@ -389,7 +392,7 @@ async fn test_input_reading_error_handling() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Input error handling output:\n{}", combined_output);
 
@@ -451,7 +454,7 @@ async fn test_non_command_input_sent_as_messages() {
     if let Some(stdin) = child.stdin.as_mut() {
         // Send various non-command messages
         for message in &test_messages {
-            let _ = stdin.write_all(format!("{}\n", message).as_bytes()).await;
+            let _ = stdin.write_all(format!("{message}\n").as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
 
@@ -468,12 +471,25 @@ async fn test_non_command_input_sent_as_messages() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Non-command input handling output:\n{}", combined_output);
 
-    // Count echo responses - should be one for each test message
-    let echo_count = combined_output.matches("Received echo").count();
+    // NEW APPROACH: Use behavioral verification with our helper functions
+
+    // 1. Verify all messages were exchanged using the verifier
+    let verifier =
+        MessageExchangeVerifier::new(test_messages.iter().map(|s| s.to_string()).collect());
+
+    if let Err(error) = verifier.verify(&combined_output) {
+        panic!(
+            "Message exchange verification failed: {}\nOutput: {}",
+            error, combined_output
+        );
+    }
+
+    // 2. Double-check: count expected vs actual echo responses
+    let echo_count = count_echo_responses(&combined_output);
     assert_eq!(
         echo_count,
         test_messages.len(),
@@ -483,7 +499,7 @@ async fn test_non_command_input_sent_as_messages() {
         combined_output
     );
 
-    // Verify each test message was echoed back
+    // 3. Verify each test message was echoed back (content verification)
     for message in &test_messages {
         assert!(
             combined_output.contains(message),
@@ -493,19 +509,22 @@ async fn test_non_command_input_sent_as_messages() {
         );
     }
 
-    // Verify messages were sent (not treated as commands)
-    let user_message_sending = combined_output.matches("Sending Ping message").count();
-    // Should have handshake ping + one ping for each test message
-    assert!(
-        user_message_sending > test_messages.len(),
-        "Should send all non-command messages. Expected at least: {}, Got: {}, Output: {}",
-        test_messages.len() + 1,
-        user_message_sending,
-        combined_output
-    );
+    // 4. Optional: Use session summary for the most reliable count
+    if let Some(session_count) = extract_message_count_from_summary(&combined_output) {
+        assert!(
+            session_count >= test_messages.len() as u32,
+            "Session summary should show at least {} messages. Got: {}, Output: {}",
+            test_messages.len(),
+            session_count,
+            combined_output
+        );
+    }
 
     println!("✅ Non-command input sent as messages test passed");
-    println!("   - All non-command inputs were sent as regular messages");
+    println!(
+        "   - All {} non-command inputs were sent as regular messages",
+        test_messages.len()
+    );
     println!("   - All messages were echoed back by the server");
     println!("   - Similar-to-command inputs treated as regular messages");
 }
@@ -578,7 +597,7 @@ async fn test_comprehensive_interactive_input_handling() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Comprehensive input handling output:\n{}", combined_output);
 

@@ -171,10 +171,8 @@ mod ascii_display_tests {
                 // Rank lines should start with rank number and space
                 let rank_num = 9 - i; // Since rank 8 is line 1, rank 7 is line 2, etc.
                 assert!(
-                    line.starts_with(&format!("{} ", rank_num)),
-                    "Rank line should start with '{}': '{}'",
-                    rank_num,
-                    line
+                    line.starts_with(&format!("{rank_num} ")),
+                    "Rank line should start with '{rank_num}': '{line}'"
                 );
             }
         }

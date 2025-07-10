@@ -88,7 +88,7 @@ mod input_validation_security_tests {
         let control_chars = ["\x00", "\x01", "\x02", "\x03"];
 
         for control_char in &control_chars {
-            let test_input = format!("text{}more", control_char);
+            let test_input = format!("text{control_char}more");
             let result = validate_safe_text_input(&test_input, "test_field", 100);
             assert!(
                 result.is_err(),
@@ -484,9 +484,9 @@ mod board_hash_security_tests {
 
         // Test various tampering attempts
         let tampered_hashes = [
-            &correct_hash[1..],                   // Missing first character
-            &format!("a{}", &correct_hash[1..]),  // Wrong first character
-            &format!("{}a", &correct_hash[..63]), // Wrong last character
+            &correct_hash[1..],                               // Missing first character
+            &format!("a{first}", first = &correct_hash[1..]), // Wrong first character
+            &format!("{last}a", last = &correct_hash[..63]),  // Wrong last character
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", // Valid format but wrong hash
         ];
 
@@ -598,7 +598,7 @@ mod security_violation_handling_tests {
         ];
 
         for violation in &violations {
-            let display_msg = format!("{}", violation);
+            let display_msg = format!("{violation}");
             assert!(!display_msg.is_empty());
             assert!(!display_msg.trim().is_empty());
 
@@ -793,7 +793,7 @@ mod comprehensive_security_integration_tests {
 
         // Too many moves
         let too_many_moves: Vec<String> = (0..=MAX_MOVE_HISTORY_SIZE)
-            .map(|i| format!("move{}", i))
+            .map(|i| format!("move{i}"))
             .collect();
         assert!(validate_secure_move_history(&too_many_moves).is_err());
 

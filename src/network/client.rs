@@ -1,12 +1,13 @@
 use crate::crypto::Identity;
 use crate::messages::{
-    wire::{WireConfig, CLIENT_RETRY_BASE_DELAY, CLIENT_RETRY_MAX_ATTEMPTS},
+    wire::{FailureClass, RetryStrategy, WireConfig, FAST_FAIL_CONNECTION_TIMEOUT},
     Message,
 };
 use crate::network::Connection;
 use anyhow::{Context, Result};
 use rand;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -54,7 +55,7 @@ use tracing::{debug, error, info, instrument, warn};
 /// ## Wire Protocol Configuration
 /// - **Message limits**: Configure maximum message size via `WireConfig`
 /// - **Timeout values**: Adjust for network conditions (read/write timeouts)
-/// - **Retry behavior**: Modify `CLIENT_RETRY_MAX_ATTEMPTS` and `CLIENT_RETRY_BASE_DELAY`
+/// - **Retry behavior**: Modify `CLIENT_RETRY_*` constants
 ///
 /// ## Connection Patterns
 /// - **One-shot**: Use `send_message_to()` for single message exchanges
@@ -129,8 +130,20 @@ impl Client {
         }
     }
 
-    #[instrument(level = "info", skip(self), fields(addr = addr, local_peer = self.identity.peer_id().as_str()))]
+    /// Connect to a peer with smart retry logic and failure classification
+    #[instrument(level = "info", skip(self))]
     pub async fn connect(&self, addr: &str) -> Result<Connection> {
+        self.connect_with_strategy(addr, RetryStrategy::Normal)
+            .await
+    }
+
+    /// Connect to a peer with a specific retry strategy
+    #[instrument(level = "info", skip(self))]
+    pub async fn connect_with_strategy(
+        &self,
+        addr: &str,
+        strategy: RetryStrategy,
+    ) -> Result<Connection> {
         info!("Attempting to connect to {}", addr);
         debug!(
             "Using wire config - max_message_size: {}, read_timeout: {:?}, write_timeout: {:?}",
@@ -139,19 +152,31 @@ impl Client {
             self.wire_config.write_timeout
         );
 
-        // Step 5.1: Use configuration constants for retry logic
-        let max_retry_attempts = CLIENT_RETRY_MAX_ATTEMPTS;
-        let base_retry_delay = CLIENT_RETRY_BASE_DELAY;
+        // Use strategy-appropriate retry counts and delays
+        let max_retry_attempts = match strategy {
+            RetryStrategy::NoRetry => 1,
+            RetryStrategy::Quick => 2, // Quick: 2 attempts, ~3 seconds total
+            RetryStrategy::Normal => 3, // Normal: 3 attempts, ~7 seconds total
+            RetryStrategy::Patient => 4, // Patient: 4 attempts, ~15 seconds total
+        };
+
+        let base_retry_delay = match strategy {
+            RetryStrategy::NoRetry => Duration::from_millis(0),
+            RetryStrategy::Quick => Duration::from_millis(500), // 0.5s base delay
+            RetryStrategy::Normal => Duration::from_millis(1000), // 1s base delay
+            RetryStrategy::Patient => Duration::from_millis(2000), // 2s base delay
+        };
 
         let mut last_error = None;
+        let mut failure_class: FailureClass;
 
         for attempt in 1..=max_retry_attempts {
             debug!(
-                "Connection attempt {} of {} to {}",
-                attempt, max_retry_attempts, addr
+                "Connection attempt {} of {} to {} (strategy: {:?})",
+                attempt, max_retry_attempts, addr, strategy
             );
 
-            match self.try_connect_once(addr).await {
+            match self.try_connect_once_with_fast_fail(addr).await {
                 Ok(mut connection) => {
                     info!("TCP connection established to {}, starting handshake", addr);
 
@@ -168,6 +193,14 @@ impl Client {
                         Err(e) => {
                             error!("Handshake failed with {}: {}", addr, e);
                             last_error = Some(anyhow::anyhow!("Handshake failed: {}", e));
+                            failure_class =
+                                FailureClass::classify_error(last_error.as_ref().unwrap());
+
+                            // If handshake fails and it's a no-retry error, exit immediately
+                            if failure_class == FailureClass::NoRetry {
+                                error!("Fast-failing on handshake error: {}", e);
+                                return Err(last_error.unwrap());
+                            }
 
                             // Close the connection since handshake failed
                             if let Err(close_error) = connection.close().await {
@@ -185,11 +218,21 @@ impl Client {
                         addr, attempt, e
                     );
                     last_error = Some(e);
+                    failure_class = FailureClass::classify_error(last_error.as_ref().unwrap());
+
+                    // If this is a no-retry error (DNS, invalid address), exit immediately
+                    if failure_class == FailureClass::NoRetry {
+                        error!(
+                            "Fast-failing on connection error: {}",
+                            last_error.as_ref().unwrap()
+                        );
+                        return Err(last_error.unwrap());
+                    }
                 }
             }
 
             // Add exponential backoff delay before retry (except for last attempt)
-            if attempt < max_retry_attempts {
+            if attempt < max_retry_attempts && base_retry_delay > Duration::from_millis(0) {
                 let delay_ms = base_retry_delay.as_millis() * (2_u128.pow(attempt - 1)); // Exponential backoff
                 debug!("Retrying connection to {} in {} ms", addr, delay_ms);
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms as u64)).await;
@@ -200,21 +243,51 @@ impl Client {
         let final_error =
             last_error.unwrap_or_else(|| anyhow::anyhow!("Unknown connection failure"));
         error!(
-            "Failed to connect to {} after {} attempts: {}",
-            addr, max_retry_attempts, final_error
+            "Failed to connect to {} after {} attempts (strategy: {:?}): {}",
+            addr, max_retry_attempts, strategy, final_error
         );
         Err(final_error)
     }
 
-    /// Internal helper method for a single connection attempt
+    /// Internal helper method for a single connection attempt with fast-fail detection
     #[instrument(level = "debug", skip(self))]
-    async fn try_connect_once(&self, addr: &str) -> Result<Connection> {
-        debug!("Creating TCP connection to {}", addr);
+    async fn try_connect_once_with_fast_fail(&self, addr: &str) -> Result<Connection> {
+        // Validate address length to prevent panics
+        const MAX_ADDR_LEN: usize = 256; // Reasonable limit for network addresses
+        if addr.len() > MAX_ADDR_LEN {
+            return Err(anyhow::anyhow!(
+                "Address too long ({} chars). Maximum allowed: {} characters",
+                addr.len(),
+                MAX_ADDR_LEN
+            ));
+        }
 
-        // Create TcpStream connection to target address
-        let stream = TcpStream::connect(addr)
-            .await
-            .with_context(|| format!("Failed to connect to {}", addr))?;
+        // Basic address format validation
+        if addr.trim().is_empty() {
+            return Err(anyhow::anyhow!("Address cannot be empty"));
+        }
+
+        debug!(
+            "Creating TCP connection to {} with fast-fail detection",
+            addr
+        );
+
+        // Use shorter timeout for initial connection attempt to detect obvious failures quickly
+        let connection_result =
+            tokio::time::timeout(FAST_FAIL_CONNECTION_TIMEOUT, TcpStream::connect(addr)).await;
+
+        let stream = match connection_result {
+            Ok(stream_result) => {
+                stream_result.with_context(|| format!("Failed to connect to {addr}"))?
+            }
+            Err(_) => {
+                // Timeout occurred - this could be a legitimate slow connection, retry with normal timeout
+                debug!("Fast connection attempt timed out, trying with normal timeout");
+                TcpStream::connect(addr).await.with_context(|| {
+                    format!("Failed to connect to {addr} (after fast-fail timeout)")
+                })?
+            }
+        };
 
         debug!("TCP stream established to {}", addr);
 
@@ -490,7 +563,7 @@ impl Client {
         let mut connection = self
             .connect(addr)
             .await
-            .with_context(|| format!("Failed to connect to {}", addr))?;
+            .with_context(|| format!("Failed to connect to {addr}"))?;
 
         let peer_id = connection.peer_identity().unwrap_or("unknown").to_string();
 
@@ -500,7 +573,7 @@ impl Client {
         connection
             .send_message(message)
             .await
-            .with_context(|| format!("Failed to send message to {}", addr))?;
+            .with_context(|| format!("Failed to send message to {addr}"))?;
 
         debug!("Message sent successfully, waiting for response");
 
@@ -508,7 +581,7 @@ impl Client {
         let (response_message, response_sender) = connection
             .receive_message()
             .await
-            .with_context(|| format!("Failed to receive response from {}", addr))?;
+            .with_context(|| format!("Failed to receive response from {addr}"))?;
 
         info!(
             "Received response from {} (type: {}, nonce: {})",
@@ -647,43 +720,6 @@ impl Client {
         // ```
 
         false // Currently no pooling, so no cached connections
-    }
-
-    /// Get or create a connection to the specified address
-    ///
-    /// TODO: Future implementation should include:
-    /// - Connection reuse from pool if available and healthy
-    /// - Automatic reconnection for stale connections
-    /// - Connection limit enforcement
-    /// - Load balancing for multiple addresses
-    pub async fn get_or_create_connection(&self, addr: &str) -> Result<Connection> {
-        // Placeholder for future connection pooling implementation
-        //
-        // Implementation would:
-        // 1. Check pool for existing healthy connection
-        // 2. Return cached connection if available
-        // 3. Create new connection if needed
-        // 4. Add new connection to pool
-        // 5. Enforce pool size limits
-        //
-        // Example future implementation:
-        // ```rust
-        // if let Some(conn) = self.connection_pool.get_healthy(addr).await {
-        //     debug!("Reusing pooled connection to {}", addr);
-        //     return Ok(conn);
-        // }
-        //
-        // let new_conn = self.connect(addr).await?;
-        // self.connection_pool.insert(addr, new_conn.clone()).await;
-        // Ok(new_conn)
-        // ```
-
-        // For now, always create a new connection
-        debug!(
-            "Creating new connection to {} (pooling not yet implemented)",
-            addr
-        );
-        self.connect(addr).await
     }
 
     /// Perform health check on a connection

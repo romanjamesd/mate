@@ -2,6 +2,7 @@ use mate::storage::{Database, GameStatus, PlayerColor, StorageError};
 use rand;
 use std::fs;
 use tempfile::TempDir;
+use uuid;
 
 /// Test helper that ensures proper environment cleanup
 struct TestEnvironment {
@@ -33,8 +34,7 @@ impl TestEnvironment {
 
         // Include the test function name or a unique identifier in the path
         let unique_temp_dir = temp_dir.path().join(format!(
-            "test_errors_{}_{:x}_{:?}_{}_{}",
-            timestamp, random_id, thread_id, process_id, delay_ms
+            "test_errors_{timestamp}_{random_id:x}_{thread_id:?}_{process_id}_{delay_ms}"
         ));
         std::fs::create_dir_all(&unique_temp_dir).expect("Failed to create unique test dir");
 
@@ -178,9 +178,7 @@ fn test_corrupted_database_handling() {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("Time went backwards")
         .as_nanos();
-    let unique_temp_dir = temp_dir
-        .path()
-        .join(format!("test_corrupted_{}", timestamp));
+    let unique_temp_dir = temp_dir.path().join(format!("test_corrupted_{timestamp}"));
     std::fs::create_dir_all(&unique_temp_dir).expect("Failed to create unique test dir");
 
     _env_guard.set_data_dir(&unique_temp_dir);
@@ -367,8 +365,11 @@ fn test_invalid_game_data_errors() {
 fn test_concurrent_game_modification_errors() {
     let (db, _env) = create_test_database();
 
+    // Create unique game ID using UUID to avoid conflicts in parallel tests
+    let game_id = uuid::Uuid::new_v4().to_string();
+
     let game = db
-        .create_game("concurrent_test".to_string(), PlayerColor::White, None)
+        .create_game(game_id, PlayerColor::White, None)
         .expect("Failed to create game");
 
     // Delete the game
@@ -400,12 +401,11 @@ fn test_concurrent_game_modification_errors() {
 fn test_game_state_transition_errors() {
     let (db, _env) = create_test_database();
 
+    // Create unique game ID using UUID to avoid conflicts in parallel tests
+    let game_id = uuid::Uuid::new_v4().to_string();
+
     let game = db
-        .create_game(
-            "state_transition_test".to_string(),
-            PlayerColor::White,
-            None,
-        )
+        .create_game(game_id, PlayerColor::White, None)
         .expect("Failed to create game");
 
     // Complete the game
@@ -509,12 +509,11 @@ fn test_message_with_invalid_game_id() {
 fn test_message_data_validation_errors() {
     let (db, _env) = create_test_database();
 
+    // Create unique game ID using UUID to avoid conflicts in parallel tests
+    let game_id = uuid::Uuid::new_v4().to_string();
+
     let game = db
-        .create_game(
-            "message_validation_test".to_string(),
-            PlayerColor::White,
-            None,
-        )
+        .create_game(game_id, PlayerColor::White, None)
         .expect("Failed to create game");
 
     // Test with extremely long content
@@ -572,9 +571,12 @@ fn test_message_data_validation_errors() {
 fn test_invalid_query_parameters() {
     let (db, _env) = create_test_database();
 
+    // Create unique game ID using UUID to avoid conflicts in parallel tests
+    let game_id = uuid::Uuid::new_v4().to_string();
+
     // Test pagination with invalid parameters
     let game = db
-        .create_game("pagination_test".to_string(), PlayerColor::White, None)
+        .create_game(game_id, PlayerColor::White, None)
         .expect("Failed to create game");
 
     // Test with very large offset
@@ -697,12 +699,11 @@ fn test_query_with_invalid_references() {
 fn test_concurrent_query_and_modification() {
     let (db, _env) = create_test_database();
 
+    // Create unique game ID using UUID to avoid conflicts in parallel tests
+    let game_id = uuid::Uuid::new_v4().to_string();
+
     let game = db
-        .create_game(
-            "concurrent_query_test".to_string(),
-            PlayerColor::White,
-            None,
-        )
+        .create_game(game_id, PlayerColor::White, None)
         .expect("Failed to create game");
 
     // Add some messages
@@ -710,8 +711,8 @@ fn test_concurrent_query_and_modification() {
         db.store_message(
             game.id.clone(),
             "move".to_string(),
-            format!(r#"{{"move": {}}}"#, i),
-            format!("sig_{}", i),
+            format!(r#"{{"move": {i}}}"#),
+            format!("sig_{i}"),
             "sender".to_string(),
         )
         .unwrap_or_else(|_| panic!("Failed to store message {}", i));

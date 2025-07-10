@@ -14,14 +14,12 @@ impl Position {
         // Validate position is within bounds (0-7)
         if file > 7 {
             return Err(ChessError::InvalidPosition(format!(
-                "File must be 0-7, got {}",
-                file
+                "File must be 0-7, got {file}"
             )));
         }
         if rank > 7 {
             return Err(ChessError::InvalidPosition(format!(
-                "Rank must be 0-7, got {}",
-                rank
+                "Rank must be 0-7, got {rank}"
             )));
         }
 
@@ -38,15 +36,13 @@ impl Position {
         let file_lower = file.to_ascii_lowercase();
         if !('a'..='h').contains(&file_lower) {
             return Err(ChessError::InvalidPosition(format!(
-                "Invalid file '{}'. Must be a-h.",
-                file
+                "Invalid file '{file}'. Must be a-h."
             )));
         }
 
         if !('1'..='8').contains(&rank) {
             return Err(ChessError::InvalidPosition(format!(
-                "Invalid rank '{}'. Must be 1-8.",
-                rank
+                "Invalid rank '{rank}'. Must be 1-8."
             )));
         }
 
@@ -112,8 +108,7 @@ impl FromStr for Position {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.len() != 2 {
             return Err(ChessError::InvalidPosition(format!(
-                "Position must be exactly 2 characters (e.g., 'e4'), got '{}'",
-                s
+                "Position must be exactly 2 characters (e.g., 'e4'), got '{s}'"
             )));
         }
 

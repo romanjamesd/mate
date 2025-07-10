@@ -757,7 +757,7 @@ mod thread_safety_tests {
                         &game_id,
                         &board_clone,
                         &hash,
-                        &format!("thread-{}-iter-{}", thread_id, i),
+                        &format!("thread-{thread_id}-iter-{i}"),
                     );
                     assert!(
                         result.is_ok(),

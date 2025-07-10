@@ -339,7 +339,7 @@ fn test_error_display_is_human_readable() {
     let mut displayed_messages = HashSet::new();
 
     for error in &errors {
-        let display_string = format!("{}", error);
+        let display_string = format!("{error}");
 
         // Test basic readability requirements
         assert!(
@@ -574,7 +574,7 @@ fn test_comprehensive_error_consistency() {
         assert!(!debug_str.is_empty());
 
         // Test Display
-        let display_str = format!("{}", error);
+        let display_str = format!("{error}");
         assert!(!display_str.is_empty());
 
         // Test std::error::Error

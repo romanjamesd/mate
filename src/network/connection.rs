@@ -177,7 +177,7 @@ impl Connection {
             ConnectionError::WireProtocol(WireProtocolError::Serialization(bincode::Error::from(
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Envelope creation failed: {}", e),
+                    format!("Envelope creation failed: {e}"),
                 ),
             )))
         })?;
@@ -274,7 +274,7 @@ impl Connection {
         let message = envelope.get_message().map_err(|e| {
             error!("Failed to deserialize message: {}", e);
             ConnectionError::WireProtocol(WireProtocolError::CorruptedData {
-                reason: format!("Message deserialization failed: {}", e),
+                reason: format!("Message deserialization failed: {e}"),
             })
         })?;
 
@@ -328,7 +328,7 @@ impl Connection {
         // Create handshake request message with local identity information
         // Using a special payload format: "HANDSHAKE_REQUEST:<peer_id>"
         let local_peer_id = self.identity.peer_id().as_str().to_string();
-        let handshake_payload = format!("HANDSHAKE_REQUEST:{}", local_peer_id);
+        let handshake_payload = format!("HANDSHAKE_REQUEST:{local_peer_id}");
         let handshake_request = Message::new_ping(handshake_nonce, handshake_payload);
 
         debug!(
@@ -638,7 +638,7 @@ impl Connection {
 
         // Create handshake response message
         let local_peer_id = self.identity.peer_id().as_str().to_string();
-        let response_payload = format!("HANDSHAKE_RESPONSE:{}", local_peer_id);
+        let response_payload = format!("HANDSHAKE_RESPONSE:{local_peer_id}");
         let handshake_response = Message::new_pong(request_message.get_nonce(), response_payload);
 
         debug!(

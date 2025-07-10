@@ -151,27 +151,29 @@ mod attack_simulation_tests {
         let legitimate_hash = hash_board_state(&board);
 
         // Various tampering scenarios
+        let last_char = &legitimate_hash[..63];
+        let first_char = &legitimate_hash[1..];
         let tampering_attempts = vec![
             // Modified hash values
             "a".repeat(64),                         // Wrong hash content
             legitimate_hash[1..].to_string() + "a", // Single character change
             legitimate_hash.to_uppercase(),         // Case change
-            format!("{}x", &legitimate_hash[..63]), // Last character changed
-            format!("x{}", &legitimate_hash[1..]),  // First character changed
+            format!("{last_char}x"),                // Last character changed
+            format!("x{first_char}"),               // First character changed
             // Length attacks
-            legitimate_hash[..32].to_string(),   // Truncated hash
-            format!("{}extra", legitimate_hash), // Extended hash
-            String::new(),                       // Empty hash
-            "x".repeat(32),                      // Too short
-            "x".repeat(128),                     // Too long
+            legitimate_hash[..32].to_string(), // Truncated hash
+            format!("{legitimate_hash}extra"), // Extended hash
+            String::new(),                     // Empty hash
+            "x".repeat(32),                    // Too short
+            "x".repeat(128),                   // Too long
             // Format attacks
             "not-a-hex-hash-at-all".to_string(),
             "g".repeat(64), // Invalid hex characters
             "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz".to_string(),
             // Special character attacks
-            format!("{}}}", legitimate_hash), // Added delimiter (escaped brace)
-            format!("'{}'", legitimate_hash), // Quoted hash
-            format!("{}--", legitimate_hash), // SQL comment suffix
+            format!("{legitimate_hash}}}"), // Added delimiter (escaped brace)
+            format!("'{legitimate_hash}'"), // Quoted hash
+            format!("{legitimate_hash}--"), // SQL comment suffix
         ];
 
         for tampered_hash in tampering_attempts {
@@ -488,7 +490,7 @@ mod security_pipeline_integration_tests {
 
         // Test move history boundary
         let max_history: Vec<String> = (0..MAX_MOVE_HISTORY_SIZE)
-            .map(|i| format!("e{}e{}", (i % 8) + 1, (i % 8) + 2))
+            .map(|i| format!("e{start}e{end}", start = (i % 8) + 1, end = (i % 8) + 2))
             .collect();
 
         assert!(validate_secure_move_history(&max_history).is_err()); // Should fail due to invalid moves
@@ -567,8 +569,9 @@ mod performance_impact_tests {
 
         // Generate many game/player IDs to test memory usage
         for i in 0..10000 {
-            let game_id = format!("game-{}", i);
-            let player_id = format!("player-{}", i % 100); // Reuse some player IDs
+            let game_id = format!("game-{i}");
+            let temp_id = i % 100;
+            let player_id = format!("player-{temp_id}"); // Reuse some player IDs
 
             limiter.check_move_rate_limit(&game_id);
             limiter.check_invitation_rate_limit(&player_id);
@@ -791,7 +794,7 @@ mod compliance_verification_tests {
 
         for violation in violation_types {
             // Each violation should have clear, structured display
-            let display_msg = format!("{}", violation);
+            let display_msg = format!("{violation}");
             assert!(
                 !display_msg.is_empty(),
                 "Security violation should have display message"

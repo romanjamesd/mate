@@ -16,6 +16,9 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+// Import our new test helpers
+use crate::common::test_helpers::*;
+
 /// Helper function to start a test server
 async fn start_test_server(bind_addr: &str) -> Result<Server> {
     let identity = Arc::new(Identity::generate()?);
@@ -73,7 +76,7 @@ async fn test_help_command_displays_functionality() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Help command output:\n{}", combined_output);
 
@@ -99,8 +102,8 @@ async fn test_help_command_displays_functionality() {
 
     // Verify it's local help display (not sent to peer)
     assert!(
-        !combined_output.contains("Sending message") && !combined_output.contains("echo"),
-        "Help command should not send messages to peer. Output: {}",
+        verify_local_command_execution(&combined_output, "Available Commands"),
+        "Help command should execute locally without sending user messages. Output: {}",
         combined_output
     );
 
@@ -151,7 +154,7 @@ async fn test_info_command_shows_connection_details() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Info command output:\n{}", combined_output);
 
@@ -175,8 +178,8 @@ async fn test_info_command_shows_connection_details() {
 
     // Verify it's local info display (not sent to peer)
     assert!(
-        !combined_output.contains("Sending message") && !combined_output.contains("echo"),
-        "Info command should not send messages to peer. Output: {}",
+        verify_local_command_execution(&combined_output, "Connection Information"),
+        "Info command should execute locally without sending user messages. Output: {}",
         combined_output
     );
 
@@ -233,7 +236,7 @@ async fn test_info_command_shows_statistics_after_messages() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Info with statistics output:\n{}", combined_output);
 
@@ -307,7 +310,7 @@ async fn test_quit_command_terminates_gracefully() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify graceful termination messaging
     assert!(
@@ -370,7 +373,7 @@ async fn test_exit_command_terminates_gracefully() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     // Verify graceful termination
     assert!(
@@ -455,7 +458,7 @@ async fn test_commands_case_sensitive_exact_match() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Case sensitivity test output:\n{}", combined_output);
 
@@ -532,7 +535,7 @@ async fn test_comprehensive_interactive_commands() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Comprehensive commands test output:\n{}", combined_output);
 

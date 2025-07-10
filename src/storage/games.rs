@@ -195,6 +195,24 @@ impl Database {
         })
     }
 
+    /// Get all games (ordered by most recent first)
+    pub fn get_all_games(&self) -> Result<Vec<Game>> {
+        self.with_connection(|conn| {
+            let mut stmt = conn.prepare(
+                r#"
+                SELECT id, opponent_peer_id, my_color, status, 
+                       created_at, updated_at, completed_at, result, metadata
+                FROM games 
+                ORDER BY updated_at DESC
+                "#,
+            )?;
+
+            let game_iter = stmt.query_map([], game_from_row)?;
+            let games = game_iter.collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(games)
+        })
+    }
+
     /// Delete a game and all associated messages
     pub fn delete_game(&self, game_id: &str) -> Result<()> {
         self.with_connection(|conn| {

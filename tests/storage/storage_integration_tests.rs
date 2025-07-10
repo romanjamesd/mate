@@ -25,8 +25,7 @@ impl TestEnvironment {
         let thread_id = std::thread::current().id();
         let process_id = std::process::id();
         let unique_temp_dir = temp_dir.path().join(format!(
-            "test_integration_{}_{:x}_{:?}_{}",
-            timestamp, random_id, thread_id, process_id
+            "test_integration_{timestamp}_{random_id:x}_{thread_id:?}_{process_id}"
         ));
         std::fs::create_dir_all(&unique_temp_dir).expect("Failed to create unique test dir");
 
@@ -129,7 +128,7 @@ fn test_complete_game_lifecycle_with_messages() {
             game.id.clone(),
             "move".to_string(),
             serde_json::json!({"move": move_notation, "fen": "updated_position"}).to_string(),
-            format!("move_sig_{}", move_notation),
+            format!("move_sig_{move_notation}"),
             sender.to_string(),
         )
         .unwrap_or_else(|_| panic!("Failed to store move: {}", move_notation));
@@ -139,7 +138,7 @@ fn test_complete_game_lifecycle_with_messages() {
     db.store_message(
         game.id.clone(),
         "chat".to_string(),
-        serde_json::json!({"message": "Great opening!"}).to_string(),
+        serde_json::json!({"message": format!("Good move #{}", 1)}).to_string(),
         "chat_sig_1".to_string(),
         "opponent_lifecycle".to_string(),
     )
@@ -303,13 +302,14 @@ fn test_game_with_extensive_message_history() {
         } else {
             "opponent_extensive"
         };
-        let move_notation = format!("move_{}", i + 1);
+        let tmp = i + 1;
+        let move_notation = format!("move_{tmp}");
 
         db.store_message(
             game.id.clone(),
             "move".to_string(),
             serde_json::json!({"move": move_notation, "move_number": i + 1}).to_string(),
-            format!("move_sig_{}", i),
+            format!("move_sig_{i}"),
             sender.to_string(),
         )
         .unwrap_or_else(|_| panic!("Failed to store move {}", i));
@@ -321,8 +321,9 @@ fn test_game_with_extensive_message_history() {
             db.store_message(
                 game.id.clone(),
                 "chat".to_string(),
-                serde_json::json!({"message": format!("Good move #{}", i + 1)}).to_string(),
-                format!("chat_sig_{}", chat_count),
+                serde_json::json!({"message": format!("Good move #{val}", val = i + 1)})
+                    .to_string(),
+                format!("chat_sig_{chat_count}"),
                 sender.to_string(),
             )
             .unwrap_or_else(|_| panic!("Failed to store chat {}", chat_count));
@@ -424,7 +425,7 @@ fn test_database_connection_management() {
     for i in 0..20 {
         let game = db
             .create_game(
-                format!("opponent_conn_{}", i),
+                format!("opponent_conn_{i}"),
                 if i % 2 == 0 {
                     PlayerColor::White
                 } else {
@@ -437,8 +438,8 @@ fn test_database_connection_management() {
         db.store_message(
             game.id,
             "test".to_string(),
-            format!(r#"{{"test": {}}}"#, i),
-            format!("sig_{}", i),
+            format!(r#"{{"test": {i}}}"#),
+            format!("sig_{i}"),
             "test_sender".to_string(),
         )
         .unwrap_or_else(|_| panic!("Failed to store message {}", i));
@@ -606,7 +607,8 @@ fn test_database_indexes_and_performance() {
 
     // Create games with different opponents
     for i in 0..10 {
-        let opponent = format!("opponent_{}", i % 3); // 3 different opponents
+        let opponent_num = i % 3;
+        let opponent = format!("opponent_{opponent_num}"); // 3 different opponents
         let game = db
             .create_game(
                 opponent,
@@ -626,9 +628,9 @@ fn test_database_indexes_and_performance() {
             db.store_message(
                 game_ids[i].clone(),
                 "move".to_string(),
-                format!(r#"{{"move": {}}}"#, j),
-                format!("sig_{}_{}", i, j),
-                format!("sender_{}", j % 2),
+                format!(r#"{{"move": {j}}}"#),
+                format!("sig_{i}_{j}"),
+                format!("sender_{val}", val = j % 2),
             )
             .unwrap_or_else(|_| panic!("Failed to store message {} for game {}", j, i));
         }
@@ -758,8 +760,8 @@ fn test_data_integrity_and_consistency() {
             .store_message(
                 game.id.clone(),
                 "timing_test".to_string(),
-                format!(r#"{{"order": {}}}"#, i),
-                format!("timing_sig_{}", i),
+                format!(r#"{{"order": {i}}}"#),
+                format!("timing_sig_{i}"),
                 "timing_sender".to_string(),
             )
             .unwrap_or_else(|_| panic!("Failed to store timing message {}", i));

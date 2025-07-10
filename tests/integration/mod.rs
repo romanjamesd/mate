@@ -3,8 +3,6 @@
 //! This module contains integration tests that verify the behavior of
 //! the complete system with multiple components working together.
 
-// Placeholder for future integration tests
-
 // Server integration tests
 pub mod server_shutdown;
 
@@ -13,6 +11,18 @@ pub mod connection_core;
 
 // CLI integration tests
 pub mod cli_tests;
+
+// CLI command handler tests
+pub mod cli_commands;
+
+// CLI application lifecycle tests
+pub mod cli_app_lifecycle;
+
+// CLI-Database integration tests
+pub mod cli_database;
+
+// CLI error handling integration tests
+pub mod cli_error_handling;
 
 // Interactive mode initialization tests
 pub mod interactive_initialization;
@@ -64,3 +74,5 @@ pub mod chess_protocol_advanced;
 
 // Chess security integration tests
 pub mod chess_security_integration;
+
+pub mod cli_network;

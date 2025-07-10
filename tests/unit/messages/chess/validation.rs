@@ -32,26 +32,26 @@ mod validation_error_tests {
     #[test]
     fn test_validation_error_display_traits() {
         let error = ValidationError::InvalidGameId("test-id".to_string());
-        assert_eq!(format!("{}", error), "Invalid game ID: test-id");
+        assert_eq!(format!("{error}"), "Invalid game ID: test-id");
 
         let error = ValidationError::InvalidMove("invalid-move".to_string());
-        assert_eq!(format!("{}", error), "Invalid chess move: invalid-move");
+        assert_eq!(format!("{error}"), "Invalid chess move: invalid-move");
 
         let error = ValidationError::InvalidBoardHash("bad-hash".to_string());
-        assert_eq!(format!("{}", error), "Invalid board hash: bad-hash");
+        assert_eq!(format!("{error}"), "Invalid board hash: bad-hash");
 
         let error = ValidationError::InvalidFen("bad-fen".to_string());
-        assert_eq!(format!("{}", error), "Invalid FEN notation: bad-fen");
+        assert_eq!(format!("{error}"), "Invalid FEN notation: bad-fen");
 
         let error = ValidationError::InvalidMessageFormat("bad-format".to_string());
-        assert_eq!(format!("{}", error), "Invalid message format: bad-format");
+        assert_eq!(format!("{error}"), "Invalid message format: bad-format");
 
         let error = ValidationError::BoardHashMismatch {
             expected: "hash1".to_string(),
             actual: "hash2".to_string(),
         };
         assert_eq!(
-            format!("{}", error),
+            format!("{error}"),
             "Board hash mismatch: expected 'hash1', got 'hash2'"
         );
     }
@@ -86,7 +86,7 @@ mod validation_error_tests {
     #[test]
     fn test_validation_error_debug() {
         let error = ValidationError::InvalidGameId("test".to_string());
-        let debug_str = format!("{:?}", error);
+        let debug_str = format!("{error:?}");
         assert!(debug_str.contains("InvalidGameId"));
         assert!(debug_str.contains("test"));
     }
@@ -117,12 +117,12 @@ mod validation_error_tests {
 
         for error in errors {
             // Each error should have a meaningful display message
-            let display_msg = format!("{}", error);
+            let display_msg = format!("{error}");
             assert!(!display_msg.is_empty());
             assert!(!display_msg.trim().is_empty());
 
             // Debug format should be informative
-            let debug_msg = format!("{:?}", error);
+            let debug_msg = format!("{error:?}");
             assert!(!debug_msg.is_empty());
         }
     }
@@ -310,7 +310,7 @@ mod chess_move_format_validation_tests {
         // Test all valid files and ranks
         for file in 'a'..='h' {
             for rank in '1'..='8' {
-                let chess_move = format!("{}{}e4", file, rank);
+                let chess_move = format!("{file}{rank}e4");
                 assert!(
                     validate_chess_move_format(&chess_move).is_ok(),
                     "Valid square move should pass: {}",
@@ -324,7 +324,7 @@ mod chess_move_format_validation_tests {
         let invalid_ranks = vec!['0', '9', 'a', '@'];
 
         for file in invalid_files {
-            let chess_move = format!("{}1e4", file);
+            let chess_move = format!("{file}1e4");
             assert!(
                 validate_chess_move_format(&chess_move).is_err(),
                 "Invalid file should be rejected: {}",
@@ -333,7 +333,7 @@ mod chess_move_format_validation_tests {
         }
 
         for rank in invalid_ranks {
-            let chess_move = format!("e{}e4", rank);
+            let chess_move = format!("e{rank}e4");
             assert!(
                 validate_chess_move_format(&chess_move).is_err(),
                 "Invalid rank should be rejected: {}",
@@ -1040,12 +1040,12 @@ mod integration_validation_tests {
         // Test various validation errors
         let game_id_error =
             validate_game_invite(&GameInvite::new("invalid".to_string(), None)).unwrap_err();
-        let error_msg = format!("{}", game_id_error);
+        let error_msg = format!("{game_id_error}");
         assert!(error_msg.contains("Invalid game ID"));
         assert!(error_msg.contains("invalid"));
 
         let move_error = validate_chess_move_format("invalid-move").unwrap_err();
-        let move_error_msg = format!("{}", move_error);
+        let move_error_msg = format!("{move_error}");
         assert!(move_error_msg.contains("Invalid chess move"));
         assert!(move_error_msg.contains("invalid-move"));
 
@@ -1055,7 +1055,7 @@ mod integration_validation_tests {
             "invalid-hash".to_string(),
         ))
         .unwrap_err();
-        let hash_error_msg = format!("{}", hash_error);
+        let hash_error_msg = format!("{hash_error}");
         assert!(hash_error_msg.contains("Invalid board hash"));
     }
 

@@ -25,8 +25,7 @@ impl TestEnvironment {
         let thread_id = std::thread::current().id();
         let process_id = std::process::id();
         let unique_temp_dir = temp_dir.path().join(format!(
-            "test_{}_{:x}_{:?}_{}",
-            timestamp, random_id, thread_id, process_id
+            "test_{timestamp}_{random_id:x}_{thread_id:?}_{process_id}"
         ));
         std::fs::create_dir_all(&unique_temp_dir).expect("Failed to create unique test dir");
 
@@ -506,8 +505,8 @@ fn test_message_pagination() {
         db.store_message(
             game.id.clone(),
             "move".to_string(),
-            format!(r#"{{"move": {}}}"#, i),
-            format!("sig_{}", i),
+            format!(r#"{{"move": {i}}}"#),
+            format!("sig_{i}"),
             "sender".to_string(),
         )
         .unwrap_or_else(|_| panic!("Failed to store message {}", i));

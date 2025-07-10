@@ -50,8 +50,7 @@ impl CastlingRights {
                 'q' => rights.black_queenside = true,
                 _ => {
                     return Err(ChessError::InvalidFen(format!(
-                        "Invalid castling rights character '{}' (valid: K, Q, k, q, or - for none)",
-                        c
+                        "Invalid castling rights character '{c}' (valid: K, Q, k, q, or - for none)"
                     )))
                 }
             }
@@ -170,9 +169,10 @@ impl Board {
     pub fn set_piece(&mut self, pos: Position, piece: Option<Piece>) -> Result<(), ChessError> {
         // Validate position bounds
         if pos.file > 7 || pos.rank > 7 {
+            let file = pos.file;
+            let rank = pos.rank;
             return Err(ChessError::InvalidPosition(format!(
-                "Position {}({},{}) is out of bounds",
-                pos, pos.file, pos.rank
+                "Position {pos}({file},{rank}) is out of bounds"
             )));
         }
 
@@ -260,9 +260,9 @@ impl Board {
 
         // Validate exactly 6 fields are present
         if parts.len() != 6 {
+            let found_count = parts.len();
             return Err(ChessError::InvalidFen(format!(
-                "FEN must have exactly 6 fields (piece_placement active_color castling_rights en_passant halfmove fullmove), found {}",
-                parts.len()
+                "FEN must have exactly 6 fields (piece_placement active_color castling_rights en_passant halfmove fullmove), found {found_count}"
             )));
         }
 
@@ -308,9 +308,9 @@ impl Board {
         // Step 4.3: Parse Piece Placement (Field 1)
         let ranks: Vec<&str> = piece_placement.split('/').collect();
         if ranks.len() != 8 {
+            let found_ranks = ranks.len();
             return Err(ChessError::InvalidFen(format!(
-                "Piece placement must have exactly 8 ranks separated by '/', found {}",
-                ranks.len()
+                "Piece placement must have exactly 8 ranks separated by '/', found {found_ranks}"
             )));
         }
 
@@ -324,8 +324,7 @@ impl Board {
 
             if rank_str.is_empty() {
                 return Err(ChessError::InvalidFen(format!(
-                    "Rank {} cannot be empty",
-                    fen_rank_number
+                    "Rank {fen_rank_number} cannot be empty"
                 )));
             }
 
@@ -333,11 +332,9 @@ impl Board {
 
             for c in rank_str.chars() {
                 if file >= 8 {
+                    let position = file + 1;
                     return Err(ChessError::InvalidFen(format!(
-                        "Rank {} has more than 8 squares (found character '{}' at position {})",
-                        fen_rank_number,
-                        c,
-                        file + 1
+                        "Rank {fen_rank_number} has more than 8 squares (found character '{c}' at position {position})"
                     )));
                 }
 
@@ -346,29 +343,28 @@ impl Board {
                     let empty_squares = c.to_digit(10).unwrap() as usize;
                     if empty_squares == 0 || empty_squares > 8 {
                         return Err(ChessError::InvalidFen(format!(
-                            "Invalid empty square count '{}' in rank {} (must be 1-8)",
-                            c, fen_rank_number
+                            "Invalid empty square count '{c}' in rank {fen_rank_number} (must be 1-8)"
                         )));
                     }
                     if file + empty_squares > 8 {
+                        let current_position = file + 1;
                         return Err(ChessError::InvalidFen(format!(
-                            "Empty square count '{}' in rank {} would exceed 8 squares (current position: {})",
-                            c, fen_rank_number, file + 1
+                            "Empty square count '{c}' in rank {fen_rank_number} would exceed 8 squares (current position: {current_position})"
                         )));
                     }
                     file += empty_squares;
                 } else {
                     // Place piece - validate character first
                     if !c.is_ascii_alphabetic() {
+                        let position = file + 1;
                         return Err(ChessError::InvalidFen(format!(
-                            "Invalid character '{}' in rank {} at position {} (expected piece letter or digit 1-8)",
-                            c, fen_rank_number, file + 1
+                            "Invalid character '{c}' in rank {fen_rank_number} at position {position} (expected piece letter or digit 1-8)"
                         )));
                     }
                     let piece = Self::char_to_piece(c).map_err(|_| {
+                        let position = file + 1;
                         ChessError::InvalidFen(format!(
-                            "Invalid piece character '{}' in rank {} at position {} (valid pieces: KQRBNPkqrbnp)",
-                            c, fen_rank_number, file + 1
+                            "Invalid piece character '{c}' in rank {fen_rank_number} at position {position} (valid pieces: KQRBNPkqrbnp)"
                         ))
                     })?;
                     squares[board_rank][file] = Some(piece);
@@ -379,9 +375,7 @@ impl Board {
             // Validate that we have exactly 8 squares per rank
             if file != 8 {
                 return Err(ChessError::InvalidFen(format!(
-                    "Rank {} must represent exactly 8 squares, found {} (check piece placement and empty square counts)",
-                    fen_rank_number,
-                    file
+                    "Rank {fen_rank_number} must represent exactly 8 squares, found {file} (check piece placement and empty square counts)"
                 )));
             }
         }
@@ -392,8 +386,7 @@ impl Board {
             "b" => Color::Black,
             _ => {
                 return Err(ChessError::InvalidFen(format!(
-                    "Invalid active color '{}' (must be 'w' for White or 'b' for Black)",
-                    active_color
+                    "Invalid active color '{active_color}' (must be 'w' for White or 'b' for Black)"
                 )))
             }
         };
@@ -405,8 +398,7 @@ impl Board {
             for c in castling_rights.chars() {
                 if !"KQkq".contains(c) {
                     return Err(ChessError::InvalidFen(format!(
-                        "Invalid character '{}' in castling rights '{}' (valid characters: K, Q, k, q, or '-' for none)",
-                        c, castling_rights
+                        "Invalid character '{c}' in castling rights '{castling_rights}' (valid characters: K, Q, k, q, or '-' for none)"
                     )));
                 }
             }
@@ -416,8 +408,7 @@ impl Board {
             for c in castling_rights.chars() {
                 if !seen_chars.insert(c) {
                     return Err(ChessError::InvalidFen(format!(
-                        "Duplicate character '{}' in castling rights '{}'",
-                        c, castling_rights
+                        "Duplicate character '{c}' in castling rights '{castling_rights}'"
                     )));
                 }
             }
@@ -431,8 +422,7 @@ impl Board {
                 if let Some(pos) = expected_order.iter().position(|&x| x == c) {
                     if (pos as i32) < last_valid_index {
                         return Err(ChessError::InvalidFen(format!(
-                            "Castling rights '{}' not in conventional order (expected order: KQkq)",
-                            castling_rights
+                            "Castling rights '{castling_rights}' not in conventional order (expected order: KQkq)"
                         )));
                     }
                     last_valid_index = pos as i32;
@@ -440,8 +430,7 @@ impl Board {
             }
         } else if castling_rights.len() != 1 {
             return Err(ChessError::InvalidFen(format!(
-                "Invalid castling rights '{}' (use '-' for no castling rights)",
-                castling_rights
+                "Invalid castling rights '{castling_rights}' (use '-' for no castling rights)"
             )));
         }
         // TODO: Store castling rights when castling is implemented
@@ -451,8 +440,7 @@ impl Board {
             // Validate it's a valid square notation (e.g., "e3", "d6")
             if en_passant.len() != 2 {
                 return Err(ChessError::InvalidFen(format!(
-                    "Invalid en passant target '{}' (must be 2 characters like 'e3' or '-' for none)",
-                    en_passant
+                    "Invalid en passant target '{en_passant}' (must be 2 characters like 'e3' or '-' for none)"
                 )));
             }
             let file_char = en_passant.chars().nth(0).unwrap();
@@ -460,14 +448,12 @@ impl Board {
 
             if !('a'..='h').contains(&file_char) {
                 return Err(ChessError::InvalidFen(format!(
-                    "Invalid file '{}' in en passant target '{}' (must be a-h)",
-                    file_char, en_passant
+                    "Invalid file '{file_char}' in en passant target '{en_passant}' (must be a-h)"
                 )));
             }
             if !('1'..='8').contains(&rank_char) {
                 return Err(ChessError::InvalidFen(format!(
-                    "Invalid rank '{}' in en passant target '{}' (must be 1-8)",
-                    rank_char, en_passant
+                    "Invalid rank '{rank_char}' in en passant target '{en_passant}' (must be 1-8)"
                 )));
             }
 
@@ -475,14 +461,12 @@ impl Board {
             let rank_num = rank_char.to_digit(10).unwrap() as u8;
             if rank_num != 3 && rank_num != 6 {
                 return Err(ChessError::InvalidFen(format!(
-                    "Invalid en passant target '{}' (en passant squares must be on rank 3 or 6)",
-                    en_passant
+                    "Invalid en passant target '{en_passant}' (en passant squares must be on rank 3 or 6)"
                 )));
             }
         } else if en_passant.len() != 1 {
             return Err(ChessError::InvalidFen(format!(
-                "Invalid en passant field '{}' (use '-' for no en passant)",
-                en_passant
+                "Invalid en passant field '{en_passant}' (use '-' for no en passant)"
             )));
         }
         // TODO: Store en passant target when en passant is implemented
@@ -490,24 +474,21 @@ impl Board {
         // Step 4.7: Parse Halfmove Clock (Field 5)
         let halfmove_clock = halfmove_str.parse::<u16>().map_err(|e| {
             ChessError::InvalidFen(format!(
-                "Invalid halfmove clock '{}' (must be a non-negative integer): {}",
-                halfmove_str, e
+                "Invalid halfmove clock '{halfmove_str}' (must be a non-negative integer): {e}"
             ))
         })?;
 
         // Validate reasonable range for halfmove clock (0-100 is typical)
         if halfmove_clock > 100 {
             return Err(ChessError::InvalidFen(format!(
-                "Halfmove clock {} is unusually high (typically 0-100, max 50 for 50-move rule)",
-                halfmove_clock
+                "Halfmove clock {halfmove_clock} is unusually high (typically 0-100, max 50 for 50-move rule)"
             )));
         }
 
         // Step 4.8: Parse Fullmove Number (Field 6)
         let fullmove_number = fullmove_str.parse::<u16>().map_err(|e| {
             ChessError::InvalidFen(format!(
-                "Invalid fullmove number '{}' (must be a positive integer): {}",
-                fullmove_str, e
+                "Invalid fullmove number '{fullmove_str}' (must be a positive integer): {e}"
             ))
         })?;
 
@@ -520,8 +501,7 @@ impl Board {
         // Validate reasonable range for fullmove number
         if fullmove_number > 9999 {
             return Err(ChessError::InvalidFen(format!(
-                "Fullmove number {} is unusually high (games rarely exceed 200 moves)",
-                fullmove_number
+                "Fullmove number {fullmove_number} is unusually high (games rarely exceed 200 moves)"
             )));
         }
 
@@ -560,8 +540,7 @@ impl Board {
         let fullmove = self.fullmove_number;
 
         format!(
-            "{} {} {} {} {} {}",
-            piece_placement, active_color, castling_rights, en_passant, halfmove, fullmove
+            "{piece_placement} {active_color} {castling_rights} {en_passant} {halfmove} {fullmove}"
         )
     }
 
@@ -642,8 +621,7 @@ impl Board {
             'p' => (PieceType::Pawn, Color::Black),
             _ => {
                 return Err(ChessError::InvalidFen(format!(
-                    "Invalid piece character '{}'",
-                    c
+                    "Invalid piece character '{c}'"
                 )))
             }
         };
@@ -664,7 +642,7 @@ impl Board {
             let rank_number = display_rank + 1;
 
             // Left rank label
-            result.push_str(&format!("{} ", rank_number));
+            result.push_str(&format!("{rank_number} "));
 
             // Display each file from a to h
             for file in 0..8 {
@@ -682,7 +660,7 @@ impl Board {
             }
 
             // Right rank label
-            result.push_str(&format!(" {}\n", rank_number));
+            result.push_str(&format!(" {rank_number}\n"));
         }
 
         // Bottom file labels
@@ -700,22 +678,24 @@ impl Board {
     pub fn make_move(&mut self, mv: Move) -> Result<(), ChessError> {
         // Basic move validation
         let source_piece = self.get_piece(mv.from).ok_or_else(|| {
-            ChessError::InvalidMove(format!("No piece at source position {}", mv.from))
+            let from_pos = mv.from;
+            ChessError::InvalidMove(format!("No piece at source position {from_pos}"))
         })?;
 
         // Ensure piece belongs to active player
         if source_piece.color != self.active_color {
             return Err(ChessError::InvalidMove(format!(
-                "Cannot move {} piece when it's {}'s turn",
-                source_piece.color, self.active_color
+                "Cannot move {source_piece_color} piece when it's {active_color}'s turn",
+                source_piece_color = source_piece.color,
+                active_color = self.active_color
             )));
         }
 
         // Validate destination position bounds
         if mv.to.file > 7 || mv.to.rank > 7 {
             return Err(ChessError::InvalidMove(format!(
-                "Destination position {} is out of bounds",
-                mv.to
+                "Destination position {to} is out of bounds",
+                to = mv.to
             )));
         }
 
@@ -723,8 +703,8 @@ impl Board {
         if let Some(dest_piece) = self.get_piece(mv.to) {
             if dest_piece.color == self.active_color {
                 return Err(ChessError::InvalidMove(format!(
-                    "Cannot capture own piece at {}",
-                    mv.to
+                    "Cannot capture own piece at {to}",
+                    to = mv.to
                 )));
             }
         }
@@ -751,8 +731,8 @@ impl Board {
 
             if mv.to.rank != promotion_rank {
                 return Err(ChessError::InvalidMove(format!(
-                    "Pawn promotion only allowed when reaching rank {}",
-                    promotion_rank + 1
+                    "Pawn promotion only allowed when reaching rank {promotion_rank}",
+                    promotion_rank = promotion_rank + 1
                 )));
             }
         } else if is_pawn_move {
@@ -830,9 +810,9 @@ impl Board {
 
             if mv.from.rank != expected_rank {
                 return Err(ChessError::InvalidMove(format!(
-                    "Castling must be performed on rank {} for {}",
-                    expected_rank + 1,
-                    self.active_color
+                    "Castling must be performed on rank {expected_rank} for {active_color}",
+                    expected_rank = expected_rank + 1,
+                    active_color = self.active_color
                 )));
             }
 
@@ -931,7 +911,7 @@ impl Board {
 
         // Validate rook exists
         let rook = self.get_piece(rook_from).ok_or_else(|| {
-            ChessError::InvalidMove(format!("No rook found at {} for castling", rook_from))
+            ChessError::InvalidMove(format!("No rook found at {rook_from} for castling"))
         })?;
 
         if rook.piece_type != PieceType::Rook || rook.color != self.active_color {

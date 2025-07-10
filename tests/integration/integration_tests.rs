@@ -17,6 +17,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use crate::common::port_utils::get_unique_test_address;
+
 /// Helper function to start a test server
 async fn start_test_server(bind_addr: &str) -> Result<Server> {
     let identity = Arc::new(Identity::generate()?);
@@ -35,8 +37,8 @@ fn get_mate_binary_path() -> String {
 async fn test_complete_workflow_connection_to_termination() {
     println!("Testing complete workflow from connection establishment to termination");
 
-    let server_addr = "127.0.0.1:18601";
-    let server = start_test_server(server_addr)
+    let server_addr = get_unique_test_address();
+    let server = start_test_server(&server_addr)
         .await
         .expect("Failed to start test server");
 
@@ -47,7 +49,7 @@ async fn test_complete_workflow_connection_to_termination() {
     let session_start = std::time::Instant::now();
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(["connect", server_addr])
+        .args(["connect", &server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -79,7 +81,7 @@ async fn test_complete_workflow_connection_to_termination() {
 
         // Phase 4: Extended messaging to test sustained operation
         for i in 1..=3 {
-            let message = format!("Workflow message {}\n", i);
+            let message = format!("Workflow message {i}\n");
             let _ = stdin.write_all(message.as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
@@ -103,7 +105,7 @@ async fn test_complete_workflow_connection_to_termination() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Complete workflow test output:\n{}", combined_output);
 
@@ -194,8 +196,8 @@ async fn test_complete_workflow_connection_to_termination() {
 async fn test_combinations_commands_messages_single_session() {
     println!("Testing combinations of commands and messages within single session");
 
-    let server_addr = "127.0.0.1:18602";
-    let server = start_test_server(server_addr)
+    let server_addr = get_unique_test_address();
+    let server = start_test_server(&server_addr)
         .await
         .expect("Failed to start test server");
 
@@ -204,7 +206,7 @@ async fn test_combinations_commands_messages_single_session() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(["connect", server_addr])
+        .args(["connect", &server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -285,7 +287,7 @@ async fn test_combinations_commands_messages_single_session() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Command/message combinations test output:\n{}",
@@ -372,8 +374,8 @@ async fn test_combinations_commands_messages_single_session() {
 async fn test_reconnection_followed_by_continued_operation() {
     println!("Testing reconnection followed by continued successful operation");
 
-    let server_addr = "127.0.0.1:18603";
-    let server = start_test_server(server_addr)
+    let server_addr = get_unique_test_address();
+    let server = start_test_server(&server_addr)
         .await
         .expect("Failed to start test server");
 
@@ -382,7 +384,7 @@ async fn test_reconnection_followed_by_continued_operation() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(["connect", server_addr])
+        .args(["connect", &server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -413,7 +415,7 @@ async fn test_reconnection_followed_by_continued_operation() {
 
         // Phase 3: Restart server for reconnection
         println!("Restarting server for reconnection...");
-        let server = start_test_server(server_addr)
+        let server = start_test_server(&server_addr)
             .await
             .expect("Failed to restart test server");
         server_handle = tokio::spawn(async move { server.run().await });
@@ -436,7 +438,7 @@ async fn test_reconnection_followed_by_continued_operation() {
 
         // Phase 5: Extended operation to verify stability
         for i in 1..=3 {
-            let message = format!("Stability test message {}\n", i);
+            let message = format!("Stability test message {i}\n");
             let _ = stdin.write_all(message.as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(350)).await;
         }
@@ -458,7 +460,7 @@ async fn test_reconnection_followed_by_continued_operation() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Reconnection and continued operation test output:\n{}",
@@ -584,7 +586,7 @@ async fn test_appropriate_information_logged_throughout_session() {
 
         // More messaging for comprehensive logging
         for i in 3..=5 {
-            let message = format!("Comprehensive logging message {}\n", i);
+            let message = format!("Comprehensive logging message {i}\n");
             let _ = stdin.write_all(message.as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(350)).await;
         }
@@ -606,7 +608,7 @@ async fn test_appropriate_information_logged_throughout_session() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!("Comprehensive logging test output:\n{}", combined_output);
 
@@ -805,7 +807,7 @@ async fn test_behavior_consistency_across_terminal_environments() {
 
         let stdout = String::from_utf8_lossy(&command_output.stdout);
         let stderr = String::from_utf8_lossy(&command_output.stderr);
-        let combined_output = format!("{}{}", stdout, stderr);
+        let combined_output = format!("{stdout}{stderr}");
 
         // Analyze output characteristics for this environment
         let environment_analysis = EnvironmentTestResult {
@@ -977,7 +979,7 @@ async fn test_comprehensive_integration_functionality() {
         ];
 
         for (i, message) in test_messages.iter().enumerate() {
-            let msg = format!("{}\n", message);
+            let msg = format!("{message}\n");
             let _ = stdin.write_all(msg.as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(300)).await;
 
@@ -994,7 +996,7 @@ async fn test_comprehensive_integration_functionality() {
 
         // 4. Rapid sequence testing
         for i in 1..=3 {
-            let msg = format!("Rapid integration {}\n", i);
+            let msg = format!("Rapid integration {i}\n");
             let _ = stdin.write_all(msg.as_bytes()).await;
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -1018,7 +1020,7 @@ async fn test_comprehensive_integration_functionality() {
 
     let stdout = String::from_utf8_lossy(&command_output.stdout);
     let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{}{}", stdout, stderr);
+    let combined_output = format!("{stdout}{stderr}");
 
     println!(
         "Comprehensive integration test output:\n{}",

@@ -288,7 +288,7 @@ async fn test_multiple_sequential_connections() {
         );
 
         // Test message exchange on each connection
-        let test_message = Message::new_ping(i, format!("test_message_{}", i));
+        let test_message = Message::new_ping(i, format!("test_message_{i}"));
         connection
             .send_message(test_message)
             .await
@@ -301,7 +301,7 @@ async fn test_multiple_sequential_connections() {
 
         assert_eq!(
             response.get_payload(),
-            format!("test_message_{}", i),
+            format!("test_message_{i}"),
             "Should receive correct echo"
         );
 
@@ -344,7 +344,7 @@ async fn test_multiple_client_identities() {
         );
 
         // Send a message to verify the identity is properly used
-        let test_message = Message::new_ping(100 + i, format!("identity_test_{}", i));
+        let test_message = Message::new_ping(100 + i, format!("identity_test_{i}"));
         connection
             .send_message(test_message)
             .await
@@ -357,7 +357,7 @@ async fn test_multiple_client_identities() {
 
         assert_eq!(
             response.get_payload(),
-            format!("identity_test_{}", i),
+            format!("identity_test_{i}"),
             "Should receive correct echo"
         );
 

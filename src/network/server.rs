@@ -131,7 +131,7 @@ impl Server {
         // Bind TcpListener to the provided address
         let listener = TcpListener::bind(addr)
             .await
-            .with_context(|| format!("Failed to bind server to address: {}", addr))?;
+            .with_context(|| format!("Failed to bind server to address: {addr}"))?;
 
         // Initialize with Step 5.1 server-optimized WireConfig
         let wire_config = WireConfig::for_server();
@@ -162,7 +162,7 @@ impl Server {
         // Bind TcpListener to the provided address
         let listener = TcpListener::bind(addr)
             .await
-            .with_context(|| format!("Failed to bind server to address: {}", addr))?;
+            .with_context(|| format!("Failed to bind server to address: {addr}"))?;
 
         // Log successful server binding with custom config
         info!(
