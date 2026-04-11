@@ -39,24 +39,6 @@ mod tests {
     }
 
     #[test]
-    fn test_game_invite_new_no_color_preference() {
-        let game_id = generate_game_id();
-        let invite = GameInvite::new_no_color_preference(game_id.clone());
-
-        assert_eq!(invite.game_id, game_id);
-        assert_eq!(invite.suggested_color, None);
-    }
-
-    #[test]
-    fn test_game_invite_new_with_color() {
-        let game_id = generate_game_id();
-        let invite = GameInvite::new_with_color(game_id.clone(), Color::White);
-
-        assert_eq!(invite.game_id, game_id);
-        assert_eq!(invite.suggested_color, Some(Color::White));
-    }
-
-    #[test]
     fn test_game_invite_equality() {
         let game_id = generate_game_id();
         let invite1 = GameInvite::new(game_id.clone(), Some(Color::White));
@@ -65,28 +47,6 @@ mod tests {
 
         assert_eq!(invite1, invite2);
         assert_ne!(invite1, invite3);
-    }
-
-    #[test]
-    fn test_game_invite_json_serialization() {
-        let game_id = generate_game_id();
-        let invite = GameInvite::new(game_id.clone(), Some(Color::White));
-
-        let json = serde_json::to_string(&invite).expect("Failed to serialize");
-        let deserialized: GameInvite = serde_json::from_str(&json).expect("Failed to deserialize");
-
-        assert_eq!(invite, deserialized);
-    }
-
-    #[test]
-    fn test_game_invite_json_roundtrip_no_color() {
-        let game_id = generate_game_id();
-        let invite = GameInvite::new_no_color_preference(game_id);
-
-        let json = serde_json::to_string(&invite).expect("Failed to serialize");
-        let deserialized: GameInvite = serde_json::from_str(&json).expect("Failed to deserialize");
-
-        assert_eq!(invite, deserialized);
     }
 
     #[test]
@@ -131,17 +91,6 @@ mod tests {
 
         assert_eq!(accept1, accept2);
         assert_ne!(accept1, accept3);
-    }
-
-    #[test]
-    fn test_game_accept_json_serialization() {
-        let game_id = generate_game_id();
-        let accept = GameAccept::new(game_id, Color::White);
-
-        let json = serde_json::to_string(&accept).expect("Failed to serialize");
-        let deserialized: GameAccept = serde_json::from_str(&json).expect("Failed to deserialize");
-
-        assert_eq!(accept, deserialized);
     }
 
     #[test]
@@ -206,28 +155,6 @@ mod tests {
 
         assert_eq!(decline1, decline2);
         assert_ne!(decline1, decline3);
-    }
-
-    #[test]
-    fn test_game_decline_json_serialization_with_reason() {
-        let game_id = generate_game_id();
-        let decline = GameDecline::new_with_reason(game_id, "Busy".to_string());
-
-        let json = serde_json::to_string(&decline).expect("Failed to serialize");
-        let deserialized: GameDecline = serde_json::from_str(&json).expect("Failed to deserialize");
-
-        assert_eq!(decline, deserialized);
-    }
-
-    #[test]
-    fn test_game_decline_json_serialization_no_reason() {
-        let game_id = generate_game_id();
-        let decline = GameDecline::new_no_reason(game_id);
-
-        let json = serde_json::to_string(&decline).expect("Failed to serialize");
-        let deserialized: GameDecline = serde_json::from_str(&json).expect("Failed to deserialize");
-
-        assert_eq!(decline, deserialized);
     }
 
     #[test]
@@ -319,17 +246,6 @@ mod tests {
     }
 
     #[test]
-    fn test_move_json_serialization() {
-        let game_id = generate_game_id();
-        let move_msg = Move::new(game_id, "Qh5".to_string(), hash_board_state(&Board::new()));
-
-        let json = serde_json::to_string(&move_msg).expect("Failed to serialize");
-        let deserialized: Move = serde_json::from_str(&json).expect("Failed to deserialize");
-
-        assert_eq!(move_msg, deserialized);
-    }
-
-    #[test]
     fn test_move_binary_serialization() {
         let game_id = generate_game_id();
         let move_msg = Move::new(
@@ -398,28 +314,6 @@ mod tests {
     }
 
     #[test]
-    fn test_move_ack_json_serialization_with_move_id() {
-        let game_id = generate_game_id();
-        let ack = MoveAck::new_with_move_id(game_id, "move-789".to_string());
-
-        let json = serde_json::to_string(&ack).expect("Failed to serialize");
-        let deserialized: MoveAck = serde_json::from_str(&json).expect("Failed to deserialize");
-
-        assert_eq!(ack, deserialized);
-    }
-
-    #[test]
-    fn test_move_ack_json_serialization_no_move_id() {
-        let game_id = generate_game_id();
-        let ack = MoveAck::new_no_move_id(game_id);
-
-        let json = serde_json::to_string(&ack).expect("Failed to serialize");
-        let deserialized: MoveAck = serde_json::from_str(&json).expect("Failed to deserialize");
-
-        assert_eq!(ack, deserialized);
-    }
-
-    #[test]
     fn test_move_ack_binary_serialization() {
         let game_id = generate_game_id();
         let ack = MoveAck::new_with_move_id(game_id, "complex-move-id-123".to_string());
@@ -451,17 +345,6 @@ mod tests {
 
         assert_eq!(request1, request2);
         assert_ne!(request1, request3);
-    }
-
-    #[test]
-    fn test_sync_request_json_serialization() {
-        let game_id = generate_game_id();
-        let request = SyncRequest::new(game_id);
-
-        let json = serde_json::to_string(&request).expect("Failed to serialize");
-        let deserialized: SyncRequest = serde_json::from_str(&json).expect("Failed to deserialize");
-
-        assert_eq!(request, deserialized);
     }
 
     #[test]
@@ -590,24 +473,6 @@ mod tests {
 
         assert_eq!(response1, response2);
         assert_ne!(response1, response3);
-    }
-
-    #[test]
-    fn test_sync_response_json_serialization() {
-        let game_id = generate_game_id();
-        let board = Board::new();
-        let response = SyncResponse::new(
-            game_id,
-            board.to_fen(),
-            vec!["e2e4".to_string(), "e7e5".to_string()],
-            hash_board_state(&board),
-        );
-
-        let json = serde_json::to_string(&response).expect("Failed to serialize");
-        let deserialized: SyncResponse =
-            serde_json::from_str(&json).expect("Failed to deserialize");
-
-        assert_eq!(response, deserialized);
     }
 
     #[test]

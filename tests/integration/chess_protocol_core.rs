@@ -28,25 +28,16 @@ use crate::common::mock_streams::MockStream;
 /// Mock game state for tracking game progression
 #[derive(Debug, Clone)]
 struct MockGameState {
-    #[allow(dead_code)]
-    game_id: String,
     board: Board,
     move_history: Vec<String>,
-    #[allow(dead_code)]
-    white_player: String,
-    #[allow(dead_code)]
-    black_player: String,
     current_turn: Color,
 }
 
 impl MockGameState {
-    fn new_with_players(game_id: String, white_player: String, black_player: String) -> Self {
+    fn new() -> Self {
         Self {
-            game_id,
             board: Board::new(),
             move_history: Vec::new(),
-            white_player,
-            black_player,
             current_turn: Color::White,
         }
     }
@@ -74,8 +65,6 @@ async fn test_complete_game_flow_integration() -> Result<()> {
     // Setup identities for two players
     let player1_identity = Arc::new(Identity::generate()?);
     let player2_identity = Arc::new(Identity::generate()?);
-    let player1_id = player1_identity.peer_id().to_string();
-    let player2_id = player2_identity.peer_id().to_string();
 
     // Setup wire protocol with chess-optimized configuration
     let wire_config = WireConfig::for_chess_standard();
@@ -126,7 +115,7 @@ async fn test_complete_game_flow_integration() -> Result<()> {
     }
 
     // Initialize game state
-    let mut game_state = MockGameState::new_with_players(game_id.clone(), player1_id, player2_id);
+    let mut game_state = MockGameState::new();
 
     // Phase 3: Move Exchange
     let moves = ["e2e4", "e7e5", "Nf3", "Nc6"];

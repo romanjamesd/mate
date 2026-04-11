@@ -71,16 +71,6 @@ async fn create_test_app() -> (App, TestEnvironment) {
     (app, env)
 }
 
-/// Helper function to create a test configuration with a temporary directory
-#[allow(dead_code)]
-fn create_test_config(temp_dir: &TempDir) -> Config {
-    Config {
-        data_dir: temp_dir.path().to_path_buf(),
-        default_bind_addr: "127.0.0.1:8080".to_string(),
-        max_concurrent_games: 10,
-    }
-}
-
 /// Helper function to create a temporary directory with specific permissions
 fn create_temp_dir_with_permissions(mode: u32) -> std::io::Result<TempDir> {
     let temp_dir = TempDir::new()?;

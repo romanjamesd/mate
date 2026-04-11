@@ -13,7 +13,7 @@ pub const DEFAULT_MAX_MESSAGE_AGE_SECONDS: u64 = 300;
 /// Expected Ed25519 signature length in bytes
 pub const ED25519_SIGNATURE_LENGTH: usize = 64;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     // Existing variants
     Ping { nonce: u64, payload: String },

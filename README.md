@@ -1,175 +1,217 @@
 # mate
 
-A fully decentralized peer-to-peer chess game with cryptographic security and offline-first gameplay.
+`mate` is a Rust CLI for signed peer-to-peer messaging and an in-progress peer-to-peer chess workflow.
 
-## Features
+The repository already has a solid foundation for identities, message signing, transport, and SQLite-backed local state. The chess command set exists today, but parts of the gameplay/runtime path are still under active development, so this README distinguishes implemented behavior from experimental behavior.
 
-### Core Gameplay
-- **True P2P Chess**: Play directly with peers without any central servers
-- **Offline-first Design**: All game data stored locally, sync when both players are online
-- **Cryptographic Integrity**: Every move is cryptographically signed with Ed25519, preventing tampering
-- **Resilient Networking**: Games continue seamlessly despite network interruptions
-- **Cross-platform**: Works on macOS, Linux, and Windows
+## Status
 
-### Game Management
-- Send game invitations directly to peer addresses
-- Accept/decline invitations with color preferences
-- Multiple concurrent games with different opponents
-- Automatic game synchronization when peers reconnect
-- Complete move history with cryptographic proof
+- Stable foundation: Ed25519 identities, signed message types, TCP client/server transport, local SQLite persistence, and broad automated test coverage
+- Working network tools: `serve` and `connect` for peer connectivity and echo-style round-trip testing
+- Experimental chess CLI: `games`, `board`, `invite`, `accept`, `move`, and `history`
+- Current limitation: the chess command surface is ahead of the fully wired end-to-end runtime, so some multiplayer chess flows are not yet production-ready
 
-### Security
-- Ed25519 digital signatures ensure move authenticity
-- Each player has a unique cryptographic identity
-- Tamper-proof game history
-- No trusted third parties required
+## Current Features
 
-## Installation
+### Identity and Security
+- Local Ed25519 identity generation and storage
+- Signed wire/message layer for peer communication
+- Per-peer identity information and reproducible peer IDs
+- Secure key-file permissions on Unix systems
 
-```bash``
-# Install from crates.io
-cargo install mate
+### Networking
+- TCP server for accepting inbound peer connections
+- Interactive client session for manual peer messaging
+- One-shot connect-and-send mode for latency and echo testing
+- Connection lifecycle handling and reconnect-oriented client behavior
 
-# Or build from source
-git clone https://github.com/username/mate
+### Local Chess State
+- SQLite-backed game and message storage
+- CLI commands for listing games, viewing history, and issuing invites/moves
+- Board and move-history views driven from stored game/message records
+- Configurable data/config directories via environment variables
+
+## What Is Experimental
+
+The chess workflow is present in the CLI, but not every layer is fully connected yet. In particular:
+
+- `board` and `history` are useful for inspecting stored state, but board reconstruction is still simplified
+- `move` currently performs basic validation rather than full legal-move enforcement
+- live invite/accept/move handling across the network is still being hardened
+
+If you want the most reliable current functionality, use `serve` and `connect` first.
+
+## Requirements
+
+- Rust stable
+- `cargo`, `rustfmt`, and `clippy`
+
+The repo pins the stable toolchain in `rust-toolchain.toml` and expects `rustfmt` and `clippy` to be available.
+
+## Build From Source
+
+```bash
+git clone <your-fork-or-remote>
 cd mate
+cargo build
+```
+
+For an optimized binary:
+
+```bash
 cargo build --release
 ```
 
 ## Quick Start
 
+### 1. Generate an identity
+
 ```bash
-# 1. Initialize your identity
 mate key generate
-
-# 2. Check your peer ID
 mate key info
-
-# 3. Start listening for connections
-mate serve --bind 0.0.0.0:8080
-
-# 4. Share your address (IP:8080) and peer ID with a friend
-```
-
-## Usage
-
-### Identity & Key Management
-```bash
-# Generate a new cryptographic identity
-mate key generate
-
-# Show your peer ID and key information
-mate key info
-
-# Show where keys are stored
 mate key path
 ```
 
-### Network & Connection
+### 2. Start a peer server
+
 ```bash
-# Start server to accept connections
-mate serve --bind 0.0.0.0:8080
-
-# Connect to another peer for testing
-mate connect 192.168.1.100:8080
-
-# Send a specific message when connecting
-mate connect 192.168.1.100:8080 --message "Hello, peer!"
+mate serve --bind 127.0.0.1:8080
 ```
 
-### Game Management (Future)
-```bash
-# Invite someone to play (they need to be running `mate serve`)
-mate invite 192.168.1.100:8080
+### 3. Connect from another terminal or machine
 
-# View pending invitations and active games
+Interactive session:
+
+```bash
+mate connect 127.0.0.1:8080
+```
+
+One-shot echo test:
+
+```bash
+mate connect 127.0.0.1:8080 --message "ping"
+```
+
+The interactive `connect` session supports:
+
+- `help` to show session commands
+- `info` to show session statistics
+- `quit` or `exit` to close the session
+
+## CLI Commands
+
+### Identity
+
+```bash
+mate key generate
+mate key info
+mate key path
+```
+
+Deprecated compatibility commands still exist:
+
+```bash
+mate init
+mate info
+```
+
+### Networking
+
+```bash
+mate serve --bind 127.0.0.1:8080
+mate connect <host:port>
+mate connect <host:port> --message "hello"
+```
+
+### Chess Commands
+
+These commands are implemented in the CLI and use the local app/database state.
+
+```bash
 mate games
-
-# Accept a game invitation
-mate accept game_abc123
-
-# Show all known peers
-mate peers
+mate board
+mate board --game-id <game-id>
+mate invite <host:port>
+mate invite <host:port> --color white
+mate accept <game-id>
+mate accept <game-id> --color black
+mate move e4
+mate move Nf3 --game-id <game-id>
+mate history
+mate history --game-id <game-id>
 ```
 
-### Playing Chess
+Supported color values for invite/accept are:
+
+- `white`
+- `black`
+- `random`
+
+### Command Notes
+
+- `games` lists locally stored games and their status
+- `board` defaults to the most relevant local game if `--game-id` is omitted
+- `move` defaults to an active local game if `--game-id` is omitted
+- `history` defaults to the most relevant local game if `--game-id` is omitted
+- `invite`, `accept`, and `move` depend on both local state and the network layer, so expect rough edges while the chess runtime is still evolving
+
+## Data and Configuration
+
+By default, `mate` uses platform-specific directories via the Rust `directories` crate.
+
+The application stores:
+
+- identity key: `identity.key`
+- database: `database.sqlite`
+- config: `config.toml`
+
+Environment overrides:
+
+- `MATE_DATA_DIR` overrides the data directory used for the identity key and database
+- `MATE_CONFIG_DIR` overrides the configuration directory
+
+On macOS, the default base location comes from `ProjectDirs::from("dev", "mate", "mate")`, which typically resolves under `~/Library/Application Support/`.
+
+## Development
+
+Common commands from the repository root:
+
 ```bash
-# Make a move using algebraic notation
-mate move e4 game_abc123
-mate move Nf3 game_abc123
-mate move O-O game_abc123
-
-# View current board position
-mate board game_abc123
-
-# View complete game history
-mate history game_abc123
-
-# Force synchronization of all games
-mate sync
+cargo build
+cargo test
+make check
+make ci
+make test-ci-safe
 ```
 
-### Example Game Session
-```bash
-$ mate games
-Active Games:
-  game_abc123 vs alice_def456 [Your turn] - White
-  game_xyz789 vs bob_ghi012   [Waiting]   - Black
+What they do:
 
-$ mate board game_abc123
-  ┌─────────────────────┐
-8 │ r n b q k b n r │
-7 │ p p p p . p p p │
-6 │ . . . . . . . . │
-5 │ . . . . p . . . │
-4 │ . . . . P . . . │
-3 │ . . . . . . . . │
-2 │ P P P P . P P P │
-1 │ R N B Q K B N R │
-  └─────────────────────┘
-    a b c d e f g h
+- `cargo build`: build the crate and CLI binary
+- `cargo test`: run the local test suite
+- `make check`: run formatting and Clippy checks
+- `make ci`: run the CI-style format, lint, and test flow
+- `make test-ci-safe`: run tests single-threaded for race-sensitive debugging
 
-$ mate move Nf3 game_abc123
-Move played: Nf3
-Waiting for opponent...
+## Project Layout
 
-$ mate history game_abc123
-Game: game_abc123
-1. e4 e5
-2. Nf3 ...
-```
+- `src/chess/`: chess board, move, and position logic
+- `src/cli/`: CLI parsing, app lifecycle, display, and command handlers
+- `src/crypto/`: identity and secure key storage
+- `src/messages/`: wire and chess message types
+- `src/network/`: client, connection, and server transport
+- `src/storage/`: SQLite database layer and models
+- `tests/`: unit, integration, security, performance, and storage test coverage
+- `scripts/`: local CI/debug helper scripts
 
-## How It Works
+## Testing Focus
 
-### Decentralized Architecture
-- **No Central Server**: Players connect directly to each other
-- **Local Database**: SQLite stores all game state locally
-- **P2P Synchronization**: Games sync when both players are online
-- **Conflict Resolution**: Cryptographic signatures prevent cheating
+The test suite is broad and includes:
 
-### Network Protocol
-- TCP connections with message framing
-- Ed25519 signatures on all moves
-- Automatic peer discovery on local networks
-- Manual peer address exchange for internet play
+- unit tests for chess, CLI, crypto, messages, and networking components
+- integration tests for CLI, networking, storage, and chess protocol behavior
+- security tests for error handling and denial-of-service protection
+- performance tests for throughput and protocol stress scenarios
 
-### Security Model
-- Each player generates a unique Ed25519 keypair
-- All moves are signed with the player's private key
-- Game history is tamper-proof and independently verifiable
-- No trusted third parties or central authorities
+## Notes For Contributors
 
-## Configuration
-
-Mate stores configuration and game data in:
-- **Linux**: `~/.config/mate/`
-- **macOS**: `~/Library/Application Support/mate/`
-- **Windows**: `%APPDATA%\mate\`
-
-## Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## License
-
-Licensed under the MIT License. See [LICENSE](LICENSE) for details.
+This repository is actively evolving. When updating docs or examples, prefer describing the current code path over the intended end state, especially for the chess multiplayer workflow.

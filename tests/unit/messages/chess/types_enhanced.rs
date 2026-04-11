@@ -190,16 +190,20 @@ mod tests {
 
         let messages = vec![
             Message::new_game_invite(game_id.clone(), Some(Color::White)),
+            Message::new_game_invite(game_id.clone(), None),
             Message::new_game_accept(game_id.clone(), Color::Black),
+            Message::new_game_accept(game_id.clone(), Color::White),
             Message::new_game_decline(game_id.clone(), Some("busy".to_string())),
+            Message::new_game_decline(game_id.clone(), None),
             Message::new_move(game_id.clone(), "e2e4".to_string(), board_hash.clone()),
             Message::new_move_ack(game_id.clone(), Some("move-1".to_string())),
+            Message::new_move_ack(game_id.clone(), None),
             Message::new_sync_request(game_id.clone()),
             Message::new_sync_response(
                 game_id.clone(),
                 board.to_fen(),
-                vec!["e2e4".to_string()],
-                board_hash,
+                vec!["e2e4".to_string(), "e7e5".to_string()],
+                board_hash.clone(),
             ),
         ];
 
@@ -207,8 +211,7 @@ mod tests {
             let json = original_msg.to_json().expect("Failed to serialize to JSON");
             let deserialized = Message::from_json(&json).expect("Failed to deserialize from JSON");
 
-            assert_eq!(original_msg.message_type(), deserialized.message_type());
-            assert_eq!(original_msg.get_game_id(), deserialized.get_game_id());
+            assert_eq!(original_msg, deserialized);
         }
     }
 
