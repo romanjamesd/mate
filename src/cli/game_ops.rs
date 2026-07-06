@@ -315,7 +315,7 @@ impl<'a> GameOps<'a> {
             GameStatus::Active => {
                 // If move count is even and we're white, or odd and we're black, it's our turn
                 match game.my_color {
-                    PlayerColor::White => move_count % 2 == 0,
+                    PlayerColor::White => move_count.is_multiple_of(2),
                     PlayerColor::Black => move_count % 2 == 1,
                 }
             }
