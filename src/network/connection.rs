@@ -295,9 +295,9 @@ impl Connection {
         );
 
         debug!(
-            "Message details - nonce: {}, payload_len: {}",
-            message.get_nonce(),
-            message.get_payload().len()
+            "Message summary: {}, estimated_size: {} bytes",
+            message.log_summary(),
+            message.estimated_size()
         );
 
         // Performance metrics logging
@@ -373,8 +373,7 @@ impl Connection {
 
         debug!(
             peer_identity = %peer_identity,
-            response_nonce = response_message.get_nonce(),
-            response_payload = response_message.get_payload(),
+            response_summary = %response_message.log_summary(),
             "Received handshake response"
         );
 
@@ -572,8 +571,7 @@ impl Connection {
 
         debug!(
             peer_identity = %peer_identity,
-            request_nonce = request_message.get_nonce(),
-            request_payload = request_message.get_payload(),
+            request_summary = %request_message.log_summary(),
             "Received handshake request"
         );
 
