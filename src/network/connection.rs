@@ -166,9 +166,9 @@ impl Connection {
         let send_start = std::time::Instant::now();
         info!("Sending {} message", msg.message_type());
         debug!(
-            "Message nonce: {}, payload_len: {}",
-            msg.get_nonce(),
-            msg.get_payload().len()
+            "Message summary: {}, estimated_size: {} bytes",
+            msg.log_summary(),
+            msg.estimated_size()
         );
 
         // Create SignedEnvelope using our identity
