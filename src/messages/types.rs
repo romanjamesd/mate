@@ -512,6 +512,14 @@ impl Message {
     /// assert!(summary.contains(&game_id[..8])); // First 8 chars of game ID
     /// ```
     pub fn log_summary(&self) -> String {
+        fn short_game_id(game_id: &str) -> &str {
+            let end = game_id
+                .char_indices()
+                .nth(8)
+                .map_or(game_id.len(), |(index, _)| index);
+            &game_id[..end]
+        }
+
         match self {
             Message::Ping { nonce, .. } => format!("Ping(nonce={nonce})"),
             Message::Pong { nonce, .. } => format!("Pong(nonce={nonce})"),
@@ -519,11 +527,11 @@ impl Message {
                 let color_str = invite
                     .suggested_color
                     .map_or("any".to_string(), |c| format!("{c:?}"));
-                let game_id_short = &invite.game_id[..8.min(invite.game_id.len())];
+                let game_id_short = short_game_id(&invite.game_id);
                 format!("GameInvite(game={game_id_short}, color={color_str})")
             }
             Message::GameAccept(accept) => {
-                let game_id_short = &accept.game_id[..8.min(accept.game_id.len())];
+                let game_id_short = short_game_id(&accept.game_id);
                 let accepted_color = accept.accepted_color;
                 format!("GameAccept(game={game_id_short}, color={accepted_color:?})")
             }
@@ -532,11 +540,11 @@ impl Message {
                     let len = r.len();
                     format!("{len}chars")
                 });
-                let game_id_short = &decline.game_id[..8.min(decline.game_id.len())];
+                let game_id_short = short_game_id(&decline.game_id);
                 format!("GameDecline(game={game_id_short}, reason={reason_info})")
             }
             Message::Move(mv) => {
-                let game_id_short = &mv.game_id[..8.min(mv.game_id.len())];
+                let game_id_short = short_game_id(&mv.game_id);
                 let chess_move = &mv.chess_move;
                 format!("Move(game={game_id_short}, move={chess_move})")
             }
@@ -545,15 +553,15 @@ impl Message {
                     let len = id.len();
                     format!("{len}chars")
                 });
-                let game_id_short = &ack.game_id[..8.min(ack.game_id.len())];
+                let game_id_short = short_game_id(&ack.game_id);
                 format!("MoveAck(game={game_id_short}, move_id={move_id_info})")
             }
             Message::SyncRequest(req) => {
-                let game_id_short = &req.game_id[..8.min(req.game_id.len())];
+                let game_id_short = short_game_id(&req.game_id);
                 format!("SyncRequest(game={game_id_short})")
             }
             Message::SyncResponse(resp) => {
-                let game_id_short = &resp.game_id[..8.min(resp.game_id.len())];
+                let game_id_short = short_game_id(&resp.game_id);
                 let moves_len = resp.move_history.len();
                 format!("SyncResponse(game={game_id_short}, moves={moves_len})")
             }

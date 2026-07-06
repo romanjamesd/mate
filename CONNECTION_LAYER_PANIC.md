@@ -148,10 +148,11 @@ green:**
 
 1. **Unit test** (targets the shared root cause, not tied to one call site)
    in `src/messages/types.rs` or `tests/unit/messages/` — for every chess
-   variant, assert `log_summary()` and `estimated_size()` succeed and don't
-   panic. This one should already pass today (it never calls
-   `get_nonce`/`get_payload`); it exists to lock in the variant-safe helpers
-   as the sanctioned replacement before they're wired in anywhere.
+   variant, assert `log_summary()` and `estimated_size()` handle an arbitrary
+   UTF-8 game ID whose eighth byte is not a character boundary. This fails
+   today because `log_summary()` truncates game IDs with byte slicing. Since
+   received messages reach logging before chess validation, harden the helper
+   with character-safe truncation before wiring it into the network paths.
 2. **Test for Steps 1 & 2** — in `tests/integration/connection_core.rs` (or a
    new `tests/integration/chess_message_wire.rs`), construct a real
    `Connection` pair over a loopback TCP socket (mirroring the existing
@@ -176,8 +177,8 @@ green:**
    something to satisfy.
 
 **Verification for Step 0**: the manual repro panics as described, and
-`cargo test` shows tests 2 and 3 above panicking (test 1 passing, test 4
-panicking one layer up in `receive_message`). This confirms the bug is real,
+`cargo test` shows tests 1, 2, and 3 above panicking (test 1 in
+`log_summary()`, test 4 one layer up in `receive_message`). This confirms the bug is real,
 pins down the exact panicking call site per test, and gives each of Steps
 1-4 below a concrete "was red, now green" check instead of a shared
 end-of-task test pass.
