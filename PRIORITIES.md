@@ -2,7 +2,7 @@
 
 A review of the current codebase (July 2026) shows a strong, well-tested foundation — Ed25519 identities, a signed wire protocol, TCP transport, and SQLite persistence all work and are covered by a broad test suite. However, the end-to-end multiplayer chess flow (`invite -> accept -> move -> sync`) is not yet functional. The five tasks below are ordered by priority: each one unblocks the next, and together they form the shortest path to a genuinely working app.
 
-## 1. Fix the connection-layer panic on chess messages
+## 1. Fix the connection-layer panic on chess messages (fixed On branch fix-connection-layer-panic)
 
 `Connection::send_message` / `receive_message` (`src/network/connection.rs:168-171,297-300`) and the one-shot path in `src/network/client.rs:555-559,586-590` call `get_nonce()` and `get_payload()` for logging on every message that passes through the wire. Those accessors are only implemented for the basic ping/pong `Message` variants and explicitly `panic!()` for chess message variants (`src/messages/types.rs:216,234`). This means any chess message (`GameInvite`, `GameAccept`, `Move`, etc.) sent or received over a live TCP connection crashes the process immediately. This is a hard blocker — nothing chess-related can work over the network until it's fixed. The fix is to stop assuming a universal nonce/payload shape in the logging path and instead use variant-safe helpers that already exist (e.g. `log_summary()`, `estimated_size()`, `get_game_id()`).
 
