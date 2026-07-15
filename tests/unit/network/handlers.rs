@@ -1,8 +1,8 @@
-//! Unit tests for server message dispatch and chess invite/accept/decline handling
+//! Unit tests for server message dispatch and chess invite/accept/decline/move handling
 
 use mate::chess::{Board, Color};
 use mate::messages::chess::{
-    generate_game_id, hash_board_state, GameAccept, GameDecline, GameInvite,
+    generate_game_id, hash_board_state, GameAccept, GameDecline, GameInvite, Move,
 };
 use mate::messages::Message;
 use mate::network::{dispatch, HandlerError};
@@ -27,6 +27,20 @@ fn seed_pending_invite(db: &Database, peer_id: &str, suggested: Option<Color>) -
         .expect("invite dispatch")
         .expect("invite reply");
     game_id
+}
+
+fn seed_active_game(db: &Database, peer_id: &str) -> String {
+    let game_id = seed_pending_invite(db, peer_id, Some(Color::White));
+    let accept = Message::new_game_accept(game_id.clone(), Color::White);
+    dispatch(db, peer_id, accept)
+        .expect("accept dispatch")
+        .expect("accept reply");
+    game_id
+}
+
+fn sample_move(game_id: String) -> Message {
+    let board_hash = hash_board_state(&Board::new());
+    Message::new_move(game_id, "e2e4".to_string(), board_hash)
 }
 
 #[test]
@@ -506,7 +520,6 @@ fn dispatch_stubbed_chess_variants_return_no_reply() {
     let board_hash = hash_board_state(&board);
 
     let stubbed = [
-        Message::new_move(game_id.clone(), "e2e4".to_string(), board_hash.clone()),
         Message::new_move_ack(game_id.clone(), None),
         Message::new_sync_request(game_id.clone()),
         Message::new_sync_response(game_id, board.to_fen(), Vec::new(), board_hash),
@@ -523,6 +536,157 @@ fn dispatch_stubbed_chess_variants_return_no_reply() {
             result.unwrap().is_none(),
             "{message_type} stub should return no reply"
         );
+    }
+}
+
+#[test]
+fn dispatch_move_acks_and_persists() {
+    let db = test_db();
+    let game_id = seed_active_game(db.as_ref(), "peer-a");
+    let mv = sample_move(game_id.clone());
+
+    let result = dispatch(db.as_ref(), "peer-a", mv).expect("move dispatch");
+    let response = result.expect("Move should produce a reply");
+
+    match response {
+        Message::MoveAck(ack) => {
+            assert_eq!(ack.game_id, game_id);
+            assert!(ack.move_id.is_none());
+        }
+        other => panic!("expected MoveAck, got {other:?}"),
+    }
+
+    let messages = db.get_messages_for_game(&game_id).expect("messages");
+    let move_msg = messages
+        .iter()
+        .find(|m| m.message_type == "Move")
+        .expect("Move message row");
+    assert_eq!(move_msg.sender_peer_id, "peer-a");
+    let parsed: Move = serde_json::from_str(&move_msg.content).expect("parse stored move");
+    assert_eq!(parsed.game_id, game_id);
+    assert_eq!(parsed.chess_move, "e2e4");
+}
+
+#[test]
+fn dispatch_move_idempotent_for_identical_payload() {
+    let db = test_db();
+    let game_id = seed_active_game(db.as_ref(), "peer-a");
+    let mv = sample_move(game_id.clone());
+
+    let first = dispatch(db.as_ref(), "peer-a", mv.clone()).expect("first");
+    assert!(matches!(first, Some(Message::MoveAck(_))));
+
+    let second = dispatch(db.as_ref(), "peer-a", mv).expect("second");
+    assert!(
+        matches!(second, Some(Message::MoveAck(_))),
+        "identical Move retry should MoveAck"
+    );
+
+    let messages = db.get_messages_for_game(&game_id).expect("messages");
+    let move_count = messages
+        .iter()
+        .filter(|m| m.message_type == "Move")
+        .count();
+    assert_eq!(
+        move_count, 1,
+        "idempotent retry should not duplicate identical Move"
+    );
+}
+
+#[test]
+fn dispatch_move_unknown_game_declines() {
+    let db = test_db();
+    let game_id = generate_game_id();
+    let mv = sample_move(game_id.clone());
+
+    let result = dispatch(db.as_ref(), "peer-a", mv).expect("dispatch");
+    match result {
+        Some(Message::GameDecline(decline)) => {
+            assert_eq!(decline.game_id, game_id);
+            assert!(
+                decline
+                    .reason
+                    .as_deref()
+                    .is_some_and(|r| r.contains("not found")),
+                "decline should explain missing game"
+            );
+        }
+        other => panic!("expected GameDecline, got {other:?}"),
+    }
+}
+
+#[test]
+fn dispatch_move_wrong_peer_declines() {
+    let db = test_db();
+    let game_id = seed_active_game(db.as_ref(), "peer-a");
+    let mv = sample_move(game_id.clone());
+
+    let result = dispatch(db.as_ref(), "peer-b", mv).expect("dispatch");
+    match result {
+        Some(Message::GameDecline(decline)) => {
+            assert_eq!(decline.game_id, game_id);
+            assert!(decline.reason.is_some());
+        }
+        other => panic!("expected GameDecline, got {other:?}"),
+    }
+
+    let messages = db.get_messages_for_game(&game_id).expect("messages");
+    assert!(
+        messages.iter().all(|m| m.message_type != "Move"),
+        "wrong peer must not store a Move"
+    );
+}
+
+#[test]
+fn dispatch_move_pending_game_declines() {
+    let db = test_db();
+    let game_id = seed_pending_invite(db.as_ref(), "peer-a", Some(Color::White));
+    let mv = sample_move(game_id.clone());
+
+    let result = dispatch(db.as_ref(), "peer-a", mv).expect("dispatch");
+    match result {
+        Some(Message::GameDecline(decline)) => {
+            assert_eq!(decline.game_id, game_id);
+            assert!(
+                decline
+                    .reason
+                    .as_deref()
+                    .is_some_and(|r| r.contains("not active")),
+                "decline should explain non-active status"
+            );
+        }
+        other => panic!("expected GameDecline, got {other:?}"),
+    }
+
+    let messages = db.get_messages_for_game(&game_id).expect("messages");
+    assert!(
+        messages.iter().all(|m| m.message_type != "Move"),
+        "pending game must not store a Move"
+    );
+}
+
+#[test]
+fn dispatch_invalid_move_soft_rejects_with_decline() {
+    let db = test_db();
+    let mv = Message::new_move(
+        "not-a-uuid".to_string(),
+        "e2e4".to_string(),
+        hash_board_state(&Board::new()),
+    );
+
+    let result = dispatch(db.as_ref(), "peer-a", mv).expect("validation soft-fails as Ok");
+    match result {
+        Some(Message::GameDecline(decline)) => {
+            assert_eq!(decline.game_id, "not-a-uuid");
+            assert!(
+                decline
+                    .reason
+                    .as_deref()
+                    .is_some_and(|r| r.contains("validation failed")),
+                "decline should explain validation failure"
+            );
+        }
+        other => panic!("invalid Move should GameDecline, got {other:?}"),
     }
 }
 

@@ -1,7 +1,7 @@
 # Fix Plan: Server-side chess message handlers
 
-Status: **Step 5 complete** — `GameInvite` / `GameAccept` / `GameDecline`
-persist and reply; Move/Sync handlers remain stubs until Steps 6–7.
+Status: **Step 6 complete** — `GameInvite` / `GameAccept` / `GameDecline` /
+`Move` persist and reply; Sync handlers remain stubs until Step 7.
 
 ## 1. Problem (confirmed by reading the code)
 
@@ -277,7 +277,7 @@ row.
   integration tests `server_game_invite_then_accept_activates` and
   `server_game_invite_then_decline_abandons` exercise live Server + DB.
 
-### Step 6 — `Move` → `MoveAck` handler
+### Step 6 — `Move` → `MoveAck` handler ✅ (2026-07-15)
 
 **Goal:** moves sent by the client get acknowledged and persisted on the
 receiver.
@@ -297,6 +297,20 @@ receiver.
 - Integration test mirroring `chess_protocol_core.rs` move/ack sequence but
   through `Server` + `NetworkManager::send_chess_move`.
 - Assert DB message row exists and client receives `MoveAck`.
+
+**Implemented:**
+
+- `handle_move`: Active + matching peer → store `"Move"`, reply
+  `MoveAck` (`move_id: None`); no board reconstruction.
+- Soft-reject unknown / wrong-peer / non-active / persist failure with
+  `GameDecline` so send-and-wait never hangs; invalid Move validation also
+  replies `GameDecline`.
+- Idempotent identical-payload retries (same JSON content) skip duplicate
+  rows.
+- Inbound `MoveAck` as a request is a no-op (no reply).
+- Unit tests cover success, soft rejects, validation, and idempotency;
+  integration test `server_move_acks_and_persists` exercises live Server +
+  DB.
 
 ### Step 7 — `SyncRequest` → `SyncResponse` (optional but cheap)
 

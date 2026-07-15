@@ -3,8 +3,9 @@
 //! Typed match, validate-before-side-effects, and a single reply path.
 //! `GameInvite` persists a pending game and echoes the invite.
 //! `GameAccept` / `GameDecline` transition pending games to Active or
-//! Abandoned and echo so send-and-wait clients never hang. Move and sync
-//! handlers remain stubs that return `Ok(None)` until acknowledgements land.
+//! Abandoned and echo so send-and-wait clients never hang.
+//! `Move` persists against an Active game and replies with `MoveAck`.
+//! Sync handlers remain stubs that return `Ok(None)` until implemented.
 
 use crate::chess::Color;
 use crate::messages::chess::{
@@ -33,11 +34,11 @@ pub enum HandlerError {
 ///
 /// Returns:
 /// - `Ok(Some(response))` — caller should `send_message` the response
-/// - `Ok(None)` — no reply (stubbed chess handlers, unexpected Pong, soft reject)
+/// - `Ok(None)` — no reply (stubbed sync, MoveAck as request, unexpected Pong)
 /// - `Err` — unexpected handler failure (validation is soft-failed as `Ok(None)`)
 ///
-/// Ping continues to echo. Invite/accept/decline persist and reply;
-/// Move/Sync variants are stubbed (no reply yet).
+/// Ping continues to echo. Invite/accept/decline/move persist and reply;
+/// Sync variants are stubbed (no reply yet).
 pub fn dispatch(
     database: &Database,
     peer_id: &str,
@@ -56,11 +57,12 @@ pub fn dispatch(
             error = %e,
             "rejecting inbound message: validation failed"
         );
-        // Invite/accept/decline clients wait for a reply; decline instead of hanging.
+        // Send-and-wait clients need a reply; decline instead of hanging.
         let game_id = match &message {
             Message::GameInvite(invite) => Some(invite.game_id.as_str()),
             Message::GameAccept(accept) => Some(accept.game_id.as_str()),
             Message::GameDecline(decline) => Some(decline.game_id.as_str()),
+            Message::Move(mv) => Some(mv.game_id.as_str()),
             _ => None,
         };
         if let Some(game_id) = game_id {
@@ -218,6 +220,41 @@ fn ensure_decline_message_stored(
     let already_stored = messages.iter().any(|m| m.message_type == "GameDecline");
     if !already_stored {
         store_decline_message(database, peer_id, decline)?;
+    }
+    Ok(())
+}
+
+fn store_move_message(
+    database: &Database,
+    peer_id: &str,
+    mv: &Move,
+) -> Result<(), StorageError> {
+    let content = serde_json::to_string(mv)
+        .map_err(|e| StorageError::serialization_error("Move message content", e))?;
+    database.store_message(
+        mv.game_id.clone(),
+        "Move".to_string(),
+        content,
+        "remote".to_string(),
+        peer_id.to_string(),
+    )?;
+    Ok(())
+}
+
+/// Skip insert when an identical Move payload is already stored for this game.
+fn ensure_move_message_stored(
+    database: &Database,
+    peer_id: &str,
+    mv: &Move,
+) -> Result<(), StorageError> {
+    let content = serde_json::to_string(mv)
+        .map_err(|e| StorageError::serialization_error("Move message content", e))?;
+    let messages = database.get_messages_for_game(&mv.game_id)?;
+    let already_stored = messages
+        .iter()
+        .any(|m| m.message_type == "Move" && m.content == content);
+    if !already_stored {
+        store_move_message(database, peer_id, mv)?;
     }
     Ok(())
 }
@@ -515,20 +552,91 @@ pub(crate) fn handle_game_decline(
     }
 }
 
+/// Persist an inbound move against an Active game and reply with `MoveAck`.
+///
+/// Requires Active status and `opponent_peer_id == peer_id`. Identical payload
+/// retries are idempotent. Soft-rejects with `GameDecline` so send-and-wait
+/// never hangs. Does not reconstruct the board or verify move legality.
 pub(crate) fn handle_move(
-    _database: &Database,
+    database: &Database,
     peer_id: &str,
     mv: Move,
 ) -> Result<Option<Message>, HandlerError> {
-    stub_not_implemented(peer_id, "Move", &mv.game_id)
+    let game = match database.get_game(&mv.game_id) {
+        Ok(game) => game,
+        Err(StorageError::GameNotFound { .. }) => {
+            warn!(
+                peer_id = %peer_id,
+                game_id = %mv.game_id,
+                "Move for unknown game"
+            );
+            return decline_invite(&mv.game_id, "game not found");
+        }
+        Err(e) => {
+            warn!(
+                peer_id = %peer_id,
+                game_id = %mv.game_id,
+                error = %e,
+                "Move failed to load game"
+            );
+            return decline_invite(&mv.game_id, "failed to load game");
+        }
+    };
+
+    if game.opponent_peer_id != peer_id {
+        warn!(
+            peer_id = %peer_id,
+            game_id = %mv.game_id,
+            "Move from peer that is not the game opponent"
+        );
+        return decline_invite(&mv.game_id, "peer is not the game opponent");
+    }
+
+    match game.status {
+        GameStatus::Active => {
+            if let Err(e) = ensure_move_message_stored(database, peer_id, &mv) {
+                warn!(
+                    peer_id = %peer_id,
+                    game_id = %mv.game_id,
+                    error = %e,
+                    "failed to store Move message"
+                );
+                return decline_invite(&mv.game_id, "failed to persist move");
+            }
+            debug!(
+                peer_id = %peer_id,
+                game_id = %mv.game_id,
+                "persisted Move; acknowledging"
+            );
+            Ok(Some(Message::new_move_ack(mv.game_id, None)))
+        }
+        other => {
+            warn!(
+                peer_id = %peer_id,
+                game_id = %mv.game_id,
+                status = ?other,
+                "Move for non-active game"
+            );
+            decline_invite(
+                &mv.game_id,
+                &format!("game is not active (status: {other:?})"),
+            )
+        }
+    }
 }
 
+/// Inbound `MoveAck` as a request needs no further reply.
 pub(crate) fn handle_move_ack(
     _database: &Database,
     peer_id: &str,
     ack: MoveAck,
 ) -> Result<Option<Message>, HandlerError> {
-    stub_not_implemented(peer_id, "MoveAck", &ack.game_id)
+    debug!(
+        peer_id = %peer_id,
+        game_id = %ack.game_id,
+        "ignoring inbound MoveAck as request (no reply)"
+    );
+    Ok(None)
 }
 
 pub(crate) fn handle_sync_request(
