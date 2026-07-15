@@ -231,8 +231,16 @@ async fn main() -> Result<()> {
             info!("Loaded identity: {}", identity.peer_id());
             debug!("Server lifecycle: Identity loaded successfully");
 
+            // Open the same peer SQLite database the CLI uses (MATE_DATA_DIR / ProjectDirs)
+            let database = Arc::new(
+                mate::Database::new(identity.peer_id().as_str())
+                    .context("Failed to initialize database")?,
+            );
+            info!("Opened peer database for serve");
+            debug!("Server lifecycle: Database opened successfully");
+
             // Create and run server with graceful shutdown handling
-            let server = mate::network::Server::bind(&bind, identity).await?;
+            let server = mate::network::Server::bind(&bind, identity, database).await?;
 
             info!("Server bound successfully, starting to accept connections...");
             debug!("Server lifecycle: Server bound, installing signal handlers");
