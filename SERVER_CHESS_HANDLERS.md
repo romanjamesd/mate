@@ -1,9 +1,9 @@
 # Fix Plan: Server-side chess message handlers
 
-Status: **planning only** — no code has been changed. This document is the
-result of investigating `PRIORITIES.md` item 2 ("Implement server-side chess
-message handlers") and lays out the concrete steps to implement them, plus
-the verification to run at each step.
+Status: **Step 0 complete** — prerequisite confirmed; implementation not
+started. This document is the result of investigating `PRIORITIES.md` item 2
+("Implement server-side chess message handlers") and lays out the concrete
+steps to implement them, plus the verification to run at each step.
 
 ## 1. Problem (confirmed by reading the code)
 
@@ -110,13 +110,23 @@ as last resort; for soft reject of invite, send `GameDecline`.
 
 ## 4. Step-by-step implementation
 
-### Step 0 — Confirm prerequisite and baseline
+### Step 0 — Confirm prerequisite and baseline ✅ (2026-07-15)
 
 1. Ensure item 1 (connection-layer panic) is on the branch you build on.
 2. Run existing tests: `cargo test`.
 3. Manual baseline: terminal A `mate serve --bind 127.0.0.1:8080`; from a
    small test or second process send `GameInvite`; confirm debug log
    `"no specific handler"` and no panic.
+
+**Verified on `server-chess-handlers`:**
+
+- Panic-fix commit `1a8dc06` is an ancestor; `Connection` send/receive
+  logging uses `log_summary()`.
+- `cargo test`: all suites green (718 lib/integration + 33 doctests, etc.).
+- Manual: `mate serve` + `mate invite 127.0.0.1:18080` with
+  `RUST_LOG=mate=debug` → server logged
+  `Received GameInvite message from … (no specific handler)`; no panic.
+  Client correctly hung waiting for a reply (expected until handlers exist).
 
 ### Step 1 — Open the database on the serve path
 

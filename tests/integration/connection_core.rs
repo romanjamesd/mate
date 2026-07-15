@@ -7,6 +7,7 @@
 use mate::crypto::Identity;
 use mate::messages::Message;
 use mate::network::{Client, Server};
+use crate::common::test_helpers::test_server_database;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -19,7 +20,8 @@ async fn test_successful_connection_establishment() {
     let client_identity = Arc::new(Identity::generate().unwrap());
 
     // Start server on ephemeral port
-    let server = Server::bind("127.0.0.1:0", server_identity).await.unwrap();
+    let database = test_server_database(server_identity.peer_id().as_str());
+    let server = Server::bind("127.0.0.1:0", server_identity, database).await.unwrap();
     let server_addr = server.local_addr().unwrap().to_string();
 
     // Start server in background
@@ -121,7 +123,8 @@ async fn test_peer_identification_after_connection() {
     let expected_server_peer_id = server_identity.peer_id().to_string();
 
     // Start server
-    let server = Server::bind("127.0.0.1:0", server_identity).await.unwrap();
+    let database = test_server_database(server_identity.peer_id().as_str());
+    let server = Server::bind("127.0.0.1:0", server_identity, database).await.unwrap();
     let server_addr = server.local_addr().unwrap().to_string();
 
     let server_handle = tokio::spawn(async move { server.run().await });
@@ -166,7 +169,8 @@ async fn test_client_identity_usage() {
     let _client_peer_id = client_identity.peer_id().to_string();
 
     // Start server
-    let server = Server::bind("127.0.0.1:0", server_identity).await.unwrap();
+    let database = test_server_database(server_identity.peer_id().as_str());
+    let server = Server::bind("127.0.0.1:0", server_identity, database).await.unwrap();
     let server_addr = server.local_addr().unwrap().to_string();
 
     let server_handle = tokio::spawn(async move { server.run().await });
@@ -209,7 +213,8 @@ async fn test_connection_proper_cleanup() {
     let client_identity = Arc::new(Identity::generate().unwrap());
 
     // Start server
-    let server = Server::bind("127.0.0.1:0", server_identity).await.unwrap();
+    let database = test_server_database(server_identity.peer_id().as_str());
+    let server = Server::bind("127.0.0.1:0", server_identity, database).await.unwrap();
     let server_addr = server.local_addr().unwrap().to_string();
 
     let server_handle = tokio::spawn(async move { server.run().await });
@@ -260,7 +265,8 @@ async fn test_multiple_sequential_connections() {
     let server_identity = Arc::new(Identity::generate().unwrap());
 
     // Start server
-    let server = Server::bind("127.0.0.1:0", server_identity).await.unwrap();
+    let database = test_server_database(server_identity.peer_id().as_str());
+    let server = Server::bind("127.0.0.1:0", server_identity, database).await.unwrap();
     let server_addr = server.local_addr().unwrap().to_string();
 
     let server_handle = tokio::spawn(async move { server.run().await });
@@ -319,7 +325,8 @@ async fn test_multiple_client_identities() {
     let server_identity = Arc::new(Identity::generate().unwrap());
 
     // Start server
-    let server = Server::bind("127.0.0.1:0", server_identity).await.unwrap();
+    let database = test_server_database(server_identity.peer_id().as_str());
+    let server = Server::bind("127.0.0.1:0", server_identity, database).await.unwrap();
     let server_addr = server.local_addr().unwrap().to_string();
 
     let server_handle = tokio::spawn(async move { server.run().await });

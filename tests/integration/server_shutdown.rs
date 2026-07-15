@@ -1,5 +1,6 @@
 use mate::crypto::Identity;
 use mate::network::Server;
+use crate::common::test_helpers::test_server_database;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -10,7 +11,8 @@ async fn test_server_graceful_shutdown() {
     let identity = Arc::new(Identity::generate().unwrap());
 
     // Bind server to available port (0 = let OS choose)
-    let server = Server::bind("127.0.0.1:0", identity).await.unwrap();
+    let database = test_server_database(identity.peer_id().as_str());
+    let server = Server::bind("127.0.0.1:0", identity, database).await.unwrap();
     let addr = server.local_addr().unwrap();
 
     println!("Test server bound to: {}", addr);
@@ -53,7 +55,8 @@ async fn test_server_bind_and_basic_startup() {
     let identity = Arc::new(Identity::generate().unwrap());
 
     // Bind to ephemeral port
-    let server = Server::bind("127.0.0.1:0", identity).await.unwrap();
+    let database = test_server_database(identity.peer_id().as_str());
+    let server = Server::bind("127.0.0.1:0", identity, database).await.unwrap();
     let addr = server.local_addr().unwrap();
 
     println!("Test server bound to: {}", addr);
@@ -91,13 +94,15 @@ async fn test_server_multiple_bind_attempts() {
     let identity2 = Arc::new(Identity::generate().unwrap());
 
     // Bind first server
-    let server1 = Server::bind("127.0.0.1:0", identity1).await.unwrap();
+    let database = test_server_database(identity1.peer_id().as_str());
+    let server1 = Server::bind("127.0.0.1:0", identity1, database).await.unwrap();
     let addr = server1.local_addr().unwrap();
 
     println!("First server bound to: {}", addr);
 
     // Try to bind second server to the same address (should fail)
-    let result = Server::bind(&addr.to_string(), identity2).await;
+    let database = test_server_database(identity2.peer_id().as_str());
+    let result = Server::bind(&addr.to_string(), identity2, database).await;
     assert!(
         result.is_err(),
         "Second server should fail to bind to the same address"
