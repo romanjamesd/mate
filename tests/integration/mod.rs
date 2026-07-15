@@ -75,4 +75,7 @@ pub mod chess_protocol_advanced;
 // Chess security integration tests
 pub mod chess_security_integration;
 
+// Server chess message handler tests
+pub mod server_chess_handlers;
+
 pub mod cli_network;

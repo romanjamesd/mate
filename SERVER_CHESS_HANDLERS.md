@@ -1,8 +1,7 @@
 # Fix Plan: Server-side chess message handlers
 
-Status: **Step 3 complete** — typed dispatch + validate + reply plumbing
-landed; chess handlers are stubs (`Ok(None)`) until Steps 4–7. Storage
-APIs from Step 2 are ready for invite/accept/move persistence.
+Status: **Step 4 complete** — `GameInvite` persists Pending + echoes;
+Accept/Decline/Move/Sync handlers remain stubs until Steps 5–7.
 
 ## 1. Problem (confirmed by reading the code)
 
@@ -200,7 +199,7 @@ chess messages do not panic.
   invite soft-reject, all chess stubs, and cleanup asserting the old
   `"no specific handler"` catch-all is gone.
 
-### Step 4 — `GameInvite` handler (unblocks network invite → local pending)
+### Step 4 — `GameInvite` handler (unblocks network invite → local pending) ✅ (2026-07-15)
 
 **Goal:** receiving peer gets a pending game row and the sender gets a reply.
 
@@ -225,6 +224,22 @@ chess messages do not panic.
   DB → `Ok(response)` and DB contains pending game with invite's ID.
 - Manual: `mate invite 127.0.0.1:PORT` against `mate serve` should print
   success instead of retry/timeout (once item 1 is fixed).
+
+**Implemented:**
+
+- `handle_game_invite` in `src/network/handlers.rs`: create Pending via
+  `create_game_with_id`, store `"GameInvite"` (PascalCase JSON), echo the
+  invite (not auto-accept).
+- Color: `suggested_color: Some(c)` → invitee `my_color = c`; `None` →
+  provisional White (accept finalizes later).
+- Idempotent for same peer + game ID; different peer → `GameDecline`.
+  Persistence failures also reply `GameDecline` so send-and-wait never hangs.
+- Unit tests cover echo/persist/color/idempotency/conflict; integration test
+  `server_game_invite_echoes_and_persists_pending` exercises live Server + DB.
+- Invite-path CLI uses UUID `generate_game_id` + `create_game_with_id` so wire
+  validation accepts the invite (storage's legacy id format is not UUID).
+- Invalid GameInvite validation replies with `GameDecline` (not silence) so
+  send-and-wait never hangs.
 
 ### Step 5 — `GameAccept` / `GameDecline` handlers
 
