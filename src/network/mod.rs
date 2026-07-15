@@ -1,9 +1,11 @@
 pub mod client;
 pub mod connection;
+pub mod handlers;
 pub mod server;
 
 pub use client::Client;
 pub use connection::{Connection, ConnectionError};
+pub use handlers::{dispatch, HandlerError};
 pub use server::Server;
 
 // Re-export wire protocol types for convenience

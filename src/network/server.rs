@@ -307,11 +307,11 @@ impl Server {
     }
 
     /// Handle individual connection lifecycle with shutdown support
-    #[instrument(skip(stream, identity, _database, wire_config, shutdown_rx), fields(connection_id = connection_id))]
+    #[instrument(skip(stream, identity, database, wire_config, shutdown_rx), fields(connection_id = connection_id))]
     async fn handle_connection_with_shutdown(
         stream: tokio::net::TcpStream,
         identity: Arc<Identity>,
-        _database: Arc<Database>,
+        database: Arc<Database>,
         wire_config: WireConfig,
         connection_id: usize,
         mut shutdown_rx: broadcast::Receiver<()>,
@@ -322,7 +322,7 @@ impl Server {
         let mut connection = Connection::new_with_config(stream, identity, wire_config).await;
 
         // Perform handshake
-        let _peer_id = match connection.handle_handshake_request().await {
+        let peer_id = match connection.handle_handshake_request().await {
             Ok(peer_id) => {
                 info!(
                     "Handshake successful for connection {} with peer: {}",
@@ -349,21 +349,41 @@ impl Server {
                 result = connection.receive_message() => {
                     match result {
                         Ok((message, sender)) => {
-                            info!("Received {} message from {} on connection {}",
-                                  message.message_type(), sender, connection_id);
+                            info!(
+                                "Received {} from {} on connection {}",
+                                message.log_summary(),
+                                sender,
+                                connection_id
+                            );
 
-                            // Handle different message types
-                            match message.message_type() {
-                                "Ping" => {
-                                    debug!("Echoing ping message back to {}", sender);
-                                    if let Err(e) = connection.send_message(message).await {
-                                        error!("Failed to echo message on connection {}: {}", connection_id, e);
+                            match crate::network::handlers::dispatch(
+                                database.as_ref(),
+                                &peer_id,
+                                message,
+                            ) {
+                                Ok(Some(response)) => {
+                                    debug!(
+                                        "Sending {} reply to {} on connection {}",
+                                        response.log_summary(),
+                                        sender,
+                                        connection_id
+                                    );
+                                    if let Err(e) = connection.send_message(response).await {
+                                        error!(
+                                            "Failed to send reply on connection {}: {}",
+                                            connection_id, e
+                                        );
                                         break;
                                     }
                                 }
-                                _ => {
-                                    debug!("Received {} message from {} (no specific handler)",
-                                           message.message_type(), sender);
+                                Ok(None) => {
+                                    // Soft reject / stubbed handler — stay connected
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Handler error on connection {} from {}: {}",
+                                        connection_id, sender, e
+                                    );
                                 }
                             }
                         }

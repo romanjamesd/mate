@@ -1,10 +1,8 @@
 # Fix Plan: Server-side chess message handlers
 
-Status: **Step 2 complete** — storage can create games with caller-supplied
-IDs; handler implementation not started. This document is the result of
-investigating `PRIORITIES.md` item 2 ("Implement server-side chess message
-handlers") and lays out the concrete steps to implement them, plus the
-verification to run at each step.
+Status: **Step 3 complete** — typed dispatch + validate + reply plumbing
+landed; chess handlers are stubs (`Ok(None)`) until Steps 4–7. Storage
+APIs from Step 2 are ready for invite/accept/move persistence.
 
 ## 1. Problem (confirmed by reading the code)
 
@@ -168,7 +166,7 @@ works.
 - Storage tests cover create-with-ID, duplicate rejection, empty ID, and
   color update (+ not-found in error tests).
 
-### Step 3 — Handler scaffolding in the server loop
+### Step 3 — Handler scaffolding in the server loop ✅ (2026-07-15)
 
 **Goal:** replace stringly `"Ping"` / catch-all with a typed match and a
 single place for “validate → handle → reply.”
@@ -186,6 +184,21 @@ single place for “validate → handle → reply.”
 
 **Verify:** unit/integration test that Ping still echoes; unknown/malformed
 chess messages do not panic.
+
+**Implemented:**
+
+- New `src/network/handlers.rs` with `dispatch(db, peer_id, message) ->
+  Result<Option<Message>, HandlerError>`.
+- Connection loop calls `dispatch`; sends on `Some`, stays up on `None` /
+  soft errors.
+- `message.validate()` runs before any handler side effects; failures log
+  and return `Ok(None)` (no panic, no forced disconnect).
+- Ping echoes unchanged; chess variants are stubs returning `Ok(None)` so
+  `mate invite` still times out until Step 4 (avoids false success without
+  a pending row).
+- Unit tests in `tests/unit/network/handlers.rs` cover Ping echo, invalid
+  invite soft-reject, all chess stubs, and cleanup asserting the old
+  `"no specific handler"` catch-all is gone.
 
 ### Step 4 — `GameInvite` handler (unblocks network invite → local pending)
 
