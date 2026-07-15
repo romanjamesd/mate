@@ -1,14 +1,17 @@
 //! Server-side message dispatch for the connection loop.
 //!
 //! Typed match, validate-before-side-effects, and a single reply path.
-//! `GameInvite` persists a pending game and echoes the invite; other chess
+//! `GameInvite` persists a pending game and echoes the invite.
+//! `GameAccept` / `GameDecline` transition pending games to Active or
+//! Abandoned and echo so send-and-wait clients never hang. Move and sync
 //! handlers remain stubs that return `Ok(None)` until acknowledgements land.
 
+use crate::chess::Color;
 use crate::messages::chess::{
     GameAccept, GameDecline, GameInvite, Move, MoveAck, SyncRequest, SyncResponse, ValidationError,
 };
 use crate::messages::Message;
-use crate::storage::models::PlayerColor;
+use crate::storage::models::{GameStatus, PlayerColor};
 use crate::storage::{Database, StorageError};
 use thiserror::Error;
 use tracing::{debug, warn};
@@ -33,8 +36,8 @@ pub enum HandlerError {
 /// - `Ok(None)` — no reply (stubbed chess handlers, unexpected Pong, soft reject)
 /// - `Err` — unexpected handler failure (validation is soft-failed as `Ok(None)`)
 ///
-/// Ping continues to echo. `GameInvite` persists and echoes; other chess
-/// variants are stubbed (no reply yet).
+/// Ping continues to echo. Invite/accept/decline persist and reply;
+/// Move/Sync variants are stubbed (no reply yet).
 pub fn dispatch(
     database: &Database,
     peer_id: &str,
@@ -53,10 +56,16 @@ pub fn dispatch(
             error = %e,
             "rejecting inbound message: validation failed"
         );
-        // GameInvite clients always wait for a reply; decline instead of hanging.
-        if let Message::GameInvite(invite) = &message {
+        // Invite/accept/decline clients wait for a reply; decline instead of hanging.
+        let game_id = match &message {
+            Message::GameInvite(invite) => Some(invite.game_id.as_str()),
+            Message::GameAccept(accept) => Some(accept.game_id.as_str()),
+            Message::GameDecline(decline) => Some(decline.game_id.as_str()),
+            _ => None,
+        };
+        if let Some(game_id) = game_id {
             return Ok(Some(Message::new_game_decline(
-                invite.game_id.clone(),
+                game_id.to_string(),
                 Some(format!("validation failed: {e}")),
             )));
         }
@@ -100,11 +109,19 @@ fn stub_not_implemented(
 ///
 /// `suggested_color` is the color offered to the invitee. When absent, use
 /// provisional White until accept finalizes the choice.
-fn invitee_color(suggested_color: Option<crate::chess::Color>) -> PlayerColor {
+fn invitee_color(suggested_color: Option<Color>) -> PlayerColor {
     match suggested_color {
         Some(color) => PlayerColor::from(color),
         None => PlayerColor::White,
     }
+}
+
+/// Local color for the peer receiving an accept (the inviter).
+///
+/// `accepted_color` is the color the accepter plays as, so this peer takes
+/// the opposite.
+fn inviter_color(accepted_color: Color) -> PlayerColor {
+    PlayerColor::from(accepted_color.opposite())
 }
 
 fn decline_invite(game_id: &str, reason: &str) -> Result<Option<Message>, HandlerError> {
@@ -119,9 +136,8 @@ fn store_invite_message(
     peer_id: &str,
     invite: &GameInvite,
 ) -> Result<(), StorageError> {
-    let content = serde_json::to_string(invite).map_err(|e| {
-        StorageError::serialization_error("GameInvite message content", e)
-    })?;
+    let content = serde_json::to_string(invite)
+        .map_err(|e| StorageError::serialization_error("GameInvite message content", e))?;
     database.store_message(
         invite.game_id.clone(),
         "GameInvite".to_string(),
@@ -132,7 +148,7 @@ fn store_invite_message(
     Ok(())
 }
 
-/// idempotent retry for storing the invite message
+/// Idempotent retry for storing the invite message.
 fn ensure_invite_message_stored(
     database: &Database,
     peer_id: &str,
@@ -142,6 +158,66 @@ fn ensure_invite_message_stored(
     let already_stored = messages.iter().any(|m| m.message_type == "GameInvite");
     if !already_stored {
         store_invite_message(database, peer_id, invite)?;
+    }
+    Ok(())
+}
+
+fn store_accept_message(
+    database: &Database,
+    peer_id: &str,
+    accept: &GameAccept,
+) -> Result<(), StorageError> {
+    let content = serde_json::to_string(accept)
+        .map_err(|e| StorageError::serialization_error("GameAccept message content", e))?;
+    database.store_message(
+        accept.game_id.clone(),
+        "GameAccept".to_string(),
+        content,
+        "remote".to_string(),
+        peer_id.to_string(),
+    )?;
+    Ok(())
+}
+
+fn ensure_accept_message_stored(
+    database: &Database,
+    peer_id: &str,
+    accept: &GameAccept,
+) -> Result<(), StorageError> {
+    let messages = database.get_messages_for_game(&accept.game_id)?;
+    let already_stored = messages.iter().any(|m| m.message_type == "GameAccept");
+    if !already_stored {
+        store_accept_message(database, peer_id, accept)?;
+    }
+    Ok(())
+}
+
+fn store_decline_message(
+    database: &Database,
+    peer_id: &str,
+    decline: &GameDecline,
+) -> Result<(), StorageError> {
+    let content = serde_json::to_string(decline)
+        .map_err(|e| StorageError::serialization_error("GameDecline message content", e))?;
+    database.store_message(
+        decline.game_id.clone(),
+        "GameDecline".to_string(),
+        content,
+        "remote".to_string(),
+        peer_id.to_string(),
+    )?;
+    Ok(())
+}
+
+fn ensure_decline_message_stored(
+    database: &Database,
+    peer_id: &str,
+    decline: &GameDecline,
+) -> Result<(), StorageError> {
+    let messages = database.get_messages_for_game(&decline.game_id)?;
+    let already_stored = messages.iter().any(|m| m.message_type == "GameDecline");
+    if !already_stored {
+        store_decline_message(database, peer_id, decline)?;
     }
     Ok(())
 }
@@ -158,12 +234,8 @@ pub(crate) fn handle_game_invite(
 ) -> Result<Option<Message>, HandlerError> {
     let my_color = invitee_color(invite.suggested_color);
 
-    match database.create_game_with_id(
-        invite.game_id.clone(),
-        peer_id.to_string(),
-        my_color,
-        None,
-    ) {
+    match database.create_game_with_id(invite.game_id.clone(), peer_id.to_string(), my_color, None)
+    {
         Ok(_) => {
             if let Err(e) = store_invite_message(database, peer_id, &invite) {
                 warn!(
@@ -181,44 +253,42 @@ pub(crate) fn handle_game_invite(
             );
             Ok(Some(Message::GameInvite(invite)))
         }
-        Err(StorageError::ConstraintViolation { .. }) => {
-            match database.get_game(&invite.game_id) {
-                Ok(existing) if existing.opponent_peer_id == peer_id => {
-                    if let Err(e) = ensure_invite_message_stored(database, peer_id, &invite) {
-                        warn!(
-                            peer_id = %peer_id,
-                            game_id = %invite.game_id,
-                            error = %e,
-                            "failed to ensure GameInvite message on idempotent retry"
-                        );
-                        return decline_invite(&invite.game_id, "failed to persist invite");
-                    }
-                    debug!(
-                        peer_id = %peer_id,
-                        game_id = %invite.game_id,
-                        "idempotent GameInvite for existing pending game; echoing"
-                    );
-                    Ok(Some(Message::GameInvite(invite)))
-                }
-                Ok(_) => {
-                    warn!(
-                        peer_id = %peer_id,
-                        game_id = %invite.game_id,
-                        "GameInvite conflicts with existing game for another peer"
-                    );
-                    decline_invite(&invite.game_id, "game id already exists for another peer")
-                }
-                Err(e) => {
+        Err(StorageError::ConstraintViolation { .. }) => match database.get_game(&invite.game_id) {
+            Ok(existing) if existing.opponent_peer_id == peer_id => {
+                if let Err(e) = ensure_invite_message_stored(database, peer_id, &invite) {
                     warn!(
                         peer_id = %peer_id,
                         game_id = %invite.game_id,
                         error = %e,
-                        "GameInvite duplicate but game lookup failed"
+                        "failed to ensure GameInvite message on idempotent retry"
                     );
-                    decline_invite(&invite.game_id, "failed to resolve invite conflict")
+                    return decline_invite(&invite.game_id, "failed to persist invite");
                 }
+                debug!(
+                    peer_id = %peer_id,
+                    game_id = %invite.game_id,
+                    "idempotent GameInvite for existing pending game; echoing"
+                );
+                Ok(Some(Message::GameInvite(invite)))
             }
-        }
+            Ok(_) => {
+                warn!(
+                    peer_id = %peer_id,
+                    game_id = %invite.game_id,
+                    "GameInvite conflicts with existing game for another peer"
+                );
+                decline_invite(&invite.game_id, "game id already exists for another peer")
+            }
+            Err(e) => {
+                warn!(
+                    peer_id = %peer_id,
+                    game_id = %invite.game_id,
+                    error = %e,
+                    "GameInvite duplicate but game lookup failed"
+                );
+                decline_invite(&invite.game_id, "failed to resolve invite conflict")
+            }
+        },
         Err(e) => {
             warn!(
                 peer_id = %peer_id,
@@ -231,20 +301,218 @@ pub(crate) fn handle_game_invite(
     }
 }
 
+/// Activate a pending game for an inbound accept and echo the accept as ack.
+///
+/// Requires Pending status and `opponent_peer_id == peer_id`. Finalizes local
+/// color as the opposite of `accepted_color`. Same-peer Active retries are
+/// idempotent. Soft-rejects with `GameDecline` so send-and-wait never hangs.
 pub(crate) fn handle_game_accept(
-    _database: &Database,
+    database: &Database,
     peer_id: &str,
     accept: GameAccept,
 ) -> Result<Option<Message>, HandlerError> {
-    stub_not_implemented(peer_id, "GameAccept", &accept.game_id)
+    let game = match database.get_game(&accept.game_id) {
+        Ok(game) => game,
+        Err(StorageError::GameNotFound { .. }) => {
+            warn!(
+                peer_id = %peer_id,
+                game_id = %accept.game_id,
+                "GameAccept for unknown game"
+            );
+            return decline_invite(&accept.game_id, "game not found");
+        }
+        Err(e) => {
+            warn!(
+                peer_id = %peer_id,
+                game_id = %accept.game_id,
+                error = %e,
+                "GameAccept failed to load game"
+            );
+            return decline_invite(&accept.game_id, "failed to load game");
+        }
+    };
+
+    if game.opponent_peer_id != peer_id {
+        warn!(
+            peer_id = %peer_id,
+            game_id = %accept.game_id,
+            "GameAccept from peer that is not the game opponent"
+        );
+        return decline_invite(&accept.game_id, "peer is not the game opponent");
+    }
+
+    match game.status {
+        GameStatus::Active => {
+            if let Err(e) = ensure_accept_message_stored(database, peer_id, &accept) {
+                warn!(
+                    peer_id = %peer_id,
+                    game_id = %accept.game_id,
+                    error = %e,
+                    "failed to ensure GameAccept message on idempotent retry"
+                );
+                return decline_invite(&accept.game_id, "failed to persist accept");
+            }
+            debug!(
+                peer_id = %peer_id,
+                game_id = %accept.game_id,
+                "idempotent GameAccept for already-active game; echoing"
+            );
+            Ok(Some(Message::GameAccept(accept)))
+        }
+        GameStatus::Pending => {
+            let my_color = inviter_color(accept.accepted_color);
+
+            if let Err(e) = database.update_game_status(&accept.game_id, GameStatus::Active) {
+                warn!(
+                    peer_id = %peer_id,
+                    game_id = %accept.game_id,
+                    error = %e,
+                    "failed to set game Active on accept"
+                );
+                return decline_invite(&accept.game_id, "failed to activate game");
+            }
+
+            if let Err(e) = database.update_game_color(&accept.game_id, my_color) {
+                warn!(
+                    peer_id = %peer_id,
+                    game_id = %accept.game_id,
+                    error = %e,
+                    "failed to update color on accept"
+                );
+                return decline_invite(&accept.game_id, "failed to update game color");
+            }
+
+            if let Err(e) = store_accept_message(database, peer_id, &accept) {
+                warn!(
+                    peer_id = %peer_id,
+                    game_id = %accept.game_id,
+                    error = %e,
+                    "failed to store GameAccept message after activating game"
+                );
+                return decline_invite(&accept.game_id, "failed to persist accept");
+            }
+
+            debug!(
+                peer_id = %peer_id,
+                game_id = %accept.game_id,
+                "activated game from accept; echoing"
+            );
+            Ok(Some(Message::GameAccept(accept)))
+        }
+        other => {
+            warn!(
+                peer_id = %peer_id,
+                game_id = %accept.game_id,
+                status = ?other,
+                "GameAccept for non-pending game"
+            );
+            decline_invite(
+                &accept.game_id,
+                &format!("game is not pending (status: {other:?})"),
+            )
+        }
+    }
 }
 
+/// Abandon a pending game for an inbound decline and echo the decline as ack.
+///
+/// Requires Pending status and `opponent_peer_id == peer_id`. Same-peer
+/// Abandoned retries are idempotent. Soft-rejects with `GameDecline` so
+/// send-and-wait never hangs.
 pub(crate) fn handle_game_decline(
-    _database: &Database,
+    database: &Database,
     peer_id: &str,
     decline: GameDecline,
 ) -> Result<Option<Message>, HandlerError> {
-    stub_not_implemented(peer_id, "GameDecline", &decline.game_id)
+    let game = match database.get_game(&decline.game_id) {
+        Ok(game) => game,
+        Err(StorageError::GameNotFound { .. }) => {
+            warn!(
+                peer_id = %peer_id,
+                game_id = %decline.game_id,
+                "GameDecline for unknown game"
+            );
+            return decline_invite(&decline.game_id, "game not found");
+        }
+        Err(e) => {
+            warn!(
+                peer_id = %peer_id,
+                game_id = %decline.game_id,
+                error = %e,
+                "GameDecline failed to load game"
+            );
+            return decline_invite(&decline.game_id, "failed to load game");
+        }
+    };
+
+    if game.opponent_peer_id != peer_id {
+        warn!(
+            peer_id = %peer_id,
+            game_id = %decline.game_id,
+            "GameDecline from peer that is not the game opponent"
+        );
+        return decline_invite(&decline.game_id, "peer is not the game opponent");
+    }
+
+    match game.status {
+        GameStatus::Abandoned => {
+            if let Err(e) = ensure_decline_message_stored(database, peer_id, &decline) {
+                warn!(
+                    peer_id = %peer_id,
+                    game_id = %decline.game_id,
+                    error = %e,
+                    "failed to ensure GameDecline message on idempotent retry"
+                );
+                return decline_invite(&decline.game_id, "failed to persist decline");
+            }
+            debug!(
+                peer_id = %peer_id,
+                game_id = %decline.game_id,
+                "idempotent GameDecline for already-abandoned game; echoing"
+            );
+            Ok(Some(Message::GameDecline(decline)))
+        }
+        GameStatus::Pending => {
+            if let Err(e) = database.update_game_status(&decline.game_id, GameStatus::Abandoned) {
+                warn!(
+                    peer_id = %peer_id,
+                    game_id = %decline.game_id,
+                    error = %e,
+                    "failed to set game Abandoned on decline"
+                );
+                return decline_invite(&decline.game_id, "failed to abandon game");
+            }
+
+            if let Err(e) = store_decline_message(database, peer_id, &decline) {
+                warn!(
+                    peer_id = %peer_id,
+                    game_id = %decline.game_id,
+                    error = %e,
+                    "failed to store GameDecline message after abandoning game"
+                );
+                return decline_invite(&decline.game_id, "failed to persist decline");
+            }
+
+            debug!(
+                peer_id = %peer_id,
+                game_id = %decline.game_id,
+                "abandoned game from decline; echoing"
+            );
+            Ok(Some(Message::GameDecline(decline)))
+        }
+        other => {
+            warn!(
+                peer_id = %peer_id,
+                game_id = %decline.game_id,
+                status = ?other,
+                "GameDecline for non-pending game"
+            );
+            decline_invite(
+                &decline.game_id,
+                &format!("game is not pending (status: {other:?})"),
+            )
+        }
+    }
 }
 
 pub(crate) fn handle_move(

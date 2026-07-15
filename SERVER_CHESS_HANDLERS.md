@@ -1,7 +1,7 @@
 # Fix Plan: Server-side chess message handlers
 
-Status: **Step 4 complete** — `GameInvite` persists Pending + echoes;
-Accept/Decline/Move/Sync handlers remain stubs until Steps 5–7.
+Status: **Step 5 complete** — `GameInvite` / `GameAccept` / `GameDecline`
+persist and reply; Move/Sync handlers remain stubs until Steps 6–7.
 
 ## 1. Problem (confirmed by reading the code)
 
@@ -241,7 +241,7 @@ chess messages do not panic.
 - Invalid GameInvite validation replies with `GameDecline` (not silence) so
   send-and-wait never hangs.
 
-### Step 5 — `GameAccept` / `GameDecline` handlers
+### Step 5 — `GameAccept` / `GameDecline` handlers ✅ (2026-07-15)
 
 **Goal:** complete the invite lifecycle for the peer that receives accept or
 decline over the wire.
@@ -261,6 +261,21 @@ already exist in `handle_invite` when Accept is the immediate response).
 the **receiving** side of that Accept message correct. Listing pending
 network invites on the invitee depends on Step 4 having created the local
 row.
+
+**Implemented:**
+
+- `handle_game_accept`: Pending + matching peer → Active, `my_color` =
+  opposite of `accepted_color`, store `"GameAccept"`, echo accept.
+- `handle_game_decline`: Pending + matching peer → Abandoned, store
+  `"GameDecline"`, echo decline.
+- Soft-reject unknown / wrong-peer / non-pending with `GameDecline` so
+  send-and-wait never hangs; invalid Accept/Decline validation also
+  replies `GameDecline`.
+- Idempotent same-peer retries for already-Active accept and
+  already-Abandoned decline.
+- Unit tests cover success, color, idempotency, and soft rejects;
+  integration tests `server_game_invite_then_accept_activates` and
+  `server_game_invite_then_decline_abandons` exercise live Server + DB.
 
 ### Step 6 — `Move` → `MoveAck` handler
 
