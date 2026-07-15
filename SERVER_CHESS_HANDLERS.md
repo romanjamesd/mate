@@ -1,9 +1,10 @@
 # Fix Plan: Server-side chess message handlers
 
-Status: **Step 0 complete** — prerequisite confirmed; implementation not
-started. This document is the result of investigating `PRIORITIES.md` item 2
-("Implement server-side chess message handlers") and lays out the concrete
-steps to implement them, plus the verification to run at each step.
+Status: **Step 2 complete** — storage can create games with caller-supplied
+IDs; handler implementation not started. This document is the result of
+investigating `PRIORITIES.md` item 2 ("Implement server-side chess message
+handlers") and lays out the concrete steps to implement them, plus the
+verification to run at each step.
 
 ## 1. Problem (confirmed by reading the code)
 
@@ -61,11 +62,10 @@ for this task.
 
 ### Storage gaps that block correct invite handling
 
-1. `Database::create_game` always generates a new ID
-   (`src/storage/games.rs:8-14`). Incoming invites carry the inviter's
-   `game_id`; the invitee must create a local row with **that** ID.
-2. There is no API to update `my_color` after accept (color may be chosen
-   at accept time).
+1. ~~`Database::create_game` always generates a new ID~~ **Fixed (Step 2):**
+   `create_game_with_id` accepts the inviter's `game_id`.
+2. ~~No API to update `my_color` after accept~~ **Fixed (Step 2):**
+   `update_game_color`.
 3. CLI invite today stores the **TCP address** in `opponent_peer_id`
    (`app.rs:476`). Handshake gives a cryptographic peer ID. Handlers must
    store peer ID (and keep address in metadata if needed for dial-back).
@@ -128,7 +128,7 @@ as last resort; for soft reject of invite, send `GameDecline`.
   `Received GameInvite message from … (no specific handler)`; no panic.
   Client correctly hung waiting for a reply (expected until handlers exist).
 
-### Step 1 — Open the database on the serve path
+### Step 1 — Open the database on the serve path ✅ (2026-07-15)
 
 **Goal:** every `mate serve` process has the same SQLite identity DB the CLI
 uses for that peer.
@@ -144,7 +144,7 @@ uses for that peer.
 **Verify:** serve starts; DB file exists/updates; existing Ping echo still
 works.
 
-### Step 2 — Storage: create game with caller-supplied ID
+### Step 2 — Storage: create game with caller-supplied ID ✅ (2026-07-15)
 
 **Goal:** invitee can materialize the inviter's game ID locally.
 
@@ -152,11 +152,21 @@ works.
    metadata)` (or optional `id: Option<String>` on `create_game`).
 2. Reject duplicate IDs with a clear `StorageError`.
 3. Optionally add `update_game_color` (or update metadata) for accept-time
-   color finalization.
+   color finalization. (default behavior should eventually be to allow the challenged player to choose color on acceptance with an option to defer and allow the challenger to choose the color)
 4. Unit tests in storage tests: create with fixed ID, get by ID, duplicate
    fails.
 
 **Verify:** `cargo test` for storage module green.
+
+**Implemented:**
+
+- `Database::create_game_with_id` in `src/storage/games.rs`;
+  `create_game` now delegates to it with a generated ID.
+- Duplicate primary keys map to `StorageError::ConstraintViolation`
+  (`games.id`); empty IDs map to `InvalidData`.
+- `Database::update_game_color` for accept-time color finalization.
+- Storage tests cover create-with-ID, duplicate rejection, empty ID, and
+  color update (+ not-found in error tests).
 
 ### Step 3 — Handler scaffolding in the server loop
 

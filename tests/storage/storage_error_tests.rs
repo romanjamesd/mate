@@ -314,6 +314,20 @@ fn test_game_not_found_errors() {
         other => panic!("Expected GameNotFound error, got: {:?}", other),
     }
 
+    // Test update_game_color with nonexistent ID
+    let result = db.update_game_color(nonexistent_game_id, PlayerColor::Black);
+    assert!(
+        result.is_err(),
+        "Updating nonexistent game color should fail"
+    );
+
+    match result.unwrap_err() {
+        StorageError::GameNotFound { id } => {
+            assert_eq!(id, nonexistent_game_id, "Error should include the game ID");
+        }
+        other => panic!("Expected GameNotFound error, got: {:?}", other),
+    }
+
     // Test delete_game with nonexistent ID
     let result = db.delete_game(nonexistent_game_id);
     assert!(result.is_err(), "Deleting nonexistent game should fail");

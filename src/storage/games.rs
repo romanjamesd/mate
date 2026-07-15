@@ -4,18 +4,44 @@ use crate::storage::models::{Game, GameResult, GameStatus, PlayerColor};
 use rusqlite::{named_params, Row};
 
 impl Database {
-    /// Create a new game record
+    /// Create a new game record with a generated ID
     pub fn create_game(
         &self,
         opponent_peer_id: String,
         my_color: PlayerColor,
         metadata: Option<serde_json::Value>,
     ) -> Result<Game> {
-        let game_id = self.generate_game_id();
+        self.create_game_with_id(
+            self.generate_game_id(),
+            opponent_peer_id,
+            my_color,
+            metadata,
+        )
+    }
+
+    /// Create a new game record with a caller-supplied ID.
+    ///
+    /// Used when materializing an incoming invite that already carries the
+    /// inviter's `game_id`. Duplicate IDs return
+    /// [`StorageError::ConstraintViolation`].
+    pub fn create_game_with_id(
+        &self,
+        id: String,
+        opponent_peer_id: String,
+        my_color: PlayerColor,
+        metadata: Option<serde_json::Value>,
+    ) -> Result<Game> {
+        if id.is_empty() {
+            return Err(StorageError::invalid_data(
+                "game.id",
+                "game ID must not be empty",
+            ));
+        }
+
         let now = Self::current_timestamp();
 
         let game = Game {
-            id: game_id.clone(),
+            id: id.clone(),
             opponent_peer_id,
             my_color,
             status: GameStatus::Pending,
@@ -58,7 +84,8 @@ impl Database {
                     ":result": game.result.as_ref().map(|r| r.as_str()),
                     ":metadata": serialized_metadata,
                 },
-            )?;
+            )
+            .map_err(|e| map_game_insert_error(e, &id))?;
             Ok(game)
         })
     }
@@ -100,6 +127,28 @@ impl Database {
                 WHERE id = ?4
                 "#,
                 (status.as_str(), now, completed_at, game_id),
+            )?;
+
+            if rows_affected == 0 {
+                return Err(StorageError::game_not_found(game_id));
+            }
+
+            Ok(())
+        })
+    }
+
+    /// Update the local player's color for a game (e.g. finalize at accept time)
+    pub fn update_game_color(&self, game_id: &str, my_color: PlayerColor) -> Result<()> {
+        let now = Self::current_timestamp();
+
+        self.with_connection(|conn| {
+            let rows_affected = conn.execute(
+                r#"
+                UPDATE games 
+                SET my_color = ?1, updated_at = ?2
+                WHERE id = ?3
+                "#,
+                (my_color.as_str(), now, game_id),
             )?;
 
             if rows_affected == 0 {
@@ -224,6 +273,23 @@ impl Database {
 
             Ok(())
         })
+    }
+}
+
+/// Map INSERT failures so duplicate primary keys surface as ConstraintViolation
+fn map_game_insert_error(err: rusqlite::Error, game_id: &str) -> StorageError {
+    match err {
+        rusqlite::Error::SqliteFailure(ref sqlite_err, ref msg)
+            if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation =>
+        {
+            StorageError::constraint_violation(
+                "games",
+                "id",
+                msg.clone()
+                    .unwrap_or_else(|| format!("duplicate game id: {game_id}")),
+            )
+        }
+        other => StorageError::ConnectionFailed(other),
     }
 }
 
