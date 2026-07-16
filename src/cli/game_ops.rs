@@ -135,13 +135,13 @@ impl<'a> GameOps<'a> {
 
         let mut records = Vec::new();
 
-        for game in pending_games.into_iter().chain(active_games.into_iter()) {
+        for game in pending_games.into_iter().chain(active_games) {
             let record = self.create_game_record(game)?;
             records.push(record);
         }
 
         // Sort by most recently updated
-        records.sort_by(|a, b| b.game.updated_at.cmp(&a.game.updated_at));
+        records.sort_by_key(|b| std::cmp::Reverse(b.game.updated_at));
 
         Ok(records)
     }
@@ -315,7 +315,7 @@ impl<'a> GameOps<'a> {
             GameStatus::Active => {
                 // If move count is even and we're white, or odd and we're black, it's our turn
                 match game.my_color {
-                    PlayerColor::White => move_count % 2 == 0,
+                    PlayerColor::White => move_count.is_multiple_of(2),
                     PlayerColor::Black => move_count % 2 == 1,
                 }
             }

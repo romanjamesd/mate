@@ -612,4 +612,76 @@ mod tests {
             );
         }
     }
+
+    // =============================================================================
+    // Variant-Safe Logging Helper Tests (regression coverage for the
+    // connection-layer panic on chess messages, see CONNECTION_LAYER_PANIC.md)
+    // =============================================================================
+
+    /// `log_summary()` and `estimated_size()` are the sanctioned replacements
+    /// for `get_nonce()`/`get_payload()` in code paths that see every message
+    /// type. Received messages can reach logging before validation, so every
+    /// chess variant must safely handle an arbitrary UTF-8 game ID.
+    #[test]
+    fn test_all_chess_variants_logging_helpers_handle_utf8_game_ids() {
+        // Byte index 8 falls inside `é`; byte-based prefix slicing panics.
+        let game_id = "1234567é-rest".to_string();
+        let expected_prefix = "1234567é";
+        let board = Board::new();
+
+        let variants: Vec<Message> = vec![
+            Message::new_game_invite(game_id.clone(), Some(Color::White)),
+            Message::new_game_accept(game_id.clone(), Color::Black),
+            Message::new_game_decline(game_id.clone(), Some("busy".to_string())),
+            Message::new_move(
+                game_id.clone(),
+                "e2e4".to_string(),
+                hash_board_state(&board),
+            ),
+            Message::new_move_ack(game_id.clone(), Some("move-1".to_string())),
+            Message::new_sync_request(game_id.clone()),
+            Message::new_sync_response(
+                game_id.clone(),
+                board.to_fen(),
+                vec!["e2e4".to_string(), "e7e5".to_string()],
+                hash_board_state(&board),
+            ),
+        ];
+
+        assert_eq!(
+            variants.len(),
+            7,
+            "expected coverage for all seven chess variants"
+        );
+
+        for msg in variants {
+            assert!(msg.is_chess_message());
+
+            let summary = msg.log_summary();
+            assert!(
+                !summary.is_empty(),
+                "log_summary() should not be empty for {}",
+                msg.message_type()
+            );
+            assert!(
+                summary.contains(msg.message_type()),
+                "log_summary() should mention the message type for {}: {}",
+                msg.message_type(),
+                summary
+            );
+            assert!(
+                summary.contains(expected_prefix),
+                "log_summary() should contain the first eight characters for {}: {}",
+                msg.message_type(),
+                summary
+            );
+
+            let size = msg.estimated_size();
+            assert!(
+                size > 0,
+                "estimated_size() should be positive for {}",
+                msg.message_type()
+            );
+        }
+    }
 }

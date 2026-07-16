@@ -290,7 +290,7 @@ mod attack_simulation_tests {
         println!("Testing coordinated attack with multiple attack vectors");
 
         let game_id = generate_game_id();
-        let malicious_messages = vec![
+        let malicious_messages = [
             // Game invite with injection in suggested color handling
             Message::GameInvite(GameInvite::new(
                 "not-a-uuid-<script>alert(1)</script>".to_string(),

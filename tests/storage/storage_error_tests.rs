@@ -1,100 +1,46 @@
 use mate::storage::{Database, GameStatus, PlayerColor, StorageError};
-use rand;
 use std::fs;
+use std::sync::Mutex;
 use tempfile::TempDir;
 use uuid;
 
-/// Test helper that ensures proper environment cleanup
+/// Serialize tests that intentionally mutate process-global `MATE_DATA_DIR`.
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Per-test database isolation via an explicit path (not process-global env).
 struct TestEnvironment {
     _temp_dir: TempDir,
-    original_data_dir: Option<String>,
     test_data_dir: std::path::PathBuf,
 }
 
 impl TestEnvironment {
     fn new() -> (Database, Self) {
-        // Save original environment variable
-        let original_data_dir = std::env::var("MATE_DATA_DIR").ok();
-
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let test_data_dir = temp_dir.path().join("data");
+        std::fs::create_dir_all(&test_data_dir).expect("Failed to create test data dir");
 
-        // Add a small random delay to spread out database creation times
-        // This helps prevent race conditions in high-parallelism scenarios
-        let delay_ms = rand::random::<u8>() as u64 % 50; // 0-49ms
-        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-
-        // Use multiple sources of uniqueness to prevent race conditions
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_nanos();
-        let random_id: u64 = rand::random();
-        let thread_id = std::thread::current().id();
-        let process_id = std::process::id();
-
-        // Include the test function name or a unique identifier in the path
-        let unique_temp_dir = temp_dir.path().join(format!(
-            "test_errors_{timestamp}_{random_id:x}_{thread_id:?}_{process_id}_{delay_ms}"
-        ));
-        std::fs::create_dir_all(&unique_temp_dir).expect("Failed to create unique test dir");
-
-        // Override the database path for testing
-        std::env::set_var("MATE_DATA_DIR", &unique_temp_dir);
-
-        // Retry database creation with exponential backoff to handle potential race conditions
-        let db = Self::create_database_with_retry("test_peer_errors", 3)
-            .expect("Failed to create test database after retries");
+        let db_path = test_data_dir.join("database.sqlite");
+        let db = Database::new_with_path("test_peer_errors", &db_path)
+            .expect("Failed to create test database");
 
         let env = TestEnvironment {
             _temp_dir: temp_dir,
-            original_data_dir,
-            test_data_dir: unique_temp_dir,
+            test_data_dir,
         };
 
         (db, env)
-    }
-
-    fn create_database_with_retry(
-        peer_id: &str,
-        max_retries: u32,
-    ) -> Result<Database, mate::storage::StorageError> {
-        let mut retries = 0;
-        loop {
-            match Database::new(peer_id) {
-                Ok(db) => return Ok(db),
-                Err(e) => {
-                    if retries >= max_retries {
-                        return Err(e);
-                    }
-                    retries += 1;
-                    // Exponential backoff with jitter
-                    let delay_ms = (2_u64.pow(retries) * 10) + (rand::random::<u8>() as u64 % 20);
-                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-                }
-            }
-        }
     }
 }
 
 impl Drop for TestEnvironment {
     fn drop(&mut self) {
-        // Force close any database connections by dropping the Database instance
-        // This helps ensure WAL files are properly cleaned up
-
-        // Clean up WAL and SHM files that might be left behind
         let db_path = self.test_data_dir.join("database.sqlite");
         let wal_path = db_path.with_extension("sqlite-wal");
         let shm_path = db_path.with_extension("sqlite-shm");
 
-        // Remove WAL files if they exist (ignore errors as they might not exist)
         let _ = fs::remove_file(&wal_path);
         let _ = fs::remove_file(&shm_path);
-
-        // Restore original environment variable
-        match &self.original_data_dir {
-            Some(original) => std::env::set_var("MATE_DATA_DIR", original),
-            None => std::env::remove_var("MATE_DATA_DIR"),
-        }
+        let _ = fs::remove_file(&db_path);
     }
 }
 
@@ -105,13 +51,16 @@ fn create_test_database() -> (Database, TestEnvironment) {
 
 /// Environment cleanup helper for tests that need to modify environment
 struct EnvironmentGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
     original_data_dir: Option<String>,
     test_data_dir: Option<std::path::PathBuf>,
 }
 
 impl EnvironmentGuard {
     fn new() -> Self {
+        let lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         Self {
+            _lock: lock,
             original_data_dir: std::env::var("MATE_DATA_DIR").ok(),
             test_data_dir: None,
         }

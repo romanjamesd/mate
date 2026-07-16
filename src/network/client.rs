@@ -456,11 +456,7 @@ impl Client {
         };
 
         let total_bytes_sent = message_sizes.iter().sum::<usize>();
-        let avg_message_size = if successful_echoes > 0 {
-            total_bytes_sent / successful_echoes
-        } else {
-            0
-        };
+        let avg_message_size = total_bytes_sent.checked_div(successful_echoes).unwrap_or(0);
 
         info!(
             "Echo session completed: {}/{} successful ({:.1}% success rate)",
@@ -553,10 +549,9 @@ impl Client {
     pub async fn send_message_to(&self, addr: &str, message: Message) -> Result<Message> {
         info!("Starting one-shot message send to {}", addr);
         debug!(
-            "Message details - type: {}, nonce: {}, payload_size: {} bytes",
-            message.message_type(),
-            message.get_nonce(),
-            message.get_payload().len()
+            "Message summary: {}, estimated_size: {} bytes",
+            message.log_summary(),
+            message.estimated_size()
         );
 
         // Establish connection
@@ -584,10 +579,9 @@ impl Client {
             .with_context(|| format!("Failed to receive response from {addr}"))?;
 
         info!(
-            "Received response from {} (type: {}, nonce: {})",
+            "Received response from {}: {}",
             response_sender,
-            response_message.message_type(),
-            response_message.get_nonce()
+            response_message.log_summary()
         );
 
         // Clean up connection

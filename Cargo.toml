@@ -10,6 +10,10 @@ uninlined-format-args = "allow"
 name = "mate"
 path = "src/main.rs"
 
+[[test]]
+name = "chess_message_wire"
+path = "tests/integration/chess_message_wire.rs"
+
 [dependencies]
 ed25519-dalek = "2.0"
 rand = "0.8"
