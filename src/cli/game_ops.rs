@@ -135,13 +135,13 @@ impl<'a> GameOps<'a> {
 
         let mut records = Vec::new();
 
-        for game in pending_games.into_iter().chain(active_games.into_iter()) {
+        for game in pending_games.into_iter().chain(active_games) {
             let record = self.create_game_record(game)?;
             records.push(record);
         }
 
         // Sort by most recently updated
-        records.sort_by(|a, b| b.game.updated_at.cmp(&a.game.updated_at));
+        records.sort_by_key(|b| std::cmp::Reverse(b.game.updated_at));
 
         Ok(records)
     }

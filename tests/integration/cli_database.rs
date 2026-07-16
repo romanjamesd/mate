@@ -8,72 +8,32 @@ use mate::chess::Board;
 use mate::cli::game_ops::{GameOps, MoveProcessor};
 use mate::storage::models::{GameResult, GameStatus, PlayerColor};
 use mate::storage::Database;
-use rand;
 use serde_json::json;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-/// Test environment with proper cleanup for parallel test execution
+/// Per-test database isolation via an explicit path (not process-global env).
 struct TestEnvironment {
     _temp_dir: TempDir,
-    original_data_dir: Option<String>,
     test_data_dir: std::path::PathBuf,
 }
 
 impl TestEnvironment {
     fn new() -> (Database, Self) {
-        let original_data_dir = std::env::var("MATE_DATA_DIR").ok();
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let test_data_dir = temp_dir.path().join("data");
+        std::fs::create_dir_all(&test_data_dir).expect("Failed to create test data dir");
 
-        // Create unique test directory to prevent parallel test conflicts
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_nanos();
-        let random_id: u64 = rand::random();
-        let thread_id = std::thread::current().id();
-        let process_id = std::process::id();
-        let unique_temp_dir = temp_dir.path().join(format!(
-            "test_cli_db_{timestamp}_{random_id:x}_{thread_id:?}_{process_id}_{}",
-            rand::random::<u64>()
-        ));
-        std::fs::create_dir_all(&unique_temp_dir).expect("Failed to create unique test dir");
-
-        std::env::set_var("MATE_DATA_DIR", &unique_temp_dir);
-
-        // Add retry mechanism for database creation to handle temporary lock issues
-        let db = Self::create_database_with_retry("test_peer_cli", 3);
+        let db_path = test_data_dir.join("database.sqlite");
+        let db = Database::new_with_path("test_peer_cli", &db_path)
+            .expect("Failed to create test database");
 
         let env = TestEnvironment {
             _temp_dir: temp_dir,
-            original_data_dir,
-            test_data_dir: unique_temp_dir,
+            test_data_dir,
         };
 
         (db, env)
-    }
-
-    fn create_database_with_retry(peer_id: &str, max_retries: u32) -> Database {
-        let mut last_error = None;
-
-        for attempt in 0..max_retries {
-            match Database::new(peer_id) {
-                Ok(db) => return db,
-                Err(e) => {
-                    last_error = Some(e);
-                    if attempt < max_retries - 1 {
-                        // Wait a bit before retrying, with exponential backoff
-                        let wait_ms = 10 * (1 << attempt);
-                        std::thread::sleep(std::time::Duration::from_millis(wait_ms));
-                    }
-                }
-            }
-        }
-
-        panic!(
-            "Failed to create test database after {} attempts: {:?}",
-            max_retries, last_error
-        );
     }
 
     fn create_test_game(&self, db: &Database, opponent: &str, status: GameStatus) -> String {
@@ -92,28 +52,15 @@ impl TestEnvironment {
 
 impl Drop for TestEnvironment {
     fn drop(&mut self) {
-        // Clean up database files more thoroughly
         let db_path = self.test_data_dir.join("database.sqlite");
         let wal_path = db_path.with_extension("sqlite-wal");
         let shm_path = db_path.with_extension("sqlite-shm");
         let journal_path = db_path.with_extension("sqlite-journal");
 
-        // Wait a moment for any ongoing operations to complete
-        std::thread::sleep(std::time::Duration::from_millis(10));
-
-        // Remove all SQLite auxiliary files
         let _ = std::fs::remove_file(&wal_path);
         let _ = std::fs::remove_file(&shm_path);
         let _ = std::fs::remove_file(&journal_path);
-
-        // Remove the main database file
         let _ = std::fs::remove_file(&db_path);
-
-        // Restore original environment
-        match &self.original_data_dir {
-            Some(original) => std::env::set_var("MATE_DATA_DIR", original),
-            None => std::env::remove_var("MATE_DATA_DIR"),
-        }
     }
 }
 

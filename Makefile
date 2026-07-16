@@ -1,4 +1,4 @@
-.PHONY: check clippy fmt test test-ci test-ci-safe ci
+.PHONY: check check-coverage clippy fmt test test-ci test-ci-safe ci
 
 # Run the same checks as CI (with CI environment simulation)
 ci: fmt clippy test-ci
@@ -22,6 +22,10 @@ test-ci-safe:
 # Run tests (normal local development)
 test:
 	cargo test
+
+# Code coverage (requires cargo-tarpaulin: cargo install cargo-tarpaulin)
+check-coverage:
+	cargo tarpaulin --verbose --all-features --workspace --timeout 120
 
 # Quick local check
 check: fmt clippy
