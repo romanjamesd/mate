@@ -5,15 +5,17 @@
 //! `GameAccept` / `GameDecline` transition pending games to Active or
 //! Abandoned and echo so send-and-wait clients never hang.
 //! `Move` persists against an Active game and replies with `MoveAck`.
-//! Sync handlers remain stubs that return `Ok(None)` until implemented.
+//! `SyncRequest` rebuilds board/history from stored moves and replies
+//! with `SyncResponse`. Inbound `SyncResponse` is ignored (no reply).
 
-use crate::chess::Color;
+use crate::chess::{Board, Color, Move as ChessMove};
 use crate::messages::chess::{
-    GameAccept, GameDecline, GameInvite, Move, MoveAck, SyncRequest, SyncResponse, ValidationError,
+    create_sync_response, GameAccept, GameDecline, GameInvite, Move, MoveAck, SyncRequest,
+    SyncResponse, ValidationError,
 };
 use crate::messages::Message;
 use crate::storage::models::{GameStatus, PlayerColor};
-use crate::storage::{Database, StorageError};
+use crate::storage::{Database, Message as StoredMessage, StorageError};
 use thiserror::Error;
 use tracing::{debug, warn};
 
@@ -34,11 +36,11 @@ pub enum HandlerError {
 ///
 /// Returns:
 /// - `Ok(Some(response))` — caller should `send_message` the response
-/// - `Ok(None)` — no reply (stubbed sync, MoveAck as request, unexpected Pong)
+/// - `Ok(None)` — no reply (MoveAck / SyncResponse as request, unexpected Pong)
 /// - `Err` — unexpected handler failure (validation is soft-failed as `Ok(None)`)
 ///
-/// Ping continues to echo. Invite/accept/decline/move persist and reply;
-/// Sync variants are stubbed (no reply yet).
+/// Ping continues to echo. Invite/accept/decline/move persist and reply.
+/// SyncRequest rebuilds from stored moves and replies with SyncResponse.
 pub fn dispatch(
     database: &Database,
     peer_id: &str,
@@ -63,6 +65,7 @@ pub fn dispatch(
             Message::GameAccept(accept) => Some(accept.game_id.as_str()),
             Message::GameDecline(decline) => Some(decline.game_id.as_str()),
             Message::Move(mv) => Some(mv.game_id.as_str()),
+            Message::SyncRequest(req) => Some(req.game_id.as_str()),
             _ => None,
         };
         if let Some(game_id) = game_id {
@@ -91,20 +94,6 @@ pub fn dispatch(
         Message::SyncRequest(req) => handle_sync_request(database, peer_id, req),
         Message::SyncResponse(resp) => handle_sync_response(database, peer_id, resp),
     }
-}
-
-fn stub_not_implemented(
-    peer_id: &str,
-    message_type: &'static str,
-    game_id: &str,
-) -> Result<Option<Message>, HandlerError> {
-    debug!(
-        peer_id = %peer_id,
-        message_type,
-        game_id,
-        "handler not yet implemented (no reply)"
-    );
-    Ok(None)
 }
 
 /// Derive the invitee's local color from the inviter's suggestion.
@@ -639,18 +628,121 @@ pub(crate) fn handle_move_ack(
     Ok(None)
 }
 
+/// Rebuild board and move history from stored `"Move"` rows.
+///
+/// Applies moves in chronological order without verifying stored board-state
+/// hashes (those may be incorrect until clients send post-move hashes).
+fn rebuild_board_from_stored_moves(
+    messages: &[StoredMessage],
+) -> Result<(Board, Vec<ChessMove>), String> {
+    let mut board = Board::new();
+    let mut history = Vec::new();
+
+    for message in messages {
+        if message.message_type != "Move" {
+            continue;
+        }
+
+        let move_msg: Move = serde_json::from_str(&message.content)
+            .map_err(|e| format!("failed to parse Move message: {e}"))?;
+
+        let chess_move =
+            ChessMove::from_str_with_color(&move_msg.chess_move, board.active_color())
+                .map_err(|e| format!("failed to parse move '{}': {e}", move_msg.chess_move))?;
+
+        board
+            .make_move(chess_move)
+            .map_err(|e| format!("failed to apply move '{}': {e}", move_msg.chess_move))?;
+        history.push(chess_move);
+    }
+
+    Ok((board, history))
+}
+
+/// Rebuild FEN/history from stored moves and reply with `SyncResponse`.
+///
+/// Requires a known game with `opponent_peer_id == peer_id` (any status).
+/// Soft-rejects with `GameDecline` so send-and-wait never hangs.
 pub(crate) fn handle_sync_request(
-    _database: &Database,
+    database: &Database,
     peer_id: &str,
     req: SyncRequest,
 ) -> Result<Option<Message>, HandlerError> {
-    stub_not_implemented(peer_id, "SyncRequest", &req.game_id)
+    let game = match database.get_game(&req.game_id) {
+        Ok(game) => game,
+        Err(StorageError::GameNotFound { .. }) => {
+            warn!(
+                peer_id = %peer_id,
+                game_id = %req.game_id,
+                "SyncRequest for unknown game"
+            );
+            return decline_invite(&req.game_id, "game not found");
+        }
+        Err(e) => {
+            warn!(
+                peer_id = %peer_id,
+                game_id = %req.game_id,
+                error = %e,
+                "SyncRequest failed to load game"
+            );
+            return decline_invite(&req.game_id, "failed to load game");
+        }
+    };
+
+    if game.opponent_peer_id != peer_id {
+        warn!(
+            peer_id = %peer_id,
+            game_id = %req.game_id,
+            "SyncRequest from peer that is not the game opponent"
+        );
+        return decline_invite(&req.game_id, "peer is not the game opponent");
+    }
+
+    let messages = match database.get_messages_for_game(&req.game_id) {
+        Ok(messages) => messages,
+        Err(e) => {
+            warn!(
+                peer_id = %peer_id,
+                game_id = %req.game_id,
+                error = %e,
+                "SyncRequest failed to load messages"
+            );
+            return decline_invite(&req.game_id, "failed to load messages");
+        }
+    };
+
+    let (board, history) = match rebuild_board_from_stored_moves(&messages) {
+        Ok(rebuilt) => rebuilt,
+        Err(reason) => {
+            warn!(
+                peer_id = %peer_id,
+                game_id = %req.game_id,
+                error = %reason,
+                "SyncRequest failed to rebuild board from stored moves"
+            );
+            return decline_invite(&req.game_id, &format!("failed to rebuild board: {reason}"));
+        }
+    };
+
+    debug!(
+        peer_id = %peer_id,
+        game_id = %req.game_id,
+        moves = history.len(),
+        "rebuilt board for SyncRequest; sending SyncResponse"
+    );
+    Ok(Some(create_sync_response(&req.game_id, &board, &history)))
 }
 
+/// Inbound `SyncResponse` as a request needs no further reply.
 pub(crate) fn handle_sync_response(
     _database: &Database,
     peer_id: &str,
     resp: SyncResponse,
 ) -> Result<Option<Message>, HandlerError> {
-    stub_not_implemented(peer_id, "SyncResponse", &resp.game_id)
+    debug!(
+        peer_id = %peer_id,
+        game_id = %resp.game_id,
+        "ignoring inbound SyncResponse as request (no reply)"
+    );
+    Ok(None)
 }

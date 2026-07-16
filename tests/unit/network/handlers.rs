@@ -1,6 +1,6 @@
-//! Unit tests for server message dispatch and chess invite/accept/decline/move handling
+//! Unit tests for server message dispatch and chess invite/accept/decline/move/sync handling
 
-use mate::chess::{Board, Color};
+use mate::chess::{Board, Color, Move as ChessMove};
 use mate::messages::chess::{
     generate_game_id, hash_board_state, GameAccept, GameDecline, GameInvite, Move,
 };
@@ -513,19 +513,18 @@ fn dispatch_invalid_game_decline_soft_rejects_with_decline() {
 }
 
 #[test]
-fn dispatch_stubbed_chess_variants_return_no_reply() {
+fn dispatch_move_ack_and_sync_response_return_no_reply() {
     let db = test_db();
     let game_id = generate_game_id();
     let board = Board::new();
     let board_hash = hash_board_state(&board);
 
-    let stubbed = [
+    let no_reply = [
         Message::new_move_ack(game_id.clone(), None),
-        Message::new_sync_request(game_id.clone()),
         Message::new_sync_response(game_id, board.to_fen(), Vec::new(), board_hash),
     ];
 
-    for message in stubbed {
+    for message in no_reply {
         let message_type = message.message_type();
         let result = dispatch(db.as_ref(), "peer-a", message);
         assert!(
@@ -534,8 +533,119 @@ fn dispatch_stubbed_chess_variants_return_no_reply() {
         );
         assert!(
             result.unwrap().is_none(),
-            "{message_type} stub should return no reply"
+            "{message_type} should return no reply"
         );
+    }
+}
+
+#[test]
+fn dispatch_sync_request_empty_history() {
+    let db = test_db();
+    let game_id = seed_active_game(db.as_ref(), "peer-a");
+    let starting = Board::new();
+
+    let result = dispatch(
+        db.as_ref(),
+        "peer-a",
+        Message::new_sync_request(game_id.clone()),
+    )
+    .expect("sync dispatch");
+    let response = result.expect("SyncRequest should produce a reply");
+
+    match response {
+        Message::SyncResponse(resp) => {
+            assert_eq!(resp.game_id, game_id);
+            assert_eq!(resp.board_state, starting.to_fen());
+            assert!(resp.move_history.is_empty());
+            assert_eq!(resp.board_state_hash, hash_board_state(&starting));
+        }
+        other => panic!("expected SyncResponse, got {other:?}"),
+    }
+}
+
+#[test]
+fn dispatch_sync_request_with_moves() {
+    let db = test_db();
+    let game_id = seed_active_game(db.as_ref(), "peer-a");
+    let mv = sample_move(game_id.clone());
+    dispatch(db.as_ref(), "peer-a", mv)
+        .expect("move dispatch")
+        .expect("move reply");
+
+    let mut expected_board = Board::new();
+    let expected_move =
+        ChessMove::from_str_with_color("e2e4", expected_board.active_color()).expect("parse e2e4");
+    expected_board.make_move(expected_move).expect("apply e2e4");
+
+    let result = dispatch(
+        db.as_ref(),
+        "peer-a",
+        Message::new_sync_request(game_id.clone()),
+    )
+    .expect("sync dispatch");
+    let response = result.expect("SyncRequest should produce a reply");
+
+    match response {
+        Message::SyncResponse(resp) => {
+            assert_eq!(resp.game_id, game_id);
+            assert_eq!(resp.move_history, vec!["e2e4".to_string()]);
+            assert_eq!(resp.board_state, expected_board.to_fen());
+            assert_eq!(resp.board_state_hash, hash_board_state(&expected_board));
+        }
+        other => panic!("expected SyncResponse, got {other:?}"),
+    }
+}
+
+#[test]
+fn dispatch_sync_request_unknown_game_declines() {
+    let db = test_db();
+    let game_id = generate_game_id();
+
+    let result = dispatch(db.as_ref(), "peer-a", Message::new_sync_request(game_id.clone()))
+        .expect("dispatch");
+    match result {
+        Some(Message::GameDecline(decline)) => {
+            assert_eq!(decline.game_id, game_id);
+            assert!(decline.reason.is_some());
+        }
+        other => panic!("expected GameDecline, got {other:?}"),
+    }
+}
+
+#[test]
+fn dispatch_sync_request_wrong_peer_declines() {
+    let db = test_db();
+    let game_id = seed_active_game(db.as_ref(), "peer-a");
+
+    let result = dispatch(db.as_ref(), "peer-b", Message::new_sync_request(game_id.clone()))
+        .expect("dispatch");
+    match result {
+        Some(Message::GameDecline(decline)) => {
+            assert_eq!(decline.game_id, game_id);
+            assert!(decline.reason.is_some());
+        }
+        other => panic!("expected GameDecline, got {other:?}"),
+    }
+}
+
+#[test]
+fn dispatch_invalid_sync_request_soft_rejects_with_decline() {
+    let db = test_db();
+    let req = Message::new_sync_request("not-a-uuid".to_string());
+
+    let result = dispatch(db.as_ref(), "peer-a", req).expect("validation soft-fails as Ok");
+    match result {
+        Some(Message::GameDecline(decline)) => {
+            assert_eq!(decline.game_id, "not-a-uuid");
+            assert!(
+                decline
+                    .reason
+                    .as_deref()
+                    .is_some_and(|r| r.contains("validation failed")),
+                "decline should explain validation failure"
+            );
+        }
+        other => panic!("invalid SyncRequest should GameDecline, got {other:?}"),
     }
 }
 
@@ -702,10 +812,9 @@ fn handler_error_display_covers_variants() {
     assert!(wrapped.to_string().contains("validation failed"));
 }
 
-/// Optional cleanup: ensure the old stringly catch-all is gone and stub wording
-/// remains for unimplemented chess handlers.
+/// Ensure the old stringly catch-all is gone and dispatch is typed.
 #[test]
-fn old_catch_all_log_replaced_by_handler_stubs() {
+fn old_catch_all_log_replaced_by_typed_dispatch() {
     let server_src = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/src/network/server.rs"
@@ -728,7 +837,11 @@ fn old_catch_all_log_replaced_by_handler_stubs() {
         "server loop should call handlers::dispatch"
     );
     assert!(
-        handlers_src.contains("handler not yet implemented"),
-        "handlers module should log the stub-not-implemented message"
+        handlers_src.contains("handle_sync_request"),
+        "handlers module should implement SyncRequest"
+    );
+    assert!(
+        !handlers_src.contains("handler not yet implemented"),
+        "handlers module should no longer have stub-not-implemented wording"
     );
 }

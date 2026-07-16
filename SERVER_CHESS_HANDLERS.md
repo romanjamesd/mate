@@ -1,7 +1,8 @@
 # Fix Plan: Server-side chess message handlers
 
-Status: **Step 6 complete** — `GameInvite` / `GameAccept` / `GameDecline` /
-`Move` persist and reply; Sync handlers remain stubs until Step 7.
+Status: **Step 7 complete** — `GameInvite` / `GameAccept` / `GameDecline` /
+`Move` / `SyncRequest` persist or reply as specified; inbound `SyncResponse`
+is a no-op.
 
 ## 1. Problem (confirmed by reading the code)
 
@@ -312,7 +313,7 @@ receiver.
   integration test `server_move_acks_and_persists` exercises live Server +
   DB.
 
-### Step 7 — `SyncRequest` → `SyncResponse` (optional but cheap)
+### Step 7 — `SyncRequest` → `SyncResponse` ✅ (2026-07-16)
 
 **Goal:** protocol completeness for reconnect/repair.
 
@@ -324,6 +325,19 @@ receiver.
 
 **Verify:** unit/integration test that SyncRequest yields SyncResponse with
 matching `game_id`.
+
+**Implemented:**
+
+- `handle_sync_request`: known game + matching peer → rebuild from stored
+  `"Move"` rows (parse + apply, no hash verify) → `SyncResponse` via
+  `create_sync_response`.
+- Soft-reject unknown / wrong-peer / load / rebuild failure with
+  `GameDecline` so send-and-wait never hangs; invalid SyncRequest
+  validation also replies `GameDecline`.
+- Inbound `SyncResponse` as a request is a no-op (no reply).
+- Unit tests cover empty/with-moves success, soft rejects, and validation;
+  integration test `server_sync_request_returns_sync_response` exercises
+  live Server + DB.
 
 ### Step 8 — Error handling, logging, and idempotency
 

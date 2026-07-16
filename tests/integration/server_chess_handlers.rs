@@ -1,4 +1,4 @@
-//! Server chess handler integration: invite / accept / decline / move lifecycle
+//! Server chess handler integration: invite / accept / decline / move / sync lifecycle
 
 use crate::common::test_helpers::test_server_database;
 use mate::chess::{Board, Color};
@@ -357,6 +357,114 @@ async fn server_move_acks_and_persists() {
     assert_eq!(parsed.game_id, game_id);
     assert_eq!(parsed.chess_move, "e2e4");
     assert_eq!(parsed.board_state_hash, board_hash);
+
+    let _ = connection.close().await;
+    server_handle.abort();
+}
+
+/// Live Server + Client: invite → accept → move → SyncRequest → SyncResponse.
+#[tokio::test]
+async fn server_sync_request_returns_sync_response() {
+    let server_identity = Arc::new(Identity::generate().unwrap());
+    let client_identity = Arc::new(Identity::generate().unwrap());
+
+    let database = test_server_database(server_identity.peer_id().as_str());
+
+    let server = Server::bind("127.0.0.1:0", server_identity, database)
+        .await
+        .unwrap();
+    let server_addr = server.local_addr().unwrap().to_string();
+
+    let server_handle = tokio::spawn(async move { server.run().await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let client = Client::new(client_identity);
+    let mut connection = client.connect(&server_addr).await.unwrap();
+
+    let game_id = generate_game_id();
+    connection
+        .send_message(Message::new_game_invite(
+            game_id.clone(),
+            Some(Color::White),
+        ))
+        .await
+        .expect("send GameInvite");
+
+    let invite_receive = timeout(Duration::from_secs(5), connection.receive_message()).await;
+    assert!(
+        invite_receive.is_ok(),
+        "should receive invite reply before timeout"
+    );
+    let (invite_response, _) = invite_receive.unwrap().expect("invite receive ok");
+    assert!(
+        matches!(invite_response, Message::GameInvite(_)),
+        "expected GameInvite echo"
+    );
+
+    connection
+        .send_message(Message::new_game_accept(game_id.clone(), Color::White))
+        .await
+        .expect("send GameAccept");
+
+    let accept_receive = timeout(Duration::from_secs(5), connection.receive_message()).await;
+    assert!(
+        accept_receive.is_ok(),
+        "should receive accept reply before timeout"
+    );
+    let (accept_response, _) = accept_receive.unwrap().expect("accept receive ok");
+    assert!(
+        matches!(accept_response, Message::GameAccept(_)),
+        "expected GameAccept echo"
+    );
+
+    let board_hash = hash_board_state(&Board::new());
+    connection
+        .send_message(Message::new_move(
+            game_id.clone(),
+            "e2e4".to_string(),
+            board_hash,
+        ))
+        .await
+        .expect("send Move");
+
+    let move_receive = timeout(Duration::from_secs(5), connection.receive_message()).await;
+    assert!(
+        move_receive.is_ok(),
+        "should receive MoveAck before timeout"
+    );
+    let (move_response, _) = move_receive.unwrap().expect("move receive ok");
+    assert!(
+        matches!(move_response, Message::MoveAck(_)),
+        "expected MoveAck"
+    );
+
+    connection
+        .send_message(Message::new_sync_request(game_id.clone()))
+        .await
+        .expect("send SyncRequest");
+
+    let sync_receive = timeout(Duration::from_secs(5), connection.receive_message()).await;
+    assert!(
+        sync_receive.is_ok(),
+        "should receive SyncResponse before timeout"
+    );
+    let (sync_response, _) = sync_receive.unwrap().expect("sync receive ok");
+
+    match sync_response {
+        Message::SyncResponse(resp) => {
+            assert_eq!(resp.game_id, game_id);
+            assert_eq!(resp.move_history, vec!["e2e4".to_string()]);
+            assert!(
+                Board::from_fen(&resp.board_state).is_ok(),
+                "SyncResponse board_state should be a valid FEN"
+            );
+            assert_eq!(
+                resp.board_state_hash,
+                hash_board_state(&Board::from_fen(&resp.board_state).expect("parse FEN"))
+            );
+        }
+        other => panic!("expected SyncResponse, got {}", other.message_type()),
+    }
 
     let _ = connection.close().await;
     server_handle.abort();
