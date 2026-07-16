@@ -1,74 +1,81 @@
-# Fix connection-layer panic on chess messages
+# Implement server-side chess message handlers
 
 ## Summary
 
-`Message::get_nonce()` and `Message::get_payload()` are only valid for the
-`Ping`/`Pong` variants — they `panic!()` for every chess message variant
-(`GameInvite`, `GameAccept`, `GameDecline`, `Move`, `MoveAck`, `SyncRequest`,
-`SyncResponse`). Four call sites in the generic connection/client logging
-path called these accessors unconditionally on messages of any type, so
-sending or receiving a chess message over the wire could panic:
+The server's connection loop previously only echoed `Ping` messages and
+logged everything else ("no specific handler") without touching storage.
+This branch adds a typed dispatch layer that persists chess protocol
+messages (`GameInvite`, `GameAccept`, `GameDecline`, `Move`, `SyncRequest`)
+against the peer's SQLite database and replies appropriately, so two `mate
+serve` peers can actually play a game over the wire instead of the invite
+just hanging.
 
-- `Connection::send_message` and `Connection::receive_message`
-  (`src/network/connection.rs`) — logged `get_nonce()`/`get_payload()` on
-  every message, `debug!`-gated.
-- `Client::send_message_to` (`src/network/client.rs`) — same issue on the
-  outgoing message, plus an **unconditional** `info!` panic on the response
-  message (not gated by log level, so it fired regardless of `RUST_LOG`).
+## What changed
 
-In practice this meant `mate invite`/`accept`/move-sending from the CLI
-panicked before a byte reached the socket, and the server panicked in its
-receive loop before its own message-type `match` ever ran, whenever a chess
-message was sent or received.
-
-## Fix
-
-Replaced the panicking accessors at all four call sites with the existing
-variant-safe helpers, `Message::log_summary()` and `Message::estimated_size()`,
-which handle every message variant without panicking.
-
-`log_summary()` itself had a latent bug fixed here too: it built game-ID
-prefixes with byte-index slicing (`&game_id[..8.min(game_id.len())]`), which
-panics if the game ID contains any multi-byte UTF-8 character within the
-first 8 bytes. It now uses a `short_game_id` helper that slices on char
-boundaries via `char_indices()`.
-
-Also includes an unrelated one-line clippy fix in `src/cli/game_ops.rs`
-(`move_count % 2 == 0` → `move_count.is_multiple_of(2)`).
+- **`src/network/handlers.rs` (new)** — `dispatch()` validates each inbound
+  message, then routes to a per-message handler:
+  - `GameInvite` → creates a `Pending` game using the inviter's `game_id`
+    and echoes the invite back as an ack. Duplicate invites from the same
+    peer against a `Pending` game are treated as idempotent; conflicts or
+    non-pending state soft-reject with `GameDecline`.
+  - `GameAccept` → transitions `Pending` → `Active`, finalizes the local
+    player's color, and echoes the accept.
+  - `GameDecline` → transitions `Pending` → `Abandoned` and echoes the
+    decline.
+  - `Move` → persists the move against an `Active` game and replies with
+    `MoveAck` (no legality/board verification yet).
+  - `SyncRequest` → rebuilds the board and move history from stored
+    `Move` messages and replies with `SyncResponse`.
+  - `MoveAck` / inbound `SyncResponse` are ignored (no reply expected).
+  - Any message with a `game_id` that fails validation or an ownership/
+    state check soft-fails as `GameDecline` (rather than dropping the
+    connection) so send-and-wait clients never hang.
+- **`src/network/server.rs`** — `Server::bind` / `bind_with_config` now take
+  an `Arc<Database>`, threaded into each spawned connection task and passed
+  to `handlers::dispatch` in the receive loop.
+- **`src/main.rs`** — `serve` now opens the same peer SQLite database the
+  CLI uses (via `Database::new(identity.peer_id())`) before binding the
+  server.
+- **`src/storage/games.rs`** — adds `Database::create_game_with_id` (used
+  to materialize an incoming invite under the inviter's `game_id`;
+  `create_game` now delegates to it with a generated ID) and
+  `Database::update_game_color` (finalizes color at accept time). Duplicate
+  primary keys surface as `StorageError::ConstraintViolation` instead of a
+  raw SQLite error.
+- **`src/cli/app.rs`** — CLI invite now creates the local game record with
+  an explicit UUID (`generate_game_id`) via `create_game_with_id`, since
+  wire `GameInvite` validation requires UUID-format IDs (legacy storage IDs
+  were peer-timestamp-counter strings).
+- **`src/cli/commands.rs`** — updates the `serve` command's help text to
+  reflect that it's no longer just an echo server.
 
 ## Testing
 
-Added regression coverage that fails against the pre-fix code and passes now:
+- `tests/integration/server_chess_handlers.rs` (new) — end-to-end coverage
+  over real TCP connections: invite → accept → move → sync round trips,
+  idempotent retries, and soft-decline paths (unknown game, wrong peer,
+  wrong state, malformed messages).
+- `tests/unit/network/handlers.rs` (new) — unit-level coverage of
+  `dispatch` and each handler against an in-memory/temp database.
+- `tests/storage/storage_tests.rs` / `storage_error_tests.rs` — coverage
+  for `create_game_with_id` (including duplicate-ID and empty-ID
+  rejection) and `update_game_color` (including not-found).
+- Existing integration suites updated only where the `Server::bind`
+  signature change or shared test helpers required it.
 
-- `tests/integration/chess_message_wire.rs` (new): end-to-end tests over a
-  real loopback TCP `Connection`/`Client`, covering all seven chess message
-  variants through `send_message`/`receive_message`, `Client::send_message_to`,
-  and the client/server handshake rejection paths (a peer responding with a
-  chess message instead of `Ping`/`Pong` must return an `Err`, not panic).
-  Installs a real `DEBUG`-level tracing subscriber so the `debug!`-gated call
-  sites are actually exercised.
-- `tests/unit/messages/chess/types_enhanced.rs`: adds a test that
-  `log_summary()`/`estimated_size()` handle a game ID with a multi-byte UTF-8
-  character straddling the byte-8 boundary, for all seven chess variants.
+## Known gaps / follow-ups
 
-```
-cargo test --test chess_message_wire
-```
-passes (4/4) on this branch; all four panicked pre-fix.
+- `Move` handling does not reconstruct the board or verify move legality
+  before persisting — it trusts the wire payload.
+- `SyncRequest` rebuilds from stored move notation without verifying
+  clients' post-move board-state hashes.
+- Full CLI-driven accept/move end-to-end (as opposed to direct protocol
+  tests) is deferred — see `SERVER_CHESS_HANDLERS.md` for the address-vs-
+  peer-ID issue that blocks it.
+- Color selection at invite time is currently a fixed default
+  (invitee gets White unless the inviter suggests otherwise); letting the
+  invitee choose at accept time, with the inviter as fallback, is future
+  work (noted in `SERVER_CHESS_HANDLERS.md`).
 
-## Planning docs
-
-Includes planning documents produced while investigating and scoping this
-work and the next priorities:
-
-- `PRIORITIES.md` — top 5 priority fixes/features.
-- `CONNECTION_LAYER_PANIC.md` — root-cause analysis and step-by-step fix plan
-  for this bug.
-- `SERVER_CHESS_HANDLERS.md` — plan for a follow-up (server-side chess
-  message handlers), not implemented in this branch.
-
-## Non-goals
-
-This branch fixes the panic and its root cause in `log_summary()`; it does
-not add server-side handling logic for chess messages (tracked separately in
-`SERVER_CHESS_HANDLERS.md`).
+See `SERVER_CHESS_HANDLERS.md` for the full step-by-step design and
+implementation log this branch followed.
