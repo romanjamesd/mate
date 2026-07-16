@@ -197,6 +197,39 @@ fn dispatch_game_invite_conflict_different_peer_declines() {
 }
 
 #[test]
+fn dispatch_game_invite_on_active_same_peer_declines() {
+    let db = test_db();
+    let game_id = seed_active_game(db.as_ref(), "peer-a");
+    let invite = Message::new_game_invite(game_id.clone(), Some(Color::White));
+
+    let result = dispatch(db.as_ref(), "peer-a", invite).expect("dispatch");
+    match result {
+        Some(Message::GameDecline(decline)) => {
+            assert_eq!(decline.game_id, game_id);
+            assert!(
+                decline
+                    .reason
+                    .as_deref()
+                    .is_some_and(|r| r.contains("already exists")),
+                "decline should explain non-pending status, got {:?}",
+                decline.reason
+            );
+        }
+        other => panic!("expected GameDecline, got {other:?}"),
+    }
+
+    let game = db.get_game(&game_id).expect("game");
+    assert_eq!(game.status, GameStatus::Active);
+
+    let messages = db.get_messages_for_game(&game_id).expect("messages");
+    let invite_count = messages
+        .iter()
+        .filter(|m| m.message_type == "GameInvite")
+        .count();
+    assert_eq!(invite_count, 1, "must not store an extra invite row");
+}
+
+#[test]
 fn dispatch_invalid_game_invite_soft_rejects_with_decline() {
     let db = test_db();
     let invite = Message::new_game_invite("not-a-uuid".to_string(), None);
@@ -490,6 +523,36 @@ fn dispatch_game_decline_unknown_game_soft_declines() {
         }
         other => panic!("expected GameDecline, got {other:?}"),
     }
+}
+
+#[test]
+fn dispatch_game_decline_on_active_soft_declines() {
+    let db = test_db();
+    let game_id = seed_active_game(db.as_ref(), "peer-a");
+
+    let result = dispatch(
+        db.as_ref(),
+        "peer-a",
+        Message::new_game_decline(game_id.clone(), Some("too late".to_string())),
+    )
+    .expect("dispatch");
+    match result {
+        Some(Message::GameDecline(decline)) => {
+            assert_eq!(decline.game_id, game_id);
+            assert!(
+                decline
+                    .reason
+                    .as_deref()
+                    .is_some_and(|r| r.contains("not pending")),
+                "decline should explain non-pending status, got {:?}",
+                decline.reason
+            );
+        }
+        other => panic!("expected GameDecline, got {other:?}"),
+    }
+
+    let game = db.get_game(&game_id).expect("game");
+    assert_eq!(game.status, GameStatus::Active);
 }
 
 #[test]

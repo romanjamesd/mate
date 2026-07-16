@@ -37,10 +37,12 @@ pub enum HandlerError {
 /// Returns:
 /// - `Ok(Some(response))` — caller should `send_message` the response
 /// - `Ok(None)` — no reply (MoveAck / SyncResponse as request, unexpected Pong)
-/// - `Err` — unexpected handler failure (validation is soft-failed as `Ok(None)`)
+/// - `Err` — unexpected handler failure
 ///
-/// Ping continues to echo. Invite/accept/decline/move persist and reply.
-/// SyncRequest rebuilds from stored moves and replies with SyncResponse.
+/// Validation soft-fails as `GameDecline` when the message has a `game_id`,
+/// otherwise as `Ok(None)`. Ping continues to echo. Invite/accept/decline/move
+/// persist and reply. SyncRequest rebuilds from stored moves and replies with
+/// SyncResponse.
 pub fn dispatch(
     database: &Database,
     peer_id: &str,
@@ -250,9 +252,11 @@ fn ensure_move_message_stored(
 
 /// Persist a pending game for an inbound invite and echo the invite as ack.
 ///
-/// Does not auto-accept. On duplicate game ID with the same opponent, treats
-/// the request as idempotent success. Conflicts and persistence failures reply
-/// with `GameDecline` so the client's send-and-wait never hangs.
+/// Does not auto-accept. On duplicate game ID with the same opponent and
+/// Pending status, treats the request as idempotent success. Same-peer
+/// retries against Active / Abandoned / Completed games soft-reject.
+/// Conflicts and persistence failures reply with `GameDecline` so the
+/// client's send-and-wait never hangs.
 pub(crate) fn handle_game_invite(
     database: &Database,
     peer_id: &str,
@@ -280,23 +284,37 @@ pub(crate) fn handle_game_invite(
             Ok(Some(Message::GameInvite(invite)))
         }
         Err(StorageError::ConstraintViolation { .. }) => match database.get_game(&invite.game_id) {
-            Ok(existing) if existing.opponent_peer_id == peer_id => {
-                if let Err(e) = ensure_invite_message_stored(database, peer_id, &invite) {
+            Ok(existing) if existing.opponent_peer_id == peer_id => match existing.status {
+                GameStatus::Pending => {
+                    if let Err(e) = ensure_invite_message_stored(database, peer_id, &invite) {
+                        warn!(
+                            peer_id = %peer_id,
+                            game_id = %invite.game_id,
+                            error = %e,
+                            "failed to ensure GameInvite message on idempotent retry"
+                        );
+                        return decline_invite(&invite.game_id, "failed to persist invite");
+                    }
+                    debug!(
+                        peer_id = %peer_id,
+                        game_id = %invite.game_id,
+                        "idempotent GameInvite for existing pending game; echoing"
+                    );
+                    Ok(Some(Message::GameInvite(invite)))
+                }
+                other => {
                     warn!(
                         peer_id = %peer_id,
                         game_id = %invite.game_id,
-                        error = %e,
-                        "failed to ensure GameInvite message on idempotent retry"
+                        status = ?other,
+                        "GameInvite for existing non-pending game"
                     );
-                    return decline_invite(&invite.game_id, "failed to persist invite");
+                    decline_invite(
+                        &invite.game_id,
+                        &format!("game already exists (status: {other:?})"),
+                    )
                 }
-                debug!(
-                    peer_id = %peer_id,
-                    game_id = %invite.game_id,
-                    "idempotent GameInvite for existing pending game; echoing"
-                );
-                Ok(Some(Message::GameInvite(invite)))
-            }
+            },
             Ok(_) => {
                 warn!(
                     peer_id = %peer_id,

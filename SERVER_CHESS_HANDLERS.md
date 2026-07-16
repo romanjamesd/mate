@@ -1,8 +1,7 @@
 # Fix Plan: Server-side chess message handlers
 
-Status: **Step 7 complete** — `GameInvite` / `GameAccept` / `GameDecline` /
-`Move` / `SyncRequest` persist or reply as specified; inbound `SyncResponse`
-is a no-op.
+Status: **Step 8 complete** — soft-reject / idempotent retries / safe logging
+confirmed; Serve help text updated.
 
 ## 1. Problem (confirmed by reading the code)
 
@@ -339,7 +338,7 @@ matching `game_id`.
   integration test `server_sync_request_returns_sync_response` exercises
   live Server + DB.
 
-### Step 8 — Error handling, logging, and idempotency
+### Step 8 — Error handling, logging, and idempotency ✅ (2026-07-16)
 
 1. Duplicate invites/moves: idempotent success + same reply shape (avoid
    client retry storms creating duplicate rows — consider dedupe by
@@ -348,6 +347,18 @@ matching `game_id`.
    `get_nonce()`/`get_payload()` on chess variants).
 3. Update `Commands::Serve` help text if it still says “echo server”
    (`src/cli/commands.rs`).
+
+**Implemented:**
+
+- Invite/accept/decline/move retries stay idempotent at application level
+  (type presence for lifecycle messages; exact JSON for moves) — no
+  payload-hash column or message UNIQUE constraint.
+- Same-peer `GameInvite` retries echo only while Pending; Active /
+  Abandoned / Completed soft-reject with `GameDecline`.
+- Serve dispatch paths log via `log_summary()` / typed `game_id` only.
+- `Commands::Serve` help text describes the peer chess server (not echo).
+- Unit tests cover invite-on-Active and decline-on-Active soft rejects
+  (accept-on-Abandoned already covered).
 
 ### Step 9 — Integration tests and manual E2E checklist
 

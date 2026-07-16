@@ -19,7 +19,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: KeyCommand,
     },
-    /// Start the echo server
+    /// Start the peer server (accepts connections and chess protocol messages)
     Serve {
         #[arg(short, long, default_value = "127.0.0.1:8080")]
         bind: String,

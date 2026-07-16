@@ -377,7 +377,7 @@ impl Server {
                                     }
                                 }
                                 Ok(None) => {
-                                    // Soft reject / stubbed handler — stay connected
+                                    // No reply needed (ignore-as-request) — stay connected
                                 }
                                 Err(e) => {
                                     warn!(
