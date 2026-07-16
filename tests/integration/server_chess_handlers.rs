@@ -469,3 +469,164 @@ async fn server_sync_request_returns_sync_response() {
     let _ = connection.close().await;
     server_handle.abort();
 }
+
+/// Live Server + Clients: wrong peer Move → GameDecline, no Move stored.
+#[tokio::test]
+async fn server_wrong_peer_move_soft_declines() {
+    let server_identity = Arc::new(Identity::generate().unwrap());
+    let client_a_identity = Arc::new(Identity::generate().unwrap());
+    let client_b_identity = Arc::new(Identity::generate().unwrap());
+
+    let database = test_server_database(server_identity.peer_id().as_str());
+    let db_for_assert = Arc::clone(&database);
+
+    let server = Server::bind("127.0.0.1:0", server_identity, database)
+        .await
+        .unwrap();
+    let server_addr = server.local_addr().unwrap().to_string();
+
+    let server_handle = tokio::spawn(async move { server.run().await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let client_a = Client::new(client_a_identity);
+    let mut connection_a = client_a.connect(&server_addr).await.unwrap();
+
+    let game_id = generate_game_id();
+    connection_a
+        .send_message(Message::new_game_invite(
+            game_id.clone(),
+            Some(Color::White),
+        ))
+        .await
+        .expect("send GameInvite");
+
+    let invite_receive = timeout(Duration::from_secs(5), connection_a.receive_message()).await;
+    assert!(
+        invite_receive.is_ok(),
+        "should receive invite reply before timeout"
+    );
+    let (invite_response, _) = invite_receive.unwrap().expect("invite receive ok");
+    assert!(
+        matches!(invite_response, Message::GameInvite(_)),
+        "expected GameInvite echo"
+    );
+
+    connection_a
+        .send_message(Message::new_game_accept(game_id.clone(), Color::White))
+        .await
+        .expect("send GameAccept");
+
+    let accept_receive = timeout(Duration::from_secs(5), connection_a.receive_message()).await;
+    assert!(
+        accept_receive.is_ok(),
+        "should receive accept reply before timeout"
+    );
+    let (accept_response, _) = accept_receive.unwrap().expect("accept receive ok");
+    assert!(
+        matches!(accept_response, Message::GameAccept(_)),
+        "expected GameAccept echo"
+    );
+
+    let client_b = Client::new(client_b_identity);
+    let mut connection_b = client_b.connect(&server_addr).await.unwrap();
+
+    let board_hash = hash_board_state(&Board::new());
+    connection_b
+        .send_message(Message::new_move(
+            game_id.clone(),
+            "e2e4".to_string(),
+            board_hash,
+        ))
+        .await
+        .expect("send Move as wrong peer");
+
+    let decline_receive = timeout(Duration::from_secs(5), connection_b.receive_message()).await;
+    assert!(
+        decline_receive.is_ok(),
+        "should receive GameDecline before timeout"
+    );
+    let (decline_response, _) = decline_receive.unwrap().expect("decline receive ok");
+
+    match decline_response {
+        Message::GameDecline(decline) => {
+            assert_eq!(decline.game_id, game_id);
+            assert!(decline.reason.is_some());
+        }
+        other => panic!("expected GameDecline, got {}", other.message_type()),
+    }
+
+    let messages = db_for_assert
+        .get_messages_for_game(&game_id)
+        .expect("messages for game");
+    assert!(
+        messages.iter().all(|m| m.message_type != "Move"),
+        "wrong peer must not store a Move"
+    );
+
+    assert!(
+        !server_handle.is_finished(),
+        "server should still be running after soft reject"
+    );
+
+    let _ = connection_a.close().await;
+    let _ = connection_b.close().await;
+    server_handle.abort();
+}
+
+/// Live Server + Client: invalid Move game_id → GameDecline, no panic.
+#[tokio::test]
+async fn server_invalid_move_soft_declines() {
+    let server_identity = Arc::new(Identity::generate().unwrap());
+    let client_identity = Arc::new(Identity::generate().unwrap());
+
+    let database = test_server_database(server_identity.peer_id().as_str());
+
+    let server = Server::bind("127.0.0.1:0", server_identity, database)
+        .await
+        .unwrap();
+    let server_addr = server.local_addr().unwrap().to_string();
+
+    let server_handle = tokio::spawn(async move { server.run().await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let client = Client::new(client_identity);
+    let mut connection = client.connect(&server_addr).await.unwrap();
+
+    connection
+        .send_message(Message::new_move(
+            "not-a-uuid".to_string(),
+            "e2e4".to_string(),
+            hash_board_state(&Board::new()),
+        ))
+        .await
+        .expect("send invalid Move");
+
+    let decline_receive = timeout(Duration::from_secs(5), connection.receive_message()).await;
+    assert!(
+        decline_receive.is_ok(),
+        "should receive GameDecline before timeout"
+    );
+    let (decline_response, _) = decline_receive.unwrap().expect("decline receive ok");
+
+    match decline_response {
+        Message::GameDecline(decline) => {
+            assert_eq!(decline.game_id, "not-a-uuid");
+            assert!(
+                decline
+                    .reason
+                    .as_deref()
+                    .is_some_and(|r| r.contains("validation failed")),
+                "decline should explain validation failure"
+            );
+        }
+        other => panic!("expected GameDecline, got {}", other.message_type()),
+    }
+
+    assert!(
+        !server_handle.is_finished(),
+        "server should still be running after soft reject"
+    );
+
+    let _ = connection.close().await;
+    server_handle.abort();
+}

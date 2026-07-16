@@ -1,7 +1,7 @@
 # Fix Plan: Server-side chess message handlers
 
-Status: **Step 8 complete** — soft-reject / idempotent retries / safe logging
-confirmed; Serve help text updated.
+Status: **Step 9 complete** — live soft-reject integration coverage + honest
+manual invite checklist; full CLI accept/move E2E deferred (address vs peer ID).
 
 ## 1. Problem (confirmed by reading the code)
 
@@ -360,27 +360,39 @@ matching `game_id`.
 - Unit tests cover invite-on-Active and decline-on-Active soft rejects
   (accept-on-Abandoned already covered).
 
-### Step 9 — Integration tests and manual E2E checklist
+### Step 9 — Integration tests and manual E2E checklist ✅ (2026-07-16)
 
-Add focused tests (new file e.g. `tests/integration/server_chess_handlers.rs`):
+**Automated coverage** (`tests/integration/server_chess_handlers.rs`):
 
-1. Ping still echoes with DB-enabled server.
-2. GameInvite → reply + pending row with supplied ID.
-3. GameAccept → Active.
-4. Move → MoveAck + stored message.
-5. SyncRequest → SyncResponse (if Step 7 done).
-6. Malformed / wrong-peer messages rejected without panic.
+- `server_game_invite_echoes_and_persists_pending`
+- `server_game_invite_then_accept_activates`
+- `server_game_invite_then_decline_abandons`
+- `server_move_acks_and_persists`
+- `server_sync_request_returns_sync_response`
+- `server_wrong_peer_move_soft_declines` — wrong peer Move → GameDecline, no
+  stored Move
+- `server_invalid_move_soft_declines` — invalid game_id → GameDecline
+  (validation), no panic
 
-Manual E2E (two peers, two data dirs / identities):
+Ping with a DB-backed server is already covered in
+`tests/integration/connection_core.rs` (uses `test_server_database`).
+
+**Manual E2E — pass now (network half)**
+
+Two peers, two data dirs / identities (`MATE_DATA_DIR`):
 
 1. Peer B: `mate serve`
-2. Peer A: `mate invite <B-addr>`
-3. Peer B: `mate games` shows pending invite; `mate accept <game_id>`
-4. Peer A: sees accept (or checks `mate games` Active)
-5. Alternate `mate move` and confirm acks / history growth
+2. Peer A: `mate invite <B-addr>` → success (no send-and-wait timeout)
+3. Peer B: `mate games` shows Pending invite with the supplied game ID
 
-(Steps 3–5 of the manual flow still depend on CLI unify / board work for a
-polished UX, but the **network** half should succeed after this task.)
+**Manual E2E — deferred (CLI dial-back / UX)**
+
+Blocked until accept dials a stored address (not cryptographic peer ID) and
+related CLI unify work:
+
+- Peer B: `mate accept <game_id>`
+- Peer A: observes accept / Active status
+- Alternate `mate move` and confirm acks / history growth
 
 ## 5. Suggested implementation order (summary)
 
