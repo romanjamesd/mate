@@ -456,11 +456,7 @@ impl Client {
         };
 
         let total_bytes_sent = message_sizes.iter().sum::<usize>();
-        let avg_message_size = if successful_echoes > 0 {
-            total_bytes_sent / successful_echoes
-        } else {
-            0
-        };
+        let avg_message_size = total_bytes_sent.checked_div(successful_echoes).unwrap_or(0);
 
         info!(
             "Echo session completed: {}/{} successful ({:.1}% success rate)",
