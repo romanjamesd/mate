@@ -664,8 +664,12 @@ fn dispatch_sync_request_unknown_game_declines() {
     let db = test_db();
     let game_id = generate_game_id();
 
-    let result = dispatch(db.as_ref(), "peer-a", Message::new_sync_request(game_id.clone()))
-        .expect("dispatch");
+    let result = dispatch(
+        db.as_ref(),
+        "peer-a",
+        Message::new_sync_request(game_id.clone()),
+    )
+    .expect("dispatch");
     match result {
         Some(Message::GameDecline(decline)) => {
             assert_eq!(decline.game_id, game_id);
@@ -680,8 +684,12 @@ fn dispatch_sync_request_wrong_peer_declines() {
     let db = test_db();
     let game_id = seed_active_game(db.as_ref(), "peer-a");
 
-    let result = dispatch(db.as_ref(), "peer-b", Message::new_sync_request(game_id.clone()))
-        .expect("dispatch");
+    let result = dispatch(
+        db.as_ref(),
+        "peer-b",
+        Message::new_sync_request(game_id.clone()),
+    )
+    .expect("dispatch");
     match result {
         Some(Message::GameDecline(decline)) => {
             assert_eq!(decline.game_id, game_id);
@@ -756,10 +764,7 @@ fn dispatch_move_idempotent_for_identical_payload() {
     );
 
     let messages = db.get_messages_for_game(&game_id).expect("messages");
-    let move_count = messages
-        .iter()
-        .filter(|m| m.message_type == "Move")
-        .count();
+    let move_count = messages.iter().filter(|m| m.message_type == "Move").count();
     assert_eq!(
         move_count, 1,
         "idempotent retry should not duplicate identical Move"

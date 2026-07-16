@@ -1,6 +1,6 @@
+use crate::common::test_helpers::test_server_database;
 use mate::crypto::Identity;
 use mate::network::Server;
-use crate::common::test_helpers::test_server_database;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -12,7 +12,9 @@ async fn test_server_graceful_shutdown() {
 
     // Bind server to available port (0 = let OS choose)
     let database = test_server_database(identity.peer_id().as_str());
-    let server = Server::bind("127.0.0.1:0", identity, database).await.unwrap();
+    let server = Server::bind("127.0.0.1:0", identity, database)
+        .await
+        .unwrap();
     let addr = server.local_addr().unwrap();
 
     println!("Test server bound to: {}", addr);
@@ -56,7 +58,9 @@ async fn test_server_bind_and_basic_startup() {
 
     // Bind to ephemeral port
     let database = test_server_database(identity.peer_id().as_str());
-    let server = Server::bind("127.0.0.1:0", identity, database).await.unwrap();
+    let server = Server::bind("127.0.0.1:0", identity, database)
+        .await
+        .unwrap();
     let addr = server.local_addr().unwrap();
 
     println!("Test server bound to: {}", addr);
@@ -95,7 +99,9 @@ async fn test_server_multiple_bind_attempts() {
 
     // Bind first server
     let database = test_server_database(identity1.peer_id().as_str());
-    let server1 = Server::bind("127.0.0.1:0", identity1, database).await.unwrap();
+    let server1 = Server::bind("127.0.0.1:0", identity1, database)
+        .await
+        .unwrap();
     let addr = server1.local_addr().unwrap();
 
     println!("First server bound to: {}", addr);

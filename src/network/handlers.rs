@@ -215,11 +215,7 @@ fn ensure_decline_message_stored(
     Ok(())
 }
 
-fn store_move_message(
-    database: &Database,
-    peer_id: &str,
-    mv: &Move,
-) -> Result<(), StorageError> {
+fn store_move_message(database: &Database, peer_id: &str, mv: &Move) -> Result<(), StorageError> {
     let content = serde_json::to_string(mv)
         .map_err(|e| StorageError::serialization_error("Move message content", e))?;
     database.store_message(
@@ -664,9 +660,8 @@ fn rebuild_board_from_stored_moves(
         let move_msg: Move = serde_json::from_str(&message.content)
             .map_err(|e| format!("failed to parse Move message: {e}"))?;
 
-        let chess_move =
-            ChessMove::from_str_with_color(&move_msg.chess_move, board.active_color())
-                .map_err(|e| format!("failed to parse move '{}': {e}", move_msg.chess_move))?;
+        let chess_move = ChessMove::from_str_with_color(&move_msg.chess_move, board.active_color())
+            .map_err(|e| format!("failed to parse move '{}': {e}", move_msg.chess_move))?;
 
         board
             .make_move(chess_move)
