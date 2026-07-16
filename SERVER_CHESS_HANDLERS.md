@@ -1,9 +1,7 @@
 # Fix Plan: Server-side chess message handlers
 
-Status: **planning only** — no code has been changed. This document is the
-result of investigating `PRIORITIES.md` item 2 ("Implement server-side chess
-message handlers") and lays out the concrete steps to implement them, plus
-the verification to run at each step.
+Status: **Step 9 complete** — live soft-reject integration coverage + honest
+manual invite checklist; full CLI accept/move E2E deferred (address vs peer ID).
 
 ## 1. Problem (confirmed by reading the code)
 
@@ -61,11 +59,10 @@ for this task.
 
 ### Storage gaps that block correct invite handling
 
-1. `Database::create_game` always generates a new ID
-   (`src/storage/games.rs:8-14`). Incoming invites carry the inviter's
-   `game_id`; the invitee must create a local row with **that** ID.
-2. There is no API to update `my_color` after accept (color may be chosen
-   at accept time).
+1. ~~`Database::create_game` always generates a new ID~~ **Fixed (Step 2):**
+   `create_game_with_id` accepts the inviter's `game_id`.
+2. ~~No API to update `my_color` after accept~~ **Fixed (Step 2):**
+   `update_game_color`.
 3. CLI invite today stores the **TCP address** in `opponent_peer_id`
    (`app.rs:476`). Handshake gives a cryptographic peer ID. Handlers must
    store peer ID (and keep address in metadata if needed for dial-back).
@@ -110,7 +107,7 @@ as last resort; for soft reject of invite, send `GameDecline`.
 
 ## 4. Step-by-step implementation
 
-### Step 0 — Confirm prerequisite and baseline
+### Step 0 — Confirm prerequisite and baseline ✅ (2026-07-15)
 
 1. Ensure item 1 (connection-layer panic) is on the branch you build on.
 2. Run existing tests: `cargo test`.
@@ -118,7 +115,17 @@ as last resort; for soft reject of invite, send `GameDecline`.
    small test or second process send `GameInvite`; confirm debug log
    `"no specific handler"` and no panic.
 
-### Step 1 — Open the database on the serve path
+**Verified on `server-chess-handlers`:**
+
+- Panic-fix commit `1a8dc06` is an ancestor; `Connection` send/receive
+  logging uses `log_summary()`.
+- `cargo test`: all suites green (718 lib/integration + 33 doctests, etc.).
+- Manual: `mate serve` + `mate invite 127.0.0.1:18080` with
+  `RUST_LOG=mate=debug` → server logged
+  `Received GameInvite message from … (no specific handler)`; no panic.
+  Client correctly hung waiting for a reply (expected until handlers exist).
+
+### Step 1 — Open the database on the serve path ✅ (2026-07-15)
 
 **Goal:** every `mate serve` process has the same SQLite identity DB the CLI
 uses for that peer.
@@ -134,7 +141,7 @@ uses for that peer.
 **Verify:** serve starts; DB file exists/updates; existing Ping echo still
 works.
 
-### Step 2 — Storage: create game with caller-supplied ID
+### Step 2 — Storage: create game with caller-supplied ID ✅ (2026-07-15)
 
 **Goal:** invitee can materialize the inviter's game ID locally.
 
@@ -142,13 +149,23 @@ works.
    metadata)` (or optional `id: Option<String>` on `create_game`).
 2. Reject duplicate IDs with a clear `StorageError`.
 3. Optionally add `update_game_color` (or update metadata) for accept-time
-   color finalization.
+   color finalization. (default behavior should eventually be to allow the challenged player to choose color on acceptance with an option to defer and allow the challenger to choose the color)
 4. Unit tests in storage tests: create with fixed ID, get by ID, duplicate
    fails.
 
 **Verify:** `cargo test` for storage module green.
 
-### Step 3 — Handler scaffolding in the server loop
+**Implemented:**
+
+- `Database::create_game_with_id` in `src/storage/games.rs`;
+  `create_game` now delegates to it with a generated ID.
+- Duplicate primary keys map to `StorageError::ConstraintViolation`
+  (`games.id`); empty IDs map to `InvalidData`.
+- `Database::update_game_color` for accept-time color finalization.
+- Storage tests cover create-with-ID, duplicate rejection, empty ID, and
+  color update (+ not-found in error tests).
+
+### Step 3 — Handler scaffolding in the server loop ✅ (2026-07-15)
 
 **Goal:** replace stringly `"Ping"` / catch-all with a typed match and a
 single place for “validate → handle → reply.”
@@ -167,7 +184,22 @@ single place for “validate → handle → reply.”
 **Verify:** unit/integration test that Ping still echoes; unknown/malformed
 chess messages do not panic.
 
-### Step 4 — `GameInvite` handler (unblocks network invite → local pending)
+**Implemented:**
+
+- New `src/network/handlers.rs` with `dispatch(db, peer_id, message) ->
+  Result<Option<Message>, HandlerError>`.
+- Connection loop calls `dispatch`; sends on `Some`, stays up on `None` /
+  soft errors.
+- `message.validate()` runs before any handler side effects; failures log
+  and return `Ok(None)` (no panic, no forced disconnect).
+- Ping echoes unchanged; chess variants are stubs returning `Ok(None)` so
+  `mate invite` still times out until Step 4 (avoids false success without
+  a pending row).
+- Unit tests in `tests/unit/network/handlers.rs` cover Ping echo, invalid
+  invite soft-reject, all chess stubs, and cleanup asserting the old
+  `"no specific handler"` catch-all is gone.
+
+### Step 4 — `GameInvite` handler (unblocks network invite → local pending) ✅ (2026-07-15)
 
 **Goal:** receiving peer gets a pending game row and the sender gets a reply.
 
@@ -193,7 +225,23 @@ chess messages do not panic.
 - Manual: `mate invite 127.0.0.1:PORT` against `mate serve` should print
   success instead of retry/timeout (once item 1 is fixed).
 
-### Step 5 — `GameAccept` / `GameDecline` handlers
+**Implemented:**
+
+- `handle_game_invite` in `src/network/handlers.rs`: create Pending via
+  `create_game_with_id`, store `"GameInvite"` (PascalCase JSON), echo the
+  invite (not auto-accept).
+- Color: `suggested_color: Some(c)` → invitee `my_color = c`; `None` →
+  provisional White (accept finalizes later).
+- Idempotent for same peer + game ID; different peer → `GameDecline`.
+  Persistence failures also reply `GameDecline` so send-and-wait never hangs.
+- Unit tests cover echo/persist/color/idempotency/conflict; integration test
+  `server_game_invite_echoes_and_persists_pending` exercises live Server + DB.
+- Invite-path CLI uses UUID `generate_game_id` + `create_game_with_id` so wire
+  validation accepts the invite (storage's legacy id format is not UUID).
+- Invalid GameInvite validation replies with `GameDecline` (not silence) so
+  send-and-wait never hangs.
+
+### Step 5 — `GameAccept` / `GameDecline` handlers ✅ (2026-07-15)
 
 **Goal:** complete the invite lifecycle for the peer that receives accept or
 decline over the wire.
@@ -214,7 +262,22 @@ the **receiving** side of that Accept message correct. Listing pending
 network invites on the invitee depends on Step 4 having created the local
 row.
 
-### Step 6 — `Move` → `MoveAck` handler
+**Implemented:**
+
+- `handle_game_accept`: Pending + matching peer → Active, `my_color` =
+  opposite of `accepted_color`, store `"GameAccept"`, echo accept.
+- `handle_game_decline`: Pending + matching peer → Abandoned, store
+  `"GameDecline"`, echo decline.
+- Soft-reject unknown / wrong-peer / non-pending with `GameDecline` so
+  send-and-wait never hangs; invalid Accept/Decline validation also
+  replies `GameDecline`.
+- Idempotent same-peer retries for already-Active accept and
+  already-Abandoned decline.
+- Unit tests cover success, color, idempotency, and soft rejects;
+  integration tests `server_game_invite_then_accept_activates` and
+  `server_game_invite_then_decline_abandons` exercise live Server + DB.
+
+### Step 6 — `Move` → `MoveAck` handler ✅ (2026-07-15)
 
 **Goal:** moves sent by the client get acknowledged and persisted on the
 receiver.
@@ -235,7 +298,21 @@ receiver.
   through `Server` + `NetworkManager::send_chess_move`.
 - Assert DB message row exists and client receives `MoveAck`.
 
-### Step 7 — `SyncRequest` → `SyncResponse` (optional but cheap)
+**Implemented:**
+
+- `handle_move`: Active + matching peer → store `"Move"`, reply
+  `MoveAck` (`move_id: None`); no board reconstruction.
+- Soft-reject unknown / wrong-peer / non-active / persist failure with
+  `GameDecline` so send-and-wait never hangs; invalid Move validation also
+  replies `GameDecline`.
+- Idempotent identical-payload retries (same JSON content) skip duplicate
+  rows.
+- Inbound `MoveAck` as a request is a no-op (no reply).
+- Unit tests cover success, soft rejects, validation, and idempotency;
+  integration test `server_move_acks_and_persists` exercises live Server +
+  DB.
+
+### Step 7 — `SyncRequest` → `SyncResponse` ✅ (2026-07-16)
 
 **Goal:** protocol completeness for reconnect/repair.
 
@@ -248,7 +325,20 @@ receiver.
 **Verify:** unit/integration test that SyncRequest yields SyncResponse with
 matching `game_id`.
 
-### Step 8 — Error handling, logging, and idempotency
+**Implemented:**
+
+- `handle_sync_request`: known game + matching peer → rebuild from stored
+  `"Move"` rows (parse + apply, no hash verify) → `SyncResponse` via
+  `create_sync_response`.
+- Soft-reject unknown / wrong-peer / load / rebuild failure with
+  `GameDecline` so send-and-wait never hangs; invalid SyncRequest
+  validation also replies `GameDecline`.
+- Inbound `SyncResponse` as a request is a no-op (no reply).
+- Unit tests cover empty/with-moves success, soft rejects, and validation;
+  integration test `server_sync_request_returns_sync_response` exercises
+  live Server + DB.
+
+### Step 8 — Error handling, logging, and idempotency ✅ (2026-07-16)
 
 1. Duplicate invites/moves: idempotent success + same reply shape (avoid
    client retry storms creating duplicate rows — consider dedupe by
@@ -258,27 +348,51 @@ matching `game_id`.
 3. Update `Commands::Serve` help text if it still says “echo server”
    (`src/cli/commands.rs`).
 
-### Step 9 — Integration tests and manual E2E checklist
+**Implemented:**
 
-Add focused tests (new file e.g. `tests/integration/server_chess_handlers.rs`):
+- Invite/accept/decline/move retries stay idempotent at application level
+  (type presence for lifecycle messages; exact JSON for moves) — no
+  payload-hash column or message UNIQUE constraint.
+- Same-peer `GameInvite` retries echo only while Pending; Active /
+  Abandoned / Completed soft-reject with `GameDecline`.
+- Serve dispatch paths log via `log_summary()` / typed `game_id` only.
+- `Commands::Serve` help text describes the peer chess server (not echo).
+- Unit tests cover invite-on-Active and decline-on-Active soft rejects
+  (accept-on-Abandoned already covered).
 
-1. Ping still echoes with DB-enabled server.
-2. GameInvite → reply + pending row with supplied ID.
-3. GameAccept → Active.
-4. Move → MoveAck + stored message.
-5. SyncRequest → SyncResponse (if Step 7 done).
-6. Malformed / wrong-peer messages rejected without panic.
+### Step 9 — Integration tests and manual E2E checklist ✅ (2026-07-16)
 
-Manual E2E (two peers, two data dirs / identities):
+**Automated coverage** (`tests/integration/server_chess_handlers.rs`):
+
+- `server_game_invite_echoes_and_persists_pending`
+- `server_game_invite_then_accept_activates`
+- `server_game_invite_then_decline_abandons`
+- `server_move_acks_and_persists`
+- `server_sync_request_returns_sync_response`
+- `server_wrong_peer_move_soft_declines` — wrong peer Move → GameDecline, no
+  stored Move
+- `server_invalid_move_soft_declines` — invalid game_id → GameDecline
+  (validation), no panic
+
+Ping with a DB-backed server is already covered in
+`tests/integration/connection_core.rs` (uses `test_server_database`).
+
+**Manual E2E — pass now (network half)**
+
+Two peers, two data dirs / identities (`MATE_DATA_DIR`):
 
 1. Peer B: `mate serve`
-2. Peer A: `mate invite <B-addr>`
-3. Peer B: `mate games` shows pending invite; `mate accept <game_id>`
-4. Peer A: sees accept (or checks `mate games` Active)
-5. Alternate `mate move` and confirm acks / history growth
+2. Peer A: `mate invite <B-addr>` → success (no send-and-wait timeout)
+3. Peer B: `mate games` shows Pending invite with the supplied game ID
 
-(Steps 3–5 of the manual flow still depend on CLI unify / board work for a
-polished UX, but the **network** half should succeed after this task.)
+**Manual E2E — deferred (CLI dial-back / UX)**
+
+Blocked until accept dials a stored address (not cryptographic peer ID) and
+related CLI unify work:
+
+- Peer B: `mate accept <game_id>`
+- Peer A: observes accept / Active status
+- Alternate `mate move` and confirm acks / history growth
 
 ## 5. Suggested implementation order (summary)
 

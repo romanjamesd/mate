@@ -1,4 +1,6 @@
+use mate::storage::Database;
 use regex::Regex;
+use std::sync::Arc;
 
 /// Helper functions for robust test verification that don't depend on specific log strings
 /// Verify that a message exchange occurred by checking for the expected outcomes
@@ -155,4 +157,18 @@ impl MessageExchangeVerifier {
 
         Ok(())
     }
+}
+
+/// Create a temporary SQLite database for server integration tests.
+///
+/// The underlying temp directory is forgotten so files remain for the process
+/// lifetime while the server holds an open connection.
+pub fn test_server_database(peer_id: &str) -> Arc<Database> {
+    let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir for test database");
+    let db_path = temp_dir.path().join("database.sqlite");
+    let database =
+        Database::new_with_path(peer_id, &db_path).expect("Failed to create test database");
+    // Keep DB files alive while the server process/task uses the open connection.
+    std::mem::forget(temp_dir);
+    Arc::new(database)
 }

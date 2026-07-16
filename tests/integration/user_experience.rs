@@ -59,7 +59,8 @@ fn filter_user_facing_content(output: &str) -> String {
 /// Helper function to start a test server
 async fn start_test_server(bind_addr: &str) -> Result<Server> {
     let identity = Arc::new(Identity::generate()?);
-    let server = Server::bind(bind_addr, identity).await?;
+    let database = crate::common::test_helpers::test_server_database(identity.peer_id().as_str());
+    let server = Server::bind(bind_addr, identity, database).await?;
     Ok(server)
 }
 

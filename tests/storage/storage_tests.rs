@@ -1,4 +1,4 @@
-use mate::storage::{Database, GameStatus, PlayerColor};
+use mate::storage::{Database, GameStatus, PlayerColor, StorageError};
 use tempfile::TempDir;
 
 /// Per-test database isolation via an explicit path (not process-global env).
@@ -195,6 +195,127 @@ fn test_game_creation_with_metadata() {
     let retrieved_metadata = game.metadata.as_ref().unwrap();
     assert_eq!(retrieved_metadata["initial_fen"], metadata["initial_fen"]);
     assert_eq!(retrieved_metadata["rated"], metadata["rated"]);
+}
+
+#[test]
+fn test_create_game_with_caller_supplied_id() {
+    let (db, _env) = create_test_database();
+
+    let fixed_id = "inviter-supplied-game-id-001".to_string();
+    let game = db
+        .create_game_with_id(
+            fixed_id.clone(),
+            "opponent_peer_invitee".to_string(),
+            PlayerColor::Black,
+            None,
+        )
+        .expect("Failed to create game with caller-supplied ID");
+
+    assert_eq!(game.id, fixed_id);
+    assert_eq!(game.opponent_peer_id, "opponent_peer_invitee");
+    assert_eq!(game.my_color, PlayerColor::Black);
+    assert_eq!(game.status, GameStatus::Pending);
+
+    let retrieved = db
+        .get_game(&fixed_id)
+        .expect("Failed to retrieve game by supplied ID");
+    assert_eq!(retrieved.id, fixed_id);
+    assert_eq!(retrieved.opponent_peer_id, game.opponent_peer_id);
+    assert_eq!(retrieved.my_color, game.my_color);
+}
+
+#[test]
+fn test_create_game_with_id_rejects_duplicate() {
+    let (db, _env) = create_test_database();
+
+    let fixed_id = "duplicate-game-id-001".to_string();
+    db.create_game_with_id(
+        fixed_id.clone(),
+        "opponent_a".to_string(),
+        PlayerColor::White,
+        None,
+    )
+    .expect("First create with ID should succeed");
+
+    let duplicate = db.create_game_with_id(
+        fixed_id.clone(),
+        "opponent_b".to_string(),
+        PlayerColor::Black,
+        None,
+    );
+
+    assert!(duplicate.is_err(), "Duplicate game ID should fail");
+    match duplicate.unwrap_err() {
+        StorageError::ConstraintViolation {
+            table,
+            column,
+            constraint,
+        } => {
+            assert_eq!(table, "games");
+            assert_eq!(column, "id");
+            assert!(
+                constraint.contains("UNIQUE")
+                    || constraint.contains("duplicate")
+                    || constraint.contains(&fixed_id),
+                "Constraint message should mention duplicate/UNIQUE, got: {constraint}"
+            );
+        }
+        other => panic!("Expected ConstraintViolation, got: {other:?}"),
+    }
+
+    // Original row unchanged
+    let existing = db.get_game(&fixed_id).expect("Original game should remain");
+    assert_eq!(existing.opponent_peer_id, "opponent_a");
+    assert_eq!(existing.my_color, PlayerColor::White);
+}
+
+#[test]
+fn test_create_game_with_id_rejects_empty_id() {
+    let (db, _env) = create_test_database();
+
+    let result = db.create_game_with_id(
+        String::new(),
+        "opponent".to_string(),
+        PlayerColor::White,
+        None,
+    );
+
+    assert!(result.is_err(), "Empty game ID should fail");
+    match result.unwrap_err() {
+        StorageError::InvalidData { field, .. } => {
+            assert_eq!(field, "game.id");
+        }
+        other => panic!("Expected InvalidData, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_update_game_color() {
+    let (db, _env) = create_test_database();
+
+    let game = db
+        .create_game_with_id(
+            "color-update-game".to_string(),
+            "opponent_color".to_string(),
+            PlayerColor::White,
+            None,
+        )
+        .expect("Failed to create game");
+
+    let initial_updated_at = game.updated_at;
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    db.update_game_color(&game.id, PlayerColor::Black)
+        .expect("Failed to update game color");
+
+    let updated = db
+        .get_game(&game.id)
+        .expect("Failed to retrieve game after color update");
+    assert_eq!(updated.my_color, PlayerColor::Black);
+    assert!(
+        updated.updated_at > initial_updated_at,
+        "Updated timestamp should change after color update"
+    );
 }
 
 #[test]

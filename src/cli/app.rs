@@ -2,7 +2,7 @@ use crate::chess::{Board, Color};
 use crate::cli::network_manager::NetworkManager;
 use crate::crypto::Identity;
 use crate::messages::chess::Move as ChessMove;
-use crate::messages::chess::{hash_board_state, GameAccept, GameInvite};
+use crate::messages::chess::{generate_game_id, hash_board_state, GameAccept, GameInvite};
 use crate::messages::types::Message;
 
 use crate::storage::models::{GameStatus, PlayerColor};
@@ -469,10 +469,12 @@ impl App {
             }
         };
 
-        // Create the game record in database
+        // Create the game record with a UUID id — wire GameInvite validation
+        // requires UUID format (legacy storage ids are peer-timestamp-counter).
         let game = self
             .database
-            .create_game(
+            .create_game_with_id(
+                generate_game_id(),
                 address.clone(),
                 my_color.clone(),
                 None, // No metadata for now

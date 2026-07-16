@@ -1,4 +1,5 @@
 use crate::crypto::Identity;
+use crate::storage::Database;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -96,22 +97,31 @@ use tokio::signal;
 /// use mate::network::Server;
 /// use mate::crypto::Identity;
 /// use mate::messages::wire::WireConfig;
+/// use mate::Database;
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     // Create test identity
+///     // Create test identity and peer database
 ///     let identity = Arc::new(Identity::generate()?);
-///     
+///     let temp_dir = tempfile::tempdir()?;
+///     let db_path = temp_dir.path().join("database.sqlite");
+///     let database = Arc::new(Database::new_with_path(identity.peer_id().as_str(), &db_path)?);
+///
 ///     // Basic server setup
-///     let server = Server::bind("0.0.0.0:8080", identity.clone()).await?;
-///     
+///     let server = Server::bind("0.0.0.0:8080", identity.clone(), database.clone()).await?;
+///
 ///     // Start accepting connections (runs forever)
 ///     // server.run().await?;  // Commented out as this would run indefinitely
-///     
+///
 ///     // With custom configuration
 ///     let custom_config = WireConfig::with_max_message_size(1024 * 1024); // 1MB messages
-///     let server = Server::bind_with_config("0.0.0.0:8081", identity, custom_config).await?;
-///     
+///     let server = Server::bind_with_config(
+///         "0.0.0.0:8081",
+///         identity,
+///         database,
+///         custom_config,
+///     ).await?;
+///
 ///     Ok(())
 /// }
 /// ```
@@ -119,15 +129,21 @@ use tokio::signal;
 /// # Thread Safety
 ///
 /// The server is designed to be run in a single async task. Connection handling is automatically
-/// distributed across the tokio runtime's thread pool.
+/// distributed across the tokio runtime's thread pool. The shared `Arc<Database>` is safe to
+/// clone into connection tasks; `Database::with_connection` serializes SQLite access.
 pub struct Server {
     identity: Arc<Identity>,
+    database: Arc<Database>,
     listener: TcpListener,
     wire_config: WireConfig,
 }
 
 impl Server {
-    pub async fn bind(addr: &str, identity: Arc<Identity>) -> Result<Self> {
+    pub async fn bind(
+        addr: &str,
+        identity: Arc<Identity>,
+        database: Arc<Database>,
+    ) -> Result<Self> {
         // Bind TcpListener to the provided address
         let listener = TcpListener::bind(addr)
             .await
@@ -148,6 +164,7 @@ impl Server {
 
         Ok(Self {
             identity,
+            database,
             listener,
             wire_config,
         })
@@ -157,6 +174,7 @@ impl Server {
     pub async fn bind_with_config(
         addr: &str,
         identity: Arc<Identity>,
+        database: Arc<Database>,
         wire_config: WireConfig,
     ) -> Result<Self> {
         // Bind TcpListener to the provided address
@@ -176,6 +194,7 @@ impl Server {
 
         Ok(Self {
             identity,
+            database,
             listener,
             wire_config,
         })
@@ -237,13 +256,19 @@ impl Server {
 
                             // Clone necessary data for the spawned task
                             let identity = Arc::clone(&self.identity);
+                            let database = Arc::clone(&self.database);
                             let wire_config = self.wire_config.clone();
                             let shutdown_rx = shutdown_tx.subscribe(); // Create subscriber for connection
 
                             // Spawn async task for each connection with shutdown support
                             let handle = task::spawn(async move {
                                 if let Err(e) = Self::handle_connection_with_shutdown(
-                                    stream, identity, wire_config, connection_id, shutdown_rx
+                                    stream,
+                                    identity,
+                                    database,
+                                    wire_config,
+                                    connection_id,
+                                    shutdown_rx,
                                 ).await {
                                     error!("Connection {} failed: {}", connection_id, e);
                                 } else {
@@ -282,10 +307,11 @@ impl Server {
     }
 
     /// Handle individual connection lifecycle with shutdown support
-    #[instrument(skip(stream, identity, wire_config, shutdown_rx), fields(connection_id = connection_id))]
+    #[instrument(skip(stream, identity, database, wire_config, shutdown_rx), fields(connection_id = connection_id))]
     async fn handle_connection_with_shutdown(
         stream: tokio::net::TcpStream,
         identity: Arc<Identity>,
+        database: Arc<Database>,
         wire_config: WireConfig,
         connection_id: usize,
         mut shutdown_rx: broadcast::Receiver<()>,
@@ -296,7 +322,7 @@ impl Server {
         let mut connection = Connection::new_with_config(stream, identity, wire_config).await;
 
         // Perform handshake
-        let _peer_id = match connection.handle_handshake_request().await {
+        let peer_id = match connection.handle_handshake_request().await {
             Ok(peer_id) => {
                 info!(
                     "Handshake successful for connection {} with peer: {}",
@@ -323,21 +349,41 @@ impl Server {
                 result = connection.receive_message() => {
                     match result {
                         Ok((message, sender)) => {
-                            info!("Received {} message from {} on connection {}",
-                                  message.message_type(), sender, connection_id);
+                            info!(
+                                "Received {} from {} on connection {}",
+                                message.log_summary(),
+                                sender,
+                                connection_id
+                            );
 
-                            // Handle different message types
-                            match message.message_type() {
-                                "Ping" => {
-                                    debug!("Echoing ping message back to {}", sender);
-                                    if let Err(e) = connection.send_message(message).await {
-                                        error!("Failed to echo message on connection {}: {}", connection_id, e);
+                            match crate::network::handlers::dispatch(
+                                database.as_ref(),
+                                &peer_id,
+                                message,
+                            ) {
+                                Ok(Some(response)) => {
+                                    debug!(
+                                        "Sending {} reply to {} on connection {}",
+                                        response.log_summary(),
+                                        sender,
+                                        connection_id
+                                    );
+                                    if let Err(e) = connection.send_message(response).await {
+                                        error!(
+                                            "Failed to send reply on connection {}: {}",
+                                            connection_id, e
+                                        );
                                         break;
                                     }
                                 }
-                                _ => {
-                                    debug!("Received {} message from {} (no specific handler)",
-                                           message.message_type(), sender);
+                                Ok(None) => {
+                                    // No reply needed (ignore-as-request) — stay connected
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Handler error on connection {} from {}: {}",
+                                        connection_id, sender, e
+                                    );
                                 }
                             }
                         }
