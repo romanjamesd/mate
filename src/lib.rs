@@ -1,6 +1,7 @@
 pub mod chess;
 pub mod cli;
 pub mod crypto;
+pub mod game;
 pub mod messages;
 pub mod network;
 pub mod storage;

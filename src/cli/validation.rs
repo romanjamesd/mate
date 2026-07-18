@@ -1,5 +1,5 @@
 use crate::chess::{Color, Move};
-use crate::cli::game_ops::{GameOps, GameOpsError};
+use crate::game::{GameOps, GameOpsError};
 use crate::messages::chess::{validate_chess_move_format, validate_game_id};
 use crate::storage::{Database, StorageError};
 use std::io::{self, Write};

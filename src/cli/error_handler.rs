@@ -1,5 +1,5 @@
 use crate::chess::ChessError;
-use crate::cli::GameOpsError;
+use crate::game::GameOpsError;
 use crate::messages::chess::ChessProtocolError;
 use crate::messages::wire::WireProtocolError;
 use crate::network::ConnectionError;
