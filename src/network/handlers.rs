@@ -8,14 +8,15 @@
 //! `SyncRequest` rebuilds board/history from stored moves and replies
 //! with `SyncResponse`. Inbound `SyncResponse` is ignored (no reply).
 
-use crate::chess::{Board, Color, Move as ChessMove};
+use crate::chess::Color;
+use crate::game::rebuild_board_from_stored_messages;
 use crate::messages::chess::{
     create_sync_response, GameAccept, GameDecline, GameInvite, Move, MoveAck, SyncRequest,
     SyncResponse, ValidationError,
 };
 use crate::messages::Message;
 use crate::storage::models::{GameStatus, PlayerColor};
-use crate::storage::{Database, Message as StoredMessage, StorageError};
+use crate::storage::{Database, StorageError};
 use thiserror::Error;
 use tracing::{debug, warn};
 
@@ -642,36 +643,6 @@ pub(crate) fn handle_move_ack(
     Ok(None)
 }
 
-/// Rebuild board and move history from stored `"Move"` rows.
-///
-/// Applies moves in chronological order without verifying stored board-state
-/// hashes (those may be incorrect until clients send post-move hashes).
-fn rebuild_board_from_stored_moves(
-    messages: &[StoredMessage],
-) -> Result<(Board, Vec<ChessMove>), String> {
-    let mut board = Board::new();
-    let mut history = Vec::new();
-
-    for message in messages {
-        if message.message_type != "Move" {
-            continue;
-        }
-
-        let move_msg: Move = serde_json::from_str(&message.content)
-            .map_err(|e| format!("failed to parse Move message: {e}"))?;
-
-        let chess_move = ChessMove::from_str_with_color(&move_msg.chess_move, board.active_color())
-            .map_err(|e| format!("failed to parse move '{}': {e}", move_msg.chess_move))?;
-
-        board
-            .make_move(chess_move)
-            .map_err(|e| format!("failed to apply move '{}': {e}", move_msg.chess_move))?;
-        history.push(chess_move);
-    }
-
-    Ok((board, history))
-}
-
 /// Rebuild FEN/history from stored moves and reply with `SyncResponse`.
 ///
 /// Requires a known game with `opponent_peer_id == peer_id` (any status).
@@ -724,7 +695,7 @@ pub(crate) fn handle_sync_request(
         }
     };
 
-    let (board, history) = match rebuild_board_from_stored_moves(&messages) {
+    let (board, history) = match rebuild_board_from_stored_messages(&messages) {
         Ok(rebuilt) => rebuilt,
         Err(reason) => {
             warn!(

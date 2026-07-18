@@ -1,10 +1,11 @@
-use crate::chess::{Board, ChessError, Move as ChessMove};
+use crate::chess::{Board, ChessError};
 use crate::messages::chess::{GameInvite, Move as MoveMessage};
 use crate::storage::{
     models::{Game, GameStatus, PlayerColor},
     Database,
 };
-use std::str::FromStr;
+
+use super::{rebuild_board_from_stored_messages, RebuildError};
 
 /// Result type for game operations
 pub type GameOpsResult<T> = Result<T, GameOpsError>;
@@ -50,6 +51,15 @@ impl From<crate::storage::errors::StorageError> for GameOpsError {
 impl From<ChessError> for GameOpsError {
     fn from(err: ChessError) -> Self {
         GameOpsError::Chess(err)
+    }
+}
+
+impl From<RebuildError> for GameOpsError {
+    fn from(err: RebuildError) -> Self {
+        match err {
+            RebuildError::Serialization(e) => GameOpsError::Serialization(e),
+            RebuildError::Chess(e) => GameOpsError::Chess(e),
+        }
     }
 }
 
@@ -150,26 +160,8 @@ impl<'a> GameOps<'a> {
         let game = self.database.get_game(game_id)?;
         let messages = self.database.get_messages_for_game(game_id)?;
 
-        // Start with initial board position
-        let mut board = Board::new();
-        let mut move_history = Vec::new();
-
-        // Apply all moves in chronological order
-        for message in messages {
-            if message.message_type == "Move" {
-                let move_msg: MoveMessage =
-                    serde_json::from_str(&message.content).map_err(|e| {
-                        GameOpsError::Serialization(format!("Failed to parse move message: {e}"))
-                    })?;
-
-                // Parse the chess move from algebraic notation
-                let chess_move = ChessMove::from_str(&move_msg.chess_move)?;
-
-                // Apply the move to the board
-                board.make_move(chess_move)?;
-                move_history.push(move_msg.chess_move);
-            }
-        }
+        let (board, history) = rebuild_board_from_stored_messages(&messages)?;
+        let move_history: Vec<String> = history.iter().map(|m| m.to_string()).collect();
 
         // Determine whose turn it is
         let your_turn = self.is_your_turn(&game, &board)?;
