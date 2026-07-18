@@ -9,6 +9,7 @@ pub mod validation;
 pub use crate::game::{
     GameOps, GameOpsError, GameOpsResult, GameRecord, GameState, GameStatistics, InvitationRecord,
     MoveHistoryEntry, MoveProcessingError, MoveProcessingResult, MoveProcessor, MoveResult,
+    PreparedMove,
 };
 pub use app::{App, Config};
 pub use commands::{Cli, Commands, KeyCommand};

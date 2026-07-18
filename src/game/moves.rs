@@ -1,4 +1,5 @@
 use crate::chess::{Board, ChessError, Move as ChessMove};
+use crate::game::message_type::StoredMessageType;
 use crate::game::ops::{GameOps, GameOpsError};
 use crate::messages::chess::Move as MoveMessage;
 use crate::storage::{models::GameStatus, Database};
@@ -66,6 +67,18 @@ pub struct MoveProcessingResult {
     pub updated_board: Board,
 }
 
+/// Validated move ready to send / commit — no DB write yet.
+#[derive(Debug, Clone)]
+pub struct PreparedMove {
+    pub game_id: String,
+    pub move_message: MoveMessage,
+    pub move_number: u32,
+    pub updated_board: Board,
+    pub is_capture: bool,
+    pub is_check: bool,
+    pub is_checkmate: bool,
+}
+
 /// Transaction-safe move processor
 pub struct MoveProcessor<'a> {
     game_ops: GameOps<'a>,
@@ -79,63 +92,103 @@ impl<'a> MoveProcessor<'a> {
         }
     }
 
-    /// Process and validate a move for a game
-    /// This is the main entry point for move processing that handles all validation,
-    /// board updates, database transactions, and history management
-    pub fn process_move(
+    /// Validate, parse, and build a wire `Move` without persisting.
+    pub fn prepare_move(
         &self,
         game_id: &str,
         move_notation: &str,
         validate_turn: bool,
-    ) -> MoveResult<MoveProcessingResult> {
-        // Start with comprehensive validation
+    ) -> MoveResult<PreparedMove> {
         self.validate_move_preconditions(game_id, move_notation, validate_turn)?;
 
-        // Reconstruct current game state
         let game_state = self.game_ops.reconstruct_game_state(game_id)?;
 
-        // Validate it's the player's turn if requested
         if validate_turn && !game_state.your_turn {
             return Err(MoveProcessingError::InvalidGameState(
                 "It's not your turn to move".to_string(),
             ));
         }
 
-        // Parse and validate the move
         let chess_move = self.parse_and_validate_move(move_notation, &game_state.board)?;
 
-        // Create a copy of the board to test the move
-        let mut test_board = game_state.board.clone();
+        let mut updated_board = game_state.board.clone();
+        updated_board.make_move(chess_move)?;
 
-        // Apply the move to validate it's legal
-        test_board.make_move(chess_move)?;
-
-        // Create move message with board state hash
-        let board_hash = crate::messages::chess::hash_board_state(&test_board);
+        let board_hash = crate::messages::chess::hash_board_state(&updated_board);
         let move_message = MoveMessage::new(
             game_id.to_string(),
             move_notation.to_string(),
-            board_hash.clone(),
+            board_hash,
         );
 
-        // Store the move in database with transaction safety
-        self.store_move_with_transaction(game_id, &move_message)?;
+        let move_info = self.analyze_move(&game_state.board, &updated_board, chess_move)?;
 
-        // Update game state if it's now completed
-        self.update_game_status_if_needed(game_id, &test_board)?;
-
-        // Analyze move characteristics
-        let move_info = self.analyze_move(&game_state.board, &test_board, chess_move)?;
-
-        Ok(MoveProcessingResult {
+        Ok(PreparedMove {
             game_id: game_id.to_string(),
-            move_notation: move_notation.to_string(),
-            board_state_hash: board_hash,
+            move_message,
             move_number: game_state.move_history.len() as u32 + 1,
+            updated_board,
             is_capture: move_info.is_capture,
             is_check: move_info.is_check,
             is_checkmate: move_info.is_checkmate,
-            updated_board: test_board,
+        })
+    }
+
+    /// Persist a previously prepared (or inbound) move.
+    pub fn commit_move(
+        &self,
+        game_id: &str,
+        move_message: &MoveMessage,
+        sender_peer_id: &str,
+        signature: &str,
+    ) -> MoveResult<()> {
+        let content = serde_json::to_string(move_message).map_err(|e| {
+            MoveProcessingError::TransactionError(format!("Failed to serialize move: {e}"))
+        })?;
+
+        // Individual operations are atomic at the SQLite level; the storage
+        // layer does not expose multi-statement transactions here.
+        self.game_ops
+            .database
+            .store_message(
+                game_id.to_string(),
+                StoredMessageType::Move.as_str().to_string(),
+                content,
+                signature.to_string(),
+                sender_peer_id.to_string(),
+            )
+            .map_err(|e| MoveProcessingError::TransactionError(format!("Database error: {e}")))?;
+
+        self.game_ops
+            .database
+            .update_game_status(game_id, GameStatus::Active)
+            .map_err(|e| {
+                MoveProcessingError::TransactionError(format!("Failed to update game: {e}"))
+            })?;
+
+        Ok(())
+    }
+
+    /// Prepare then commit — convenience for DB-only callers (e.g. tests).
+    pub fn process_move(
+        &self,
+        game_id: &str,
+        move_notation: &str,
+        validate_turn: bool,
+    ) -> MoveResult<MoveProcessingResult> {
+        let prepared = self.prepare_move(game_id, move_notation, validate_turn)?;
+        self.commit_move(game_id, &prepared.move_message, "self", "")?;
+        self.update_game_status_if_needed(game_id, &prepared.updated_board)?;
+
+        Ok(MoveProcessingResult {
+            game_id: prepared.game_id,
+            move_notation: prepared.move_message.chess_move.clone(),
+            board_state_hash: prepared.move_message.board_state_hash.clone(),
+            move_number: prepared.move_number,
+            is_capture: prepared.is_capture,
+            is_check: prepared.is_check,
+            is_checkmate: prepared.is_checkmate,
+            updated_board: prepared.updated_board,
         })
     }
 
@@ -175,6 +228,7 @@ impl<'a> MoveProcessor<'a> {
         &self,
         game_id: &str,
         move_message: &MoveMessage,
+        sender_peer_id: &str,
     ) -> MoveResult<MoveProcessingResult> {
         // Validate message format and security
         crate::messages::chess::validate_move_message(move_message).map_err(|e| {
@@ -208,8 +262,7 @@ impl<'a> MoveProcessor<'a> {
             )));
         }
 
-        // Store the move with transaction safety
-        self.store_move_with_transaction(game_id, move_message)?;
+        self.commit_move(game_id, move_message, sender_peer_id, "")?;
 
         // Update game status if needed
         self.update_game_status_if_needed(game_id, &updated_board)?;
@@ -233,9 +286,7 @@ impl<'a> MoveProcessor<'a> {
     pub fn get_legal_moves(&self, game_id: &str) -> MoveResult<Vec<String>> {
         let _game_state = self.game_ops.reconstruct_game_state(game_id)?;
 
-        // TODO: Implement comprehensive legal move generation
-        // For now, return empty vector as this requires complex chess logic
-        // This would be enhanced in a future phase
+        // Legal move generation is not implemented yet.
         Ok(Vec::new())
     }
 
@@ -254,9 +305,10 @@ impl<'a> MoveProcessor<'a> {
         let mut history = Vec::new();
         let mut board = Board::new();
         let mut move_number = 1;
+        let move_type = StoredMessageType::Move.as_str();
 
         for message in messages {
-            if message.message_type == "Move" {
+            if message.message_type == move_type {
                 let move_message: MoveMessage =
                     serde_json::from_str(&message.content).map_err(|e| {
                         MoveProcessingError::HistoryError(format!("Failed to parse move: {e}"))
@@ -331,56 +383,10 @@ impl<'a> MoveProcessor<'a> {
         })
     }
 
-    /// Store move in database with transaction safety
-    fn store_move_with_transaction(
-        &self,
-        game_id: &str,
-        move_message: &MoveMessage,
-    ) -> MoveResult<()> {
-        // Serialize move message
-        let content = serde_json::to_string(move_message).map_err(|e| {
-            MoveProcessingError::TransactionError(format!("Failed to serialize move: {e}"))
-        })?;
-
-        // Store in database
-        // Note: The current storage layer doesn't expose transaction APIs,
-        // but the individual operations are atomic at the SQLite level
-        self.game_ops
-            .database
-            .store_message(
-                game_id.to_string(),
-                "Move".to_string(),
-                content,
-                "".to_string(),     // Signature would be added in networking layer
-                "self".to_string(), // Sender peer ID would be determined by context
-            )
-            .map_err(|e| MoveProcessingError::TransactionError(format!("Database error: {e}")))?;
-
-        // Update game timestamp
-        self.game_ops
-            .database
-            .update_game_status(game_id, GameStatus::Active)
-            .map_err(|e| {
-                MoveProcessingError::TransactionError(format!("Failed to update game: {e}"))
-            })?;
-
-        Ok(())
-    }
-
     /// Update game status if game is completed
     fn update_game_status_if_needed(&self, game_id: &str, board: &Board) -> MoveResult<()> {
-        // TODO: Implement game end detection (checkmate, stalemate, etc.)
-        // This requires comprehensive chess logic that would be added in future phases
-
-        // For now, just ensure the game remains active
-        // Real implementation would check for:
-        // - Checkmate
-        // - Stalemate
-        // - Insufficient material
-        // - 50-move rule
-        // - Threefold repetition
-
-        let _ = board; // Suppress unused variable warning
+        // Game-end detection (checkmate, stalemate, etc.) is not implemented yet.
+        let _ = board;
         let _ = game_id;
 
         Ok(())
@@ -393,14 +399,11 @@ impl<'a> MoveProcessor<'a> {
         _new_board: &Board,
         _chess_move: ChessMove,
     ) -> MoveResult<MoveAnalysis> {
-        // TODO: Implement comprehensive move analysis
-        // This requires chess logic for detecting checks, captures, etc.
-
-        // For now, return basic analysis
+        // Capture / check / checkmate analysis is not implemented yet.
         Ok(MoveAnalysis {
-            is_capture: false,   // Would detect by checking if piece was captured
-            is_check: false,     // Would require check detection
-            is_checkmate: false, // Would require checkmate detection
+            is_capture: false,
+            is_check: false,
+            is_checkmate: false,
         })
     }
 }
