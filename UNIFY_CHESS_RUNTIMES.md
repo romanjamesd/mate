@@ -262,7 +262,7 @@ step failing until fixed in the same commit).
 
 ### Milestone A — Shared domain + typed message types (no CLI behavior change yet)
 
-#### Step A1. Add `src/game/` module skeleton
+#### Step A1. Add `src/game/` module skeleton (Done 2026/07/18)
 
 1. Create `src/game/mod.rs` and register `pub mod game;` in `src/lib.rs`.
 2. Initially move (or copy-then-delete) types/APIs from `src/cli/game_ops.rs`:
@@ -278,7 +278,7 @@ step failing until fixed in the same commit).
 **Verify:** `cargo test --test integration` (or at least
 `cli_database`, `unit/cli/*`) still passes. No `app.rs` changes yet.
 
-#### Step A2. Add `StoredMessageType`
+#### Step A2. Add `StoredMessageType` (Done 2026/07/18)
 
 1. In `src/game/message_type.rs`, define an enum covering chess-persisted
    variants used in DB rows:

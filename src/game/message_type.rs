@@ -133,7 +133,10 @@ mod tests {
                 Err(InvalidStoredMessageType),
                 "expected {s:?} to be rejected"
             );
-            assert_eq!(StoredMessageType::try_from(s), Err(InvalidStoredMessageType));
+            assert_eq!(
+                StoredMessageType::try_from(s),
+                Err(InvalidStoredMessageType)
+            );
         }
     }
 }

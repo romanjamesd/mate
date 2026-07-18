@@ -6,6 +6,10 @@ pub mod game_ops;
 pub mod network_manager;
 pub mod validation;
 
+pub use crate::game::{
+    GameOps, GameOpsError, GameOpsResult, GameRecord, GameState, GameStatistics, InvitationRecord,
+    MoveHistoryEntry, MoveProcessingError, MoveProcessingResult, MoveProcessor, MoveResult,
+};
 pub use app::{App, Config};
 pub use commands::{Cli, Commands, KeyCommand};
 pub use display::{
@@ -15,10 +19,6 @@ pub use display::{
 pub use error_handler::{
     create_input_validation_error, create_network_timeout_error, display_error,
     display_error_and_exit, handle_chess_command_error, is_recoverable_error, CliError, CliResult,
-};
-pub use crate::game::{
-    GameOps, GameOpsError, GameOpsResult, GameRecord, GameState, GameStatistics, InvitationRecord,
-    MoveHistoryEntry, MoveProcessingError, MoveProcessingResult, MoveProcessor, MoveResult,
 };
 pub use network_manager::{NetworkConfig, NetworkManager, NetworkStats};
 pub use validation::{InputValidationUtils, InputValidator, ValidationError, ValidationResult};
