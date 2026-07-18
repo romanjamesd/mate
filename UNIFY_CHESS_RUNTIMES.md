@@ -295,7 +295,7 @@ step failing until fixed in the same commit).
 
 **Verify:** new unit tests pass. No production call sites switched yet.
 
-#### Step A3. Extract `rebuild_board_from_stored_messages`
+#### Step A3. Extract `rebuild_board_from_stored_messages` (Done 2026/07/18)
 
 1. Move logic from `handlers::rebuild_board_from_stored_moves` into
    `src/game/rebuild.rs`.
@@ -312,7 +312,7 @@ step failing until fixed in the same commit).
 - `tests/integration/cli_database.rs` reconstruct cases
 - Handlers unit tests under `tests/unit/network/handlers.rs`
 
-#### Step A4. Split `MoveProcessor` prepare vs commit
+#### Step A4. Split `MoveProcessor` prepare vs commit (Done 2026/07/18)
 
 1. Refactor `process_move` into `prepare_move` + `commit_move` as in §5.2.
 2. Keep `process_move` as a convenience for DB-only tests:
