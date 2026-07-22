@@ -71,7 +71,7 @@ impl<'a> InputValidator<'a> {
 
         if trimmed.is_empty() {
             return Err(ValidationError::InvalidMove(
-                "Move cannot be empty. Try moves like 'e4', 'Nf3', or 'O-O'".to_string(),
+                "Move cannot be empty. Try moves like 'e2e4', 'g1f3', or 'O-O'".to_string(),
             ));
         }
 

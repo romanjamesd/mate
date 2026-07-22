@@ -399,7 +399,7 @@ Delete Path A’s move-count turn heuristic, initial-board hash, and
 use `e2e4`-style moves; expect parse errors for `"e4"` / `"Nf3"` if those
 fixtures exist. `cli_database` remains the deep move-processor suite.
 
-#### Step B5. Error mapping
+#### Step B5. Error mapping (Done 2026/07/22)
 
 Route domain errors through `CliError` / `handle_chess_command_error` instead
 of ad-hoc `anyhow::bail` where those helpers already encode better UX

@@ -1,5 +1,6 @@
 use crate::chess::ChessError;
-use crate::game::GameOpsError;
+use crate::cli::validation::ValidationError;
+use crate::game::{GameOpsError, MoveProcessingError};
 use crate::messages::chess::ChessProtocolError;
 use crate::messages::wire::WireProtocolError;
 use crate::network::ConnectionError;
@@ -143,6 +144,128 @@ impl From<ConnectionError> for CliError {
     }
 }
 
+impl From<MoveProcessingError> for CliError {
+    fn from(err: MoveProcessingError) -> Self {
+        match err {
+            MoveProcessingError::GameOps(e) => CliError::GameOps(e),
+            MoveProcessingError::Chess(e) => CliError::Chess(e),
+            MoveProcessingError::InvalidMove(msg) => {
+                CliError::Chess(ChessError::InvalidMove(msg))
+            }
+            MoveProcessingError::InvalidGameState(msg) => {
+                CliError::GameOps(GameOpsError::InvalidGameState(msg))
+            }
+            MoveProcessingError::TransactionError(msg) => CliError::UserError {
+                message: format!("Database transaction failed: {msg}"),
+                suggestion: Some(
+                    "Try again. If the problem persists, check database integrity.".to_string(),
+                ),
+            },
+            MoveProcessingError::BoardStateError(msg) => {
+                CliError::Chess(ChessError::BoardStateError(msg))
+            }
+            MoveProcessingError::HistoryError(msg) => CliError::UserError {
+                message: format!("Move history error: {msg}"),
+                suggestion: Some(
+                    "The game state may be corrupted. Try 'mate board' to see the current position."
+                        .to_string(),
+                ),
+            },
+        }
+    }
+}
+
+impl From<ValidationError> for CliError {
+    fn from(err: ValidationError) -> Self {
+        match err {
+            ValidationError::InvalidMove(msg) => CliError::Chess(ChessError::InvalidMove(msg)),
+            ValidationError::InvalidGameId(msg) => {
+                create_input_validation_error("game_id", "", &msg)
+            }
+            ValidationError::InvalidPeerAddress(msg) => {
+                create_input_validation_error("address", "", &msg)
+            }
+            ValidationError::InvalidColor(msg) => create_input_validation_error("color", "", &msg),
+            ValidationError::GameNotFound(id) => CliError::GameOps(GameOpsError::GameNotFound(id)),
+            ValidationError::AmbiguousGameId(prefix, matches) => CliError::UserError {
+                message: format!("Multiple games match '{prefix}': {matches}"),
+                suggestion: Some(
+                    "Use a more specific game ID or 'mate games' to list all games.".to_string(),
+                ),
+            },
+            ValidationError::NoActiveGames => CliError::GameOps(GameOpsError::NoCurrentGame),
+            ValidationError::UserCancelled => CliError::UserError {
+                message: "Operation cancelled".to_string(),
+                suggestion: None,
+            },
+            ValidationError::Database(e) => CliError::Storage(e),
+            ValidationError::GameOps(e) => CliError::GameOps(e),
+            ValidationError::Io(e) => CliError::UserError {
+                message: format!("I/O error: {e}"),
+                suggestion: Some("Check file permissions and try again.".to_string()),
+            },
+        }
+    }
+}
+
+/// Extract typed errors from an anyhow chain before heuristic fallback.
+pub fn cli_error_from_anyhow(err: anyhow::Error) -> CliError {
+    if let Some(cli) = typed_cli_error_from_source(err.as_ref()) {
+        return cli;
+    }
+    match err.downcast::<StorageError>() {
+        Ok(storage) => CliError::from(storage),
+        Err(err) => match err.downcast::<ConnectionError>() {
+            Ok(conn) => CliError::from(conn),
+            Err(err) => CliError::from(err),
+        },
+    }
+}
+
+fn typed_cli_error_from_source(err: &(dyn std::error::Error + 'static)) -> Option<CliError> {
+    if let Some(e) = err.downcast_ref::<ConnectionError>() {
+        return Some(connection_error_from_ref(e));
+    }
+    err.source().and_then(typed_cli_error_from_source)
+}
+
+fn connection_error_from_ref(error: &ConnectionError) -> CliError {
+    CliError::Connection(match error {
+        ConnectionError::WireProtocol(wire_err) => ConnectionError::HandshakeFailed {
+            reason: wire_err.to_string(),
+        },
+        ConnectionError::HandshakeFailed { reason } => ConnectionError::HandshakeFailed {
+            reason: reason.clone(),
+        },
+        ConnectionError::AuthenticationFailed { peer_id } => {
+            ConnectionError::AuthenticationFailed {
+                peer_id: peer_id.clone(),
+            }
+        }
+        ConnectionError::ConnectionClosed => ConnectionError::ConnectionClosed,
+        ConnectionError::InvalidSignature => ConnectionError::InvalidSignature,
+        ConnectionError::InvalidTimestamp => ConnectionError::InvalidTimestamp,
+        ConnectionError::Io(io_err) => {
+            ConnectionError::Io(std::io::Error::new(io_err.kind(), io_err.to_string()))
+        }
+    })
+}
+
+fn is_network_failure(error: &CliError) -> bool {
+    match error {
+        CliError::Connection(_) => true,
+        CliError::NetworkTimeout { .. } => true,
+        CliError::UserError { message, .. } => {
+            let lower = message.to_lowercase();
+            lower.contains("connect")
+                || lower.contains("network")
+                || lower.contains("timed out")
+                || lower.contains("peer")
+        }
+        _ => false,
+    }
+}
+
 impl From<anyhow::Error> for CliError {
     fn from(err: anyhow::Error) -> Self {
         // For anyhow errors, create a generic user error with the error chain
@@ -190,15 +313,7 @@ impl From<anyhow::Error> for CliError {
             };
         }
 
-        // Check for database-related errors
-        if error_string.contains("database") || root_cause_string.contains("database") {
-            return CliError::UserError {
-                message: "Database operation failed".to_string(),
-                suggestion: Some("Check file permissions and database integrity. Try restarting the application.".to_string()),
-            };
-        }
-
-        // Check for more specific network errors
+        // Check for more specific network errors before generic database heuristics
         if error_string.contains("connection")
             || error_string.contains("network")
             || root_cause_string.contains("connection")
@@ -209,6 +324,14 @@ impl From<anyhow::Error> for CliError {
                     "Check network connectivity and peer availability. Try reconnecting."
                         .to_string(),
                 ),
+            };
+        }
+
+        // Check for database-related errors
+        if error_string.contains("database") || root_cause_string.contains("database") {
+            return CliError::UserError {
+                message: "Database operation failed".to_string(),
+                suggestion: Some("Check file permissions and database integrity. Try restarting the application.".to_string()),
             };
         }
 
@@ -251,7 +374,7 @@ fn format_game_ops_error(error: &GameOpsError) -> String {
 fn format_chess_error(error: &ChessError) -> String {
     match error {
         ChessError::InvalidMove(msg) => {
-            format!("♟️  Invalid move: {msg}\n   💡 Suggestion: Use standard algebraic notation (e.g., 'e4', 'Nf3', 'O-O'). Use 'mate board' to see the current position.")
+            format!("♟️  Invalid move: {msg}\n   💡 Suggestion: Use coordinate notation (e.g., 'e2e4', 'g1f3', 'O-O'). Use 'mate board' to see the current position.")
         }
         ChessError::InvalidPosition(msg) => {
             format!("♟️  Invalid position: {msg}\n   💡 Suggestion: Check the board position with 'mate board' command.")
@@ -394,40 +517,48 @@ pub fn handle_chess_command_error(error: CliError, command: &str) -> CliError {
             }
             _ => error,
         },
-        "invite" => match error {
-            CliError::Connection(_) => {
+        "invite" => {
+            if is_network_failure(&error) {
                 CliError::UserError {
                     message: "Failed to send game invitation".to_string(),
                     suggestion: Some("Check that the peer address is correct and reachable. The peer may be offline or behind a firewall.".to_string()),
                 }
+            } else {
+                error
             }
-            _ => error,
-        },
+        }
         "accept" => match error {
-            CliError::GameOps(GameOpsError::GameNotFound(_)) => {
-                CliError::UserError {
-                    message: "Game invitation not found".to_string(),
-                    suggestion: Some("Use 'mate games' to see pending invitations. The invitation may have expired or been withdrawn.".to_string()),
-                }
-            }
+            CliError::GameOps(GameOpsError::GameNotFound(_))
+            | CliError::Storage(StorageError::GameNotFound { .. }) => CliError::UserError {
+                message: "Game invitation not found".to_string(),
+                suggestion: Some("Use 'mate games' to see pending invitations. The invitation may have expired or been withdrawn.".to_string()),
+            },
+            e if is_network_failure(&e) => CliError::UserError {
+                message: "Failed to send game acceptance".to_string(),
+                suggestion: Some("Check network connectivity and that the opponent is reachable. Try again.".to_string()),
+            },
             _ => error,
         },
         "move" => match error {
-            CliError::Chess(ChessError::InvalidMove(_)) => {
-                CliError::UserError {
-                    message: "Invalid chess move".to_string(),
-                    suggestion: Some("Use standard algebraic notation (e.g., 'e4', 'Nf3', 'O-O', 'Qxe7+'). Use 'mate board' to see the current position and legal moves.".to_string()),
-                }
-            }
+            CliError::Chess(ChessError::InvalidMove(_)) => CliError::UserError {
+                message: "Invalid chess move".to_string(),
+                suggestion: Some("Use coordinate notation (e.g., 'e2e4', 'g1f3', 'O-O'). Use 'mate board' to see the current position.".to_string()),
+            },
+            e if is_network_failure(&e) => CliError::UserError {
+                message: "Could not send move to opponent".to_string(),
+                suggestion: Some("Check network connectivity and that the opponent is reachable.".to_string()),
+            },
             _ => error,
         },
         "history" => match error {
-            CliError::GameOps(GameOpsError::GameNotFound(_)) => {
-                CliError::UserError {
-                    message: "Game not found for history display".to_string(),
-                    suggestion: Some("Use 'mate games' to see available games, then 'mate history --game-id <id>' to view move history.".to_string()),
-                }
-            }
+            CliError::GameOps(GameOpsError::NoCurrentGame) => CliError::UserError {
+                message: "No game specified and no active games found".to_string(),
+                suggestion: Some("Use 'mate games' to see available games, then 'mate history --game-id <id>' to view move history.".to_string()),
+            },
+            CliError::GameOps(GameOpsError::GameNotFound(_)) => CliError::UserError {
+                message: "Game not found for history display".to_string(),
+                suggestion: Some("Use 'mate games' to see available games, then 'mate history --game-id <id>' to view move history.".to_string()),
+            },
             _ => error,
         },
         _ => error,
@@ -455,7 +586,7 @@ pub fn create_network_timeout_error(operation: &str, timeout_seconds: u64) -> Cl
 pub fn create_input_validation_error(field: &str, value: &str, reason: &str) -> CliError {
     let suggestion = match field {
         "game_id" => "Game IDs should be in UUID format. Use 'mate games' to see valid game IDs.".to_string(),
-        "chess_move" => "Use standard algebraic notation (e.g., 'e4', 'Nf3', 'O-O'). Use 'mate board' to see the current position.".to_string(),
+        "chess_move" => "Use coordinate notation (e.g., 'e2e4', 'g1f3', 'O-O'). Use 'mate board' to see the current position.".to_string(),
         "color" => "Use 'white' or 'black' to specify player color.".to_string(),
         "address" => "Use format 'host:port' (e.g., '192.168.1.100:8080' or 'example.com:8080').".to_string(),
         _ => "Check the input format and try again.".to_string(),

@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use clap::Parser;
-use mate::cli::{app::App, display_error_and_exit, Cli, CliError, Commands, KeyCommand};
+use mate::cli::{
+    app::App, display_error_and_exit, handle_chess_command_error, Cli, Commands, KeyCommand,
+};
 use mate::crypto::Identity;
 use mate::messages::Message;
 use mate::network::Client;
@@ -578,12 +580,12 @@ async fn main() -> Result<()> {
             debug!("Data directory: {}", app.data_dir().display());
 
             // Execute the chess command with proper lifecycle management
-            let command_result = match cli.command {
+            let (command_result, command_name) = match cli.command {
                 Commands::Games => {
                     info!("Chess command lifecycle: Starting games list operation");
                     debug!("Retrieving active games from database");
 
-                    let result = app.handle_games().await.context("Failed to list games");
+                    let result = app.handle_games().await;
 
                     match &result {
                         Ok(()) => {
@@ -597,7 +599,7 @@ async fn main() -> Result<()> {
                             );
                         }
                     }
-                    result
+                    (result, "games")
                 }
 
                 Commands::Board { game_id } => {
@@ -614,10 +616,7 @@ async fn main() -> Result<()> {
                         debug!("Retrieving board state for most recent active game");
                     }
 
-                    let result = app
-                        .handle_board(game_id)
-                        .await
-                        .context("Failed to display board");
+                    let result = app.handle_board(game_id).await;
 
                     match &result {
                         Ok(()) => {
@@ -631,7 +630,7 @@ async fn main() -> Result<()> {
                             );
                         }
                     }
-                    result
+                    (result, "board")
                 }
 
                 Commands::Invite { address, color } => {
@@ -645,10 +644,7 @@ async fn main() -> Result<()> {
                         debug!("No color preference specified, will use random selection");
                     }
 
-                    let result = app
-                        .handle_invite(address, color)
-                        .await
-                        .context("Failed to send invitation");
+                    let result = app.handle_invite(address, color).await;
 
                     match &result {
                         Ok(()) => {
@@ -659,7 +655,7 @@ async fn main() -> Result<()> {
                             error!("Chess command lifecycle: Game invitation failed: {}", e);
                         }
                     }
-                    result
+                    (result, "invite")
                 }
 
                 Commands::Accept { game_id, color } => {
@@ -673,10 +669,7 @@ async fn main() -> Result<()> {
                         debug!("No color preference specified, will use automatic selection");
                     }
 
-                    let result = app
-                        .handle_accept(game_id, color)
-                        .await
-                        .context("Failed to accept invitation");
+                    let result = app.handle_accept(game_id, color).await;
 
                     match &result {
                         Ok(()) => {
@@ -687,7 +680,7 @@ async fn main() -> Result<()> {
                             error!("Chess command lifecycle: Game acceptance failed: {}", e);
                         }
                     }
-                    result
+                    (result, "accept")
                 }
 
                 Commands::Move {
@@ -708,10 +701,7 @@ async fn main() -> Result<()> {
                         debug!("Making move in most recent active game");
                     }
 
-                    let result = app
-                        .handle_move(game_id, chess_move)
-                        .await
-                        .context("Failed to make move");
+                    let result = app.handle_move(game_id, chess_move).await;
 
                     match &result {
                         Ok(()) => {
@@ -722,7 +712,7 @@ async fn main() -> Result<()> {
                             error!("Chess command lifecycle: Move execution failed: {}", e);
                         }
                     }
-                    result
+                    (result, "move")
                 }
 
                 Commands::History { game_id } => {
@@ -737,10 +727,7 @@ async fn main() -> Result<()> {
                         debug!("Retrieving move history for most recent active game");
                     }
 
-                    let result = app
-                        .handle_history(game_id)
-                        .await
-                        .context("Failed to show game history");
+                    let result = app.handle_history(game_id).await;
 
                     match &result {
                         Ok(()) => {
@@ -753,7 +740,7 @@ async fn main() -> Result<()> {
                             error!("Chess command lifecycle: History display failed: {}", e);
                         }
                     }
-                    result
+                    (result, "history")
                 }
 
                 _ => unreachable!("Non-chess commands should not reach this branch"),
@@ -772,7 +759,7 @@ async fn main() -> Result<()> {
 
             // Return the command result - handle errors gracefully
             if let Err(e) = command_result {
-                let cli_error = CliError::from(e);
+                let cli_error = handle_chess_command_error(e, command_name);
                 display_error_and_exit(cli_error, 1);
             }
             info!("Chess command lifecycle: Operation completed successfully");

@@ -2,10 +2,13 @@ use crate::chess::Color;
 use crate::cli::display::{
     display_board, display_game_status, display_games_list, display_move_history,
 };
+use crate::cli::error_handler::{cli_error_from_anyhow, CliError, CliResult};
 use crate::cli::network_manager::NetworkManager;
 use crate::cli::validation::{InputValidationUtils, InputValidator};
 use crate::crypto::Identity;
-use crate::game::{store_game_accept_message, store_game_invite_message, GameOps, MoveProcessor};
+use crate::game::{
+    store_game_accept_message, store_game_invite_message, GameOps, GameOpsError, MoveProcessor,
+};
 use crate::messages::chess::{generate_game_id, GameAccept, GameInvite};
 use crate::messages::types::Message;
 
@@ -243,7 +246,7 @@ impl App {
     ///
     /// With no id, picks the most recent Pending/Active game. With an id,
     /// matches any status (exact or unique prefix) so completed games remain viewable.
-    fn resolve_read_game_id(&self, game_id: Option<&str>) -> Result<String> {
+    fn resolve_read_game_id(&self, game_id: Option<&str>) -> CliResult<String> {
         let ops = GameOps::new(&self.database);
         match game_id {
             Some(id) => Ok(ops.find_game_by_partial_id(id)?.id),
@@ -252,7 +255,7 @@ impl App {
     }
 
     /// Handle the 'games' command - List active games with status information
-    pub async fn handle_games(&self) -> Result<()> {
+    pub async fn handle_games(&self) -> CliResult<()> {
         let records = GameOps::new(&self.database).list_games()?;
         display_games_list(&records);
         if records.is_empty() {
@@ -262,7 +265,7 @@ impl App {
     }
 
     /// Handle the 'board' command - Show board for a game
-    pub async fn handle_board(&self, game_id: Option<String>) -> Result<()> {
+    pub async fn handle_board(&self, game_id: Option<String>) -> CliResult<()> {
         let target_game_id = self.resolve_read_game_id(game_id.as_deref())?;
         let state = GameOps::new(&self.database).reconstruct_game_state(&target_game_id)?;
 
@@ -291,17 +294,13 @@ impl App {
     }
 
     /// Handle the 'invite' command - Send game invitation to a peer
-    pub async fn handle_invite(&self, address: String, color: Option<String>) -> Result<()> {
+    pub async fn handle_invite(&self, address: String, color: Option<String>) -> CliResult<()> {
         let validator = InputValidator::new(&self.database);
-        validator
-            .validate_peer_address(&address)
-            .map_err(|e| anyhow::anyhow!(e))?;
+        validator.validate_peer_address(&address)?;
         let address = address.trim().to_string();
 
         let suggested_color = match color.as_deref() {
-            Some(c) => validator
-                .validate_color(c)
-                .map_err(|e| anyhow::anyhow!(e))?,
+            Some(c) => validator.validate_color(c)?,
             None => None,
         };
 
@@ -327,7 +326,7 @@ impl App {
                 my_color.clone(),
                 Some(json!({ "dial_address": address })),
             )
-            .context("Failed to create game record")?;
+            .map_err(CliError::from)?;
 
         let game_display = if game.id.len() > 8 {
             let short_id = &game.id[..8];
@@ -402,7 +401,6 @@ impl App {
                 }
             }
             Err(e) => {
-                eprintln!("❌ Failed to send invitation: {e}");
                 // Update game status to abandoned since we couldn't send
                 if let Err(db_err) = self
                     .database
@@ -410,7 +408,7 @@ impl App {
                 {
                     eprintln!("Warning: Failed to update game status: {db_err}");
                 }
-                anyhow::bail!("Could not send invitation to {address}: {e}");
+                return Err(cli_error_from_anyhow(e));
             }
         }
 
@@ -418,7 +416,7 @@ impl App {
     }
 
     /// Handle the 'accept' command - Accept a pending game invitation
-    pub async fn handle_accept(&self, game_id: String, color: Option<String>) -> Result<()> {
+    pub async fn handle_accept(&self, game_id: String, color: Option<String>) -> CliResult<()> {
         let game_display = if game_id.len() > 8 {
             let short_id = &game_id[..8];
             format!("{short_id}...")
@@ -428,11 +426,13 @@ impl App {
         println!("Accepting game invitation {game_display}...");
 
         // Validate game ID exists and is pending
-        let game = self.database.get_game(&game_id).context("Game not found")?;
+        let game = self.database.get_game(&game_id).map_err(CliError::from)?;
 
         if game.status != GameStatus::Pending {
             let current_status = game.status;
-            anyhow::bail!("Game {game_id} is not in pending status (current: {current_status:?})");
+            return Err(CliError::GameOps(GameOpsError::InvalidGameState(format!(
+                "Game {game_id} is not in pending status (current: {current_status:?})"
+            ))));
         }
 
         // Parse color preference
@@ -447,10 +447,12 @@ impl App {
                 }
             }
             Some(invalid) => {
-                anyhow::bail!(
-                    "Invalid color '{}'. Use 'white', 'black', or 'random'",
-                    invalid
-                );
+                return Err(CliError::InvalidInput {
+                    field: "color".to_string(),
+                    value: invalid.to_string(),
+                    reason: "Invalid color specification".to_string(),
+                    suggestion: "Use 'white', 'black', or 'random'.".to_string(),
+                });
             }
         };
 
@@ -472,7 +474,7 @@ impl App {
 
                 self.database
                     .update_game_status(&game_id, GameStatus::Active)
-                    .context("Failed to update game status to active")?;
+                    .map_err(CliError::from)?;
 
                 if let Err(e) = self.database.update_game_color(&game_id, my_color) {
                     eprintln!("Warning: Failed to update game color: {e}");
@@ -505,17 +507,14 @@ impl App {
 
                 println!("Use 'mate board --game-id {game_id}' to view the board.");
             }
-            Err(e) => {
-                eprintln!("❌ Failed to send acceptance: {e}");
-                anyhow::bail!("Could not send acceptance: {e}");
-            }
+            Err(e) => return Err(cli_error_from_anyhow(e)),
         }
 
         Ok(())
     }
 
     /// Handle the 'move' command - Make a chess move in a game
-    pub async fn handle_move(&self, game_id: Option<String>, chess_move: String) -> Result<()> {
+    pub async fn handle_move(&self, game_id: Option<String>, chess_move: String) -> CliResult<()> {
         let target_game_id = self.resolve_read_game_id(game_id.as_deref())?;
 
         println!(
@@ -530,14 +529,12 @@ impl App {
         );
 
         let processor = MoveProcessor::new(&self.database);
-        let prepared = processor
-            .prepare_move(&target_game_id, &chess_move, true)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let prepared = processor.prepare_move(&target_game_id, &chess_move, true)?;
 
         let game = self
             .database
             .get_game(&target_game_id)
-            .context("Game not found")?;
+            .map_err(CliError::from)?;
 
         let dial = resolve_dial_target(&game)?;
 
@@ -554,7 +551,12 @@ impl App {
                         self.peer_id(),
                         "local",
                     )
-                    .map_err(|e| anyhow::anyhow!("Move sent but failed to persist locally: {e}"))?;
+                    .map_err(|e| CliError::UserError {
+                        message: format!("Move sent but failed to persist locally: {e}"),
+                        suggestion: Some(
+                            "The move may have reached your opponent but local storage failed. Check database permissions and try 'mate board' to verify state.".to_string(),
+                        ),
+                    })?;
 
                 println!("✓ Move '{}' sent successfully!", chess_move);
                 println!("Waiting for opponent's response...");
@@ -567,17 +569,14 @@ impl App {
                     target_game_id
                 );
             }
-            Err(e) => {
-                eprintln!("❌ Failed to send move: {e}");
-                anyhow::bail!("Could not send move to opponent: {e}");
-            }
+            Err(e) => return Err(cli_error_from_anyhow(e)),
         }
 
         Ok(())
     }
 
     /// Handle the 'history' command - Show move history for a game
-    pub async fn handle_history(&self, game_id: Option<String>) -> Result<()> {
+    pub async fn handle_history(&self, game_id: Option<String>) -> CliResult<()> {
         let target_game_id = self.resolve_read_game_id(game_id.as_deref())?;
         let state = GameOps::new(&self.database).reconstruct_game_state(&target_game_id)?;
 
@@ -612,7 +611,7 @@ impl App {
 ///
 /// Prefers `metadata.dial_address`, then falls back to `opponent_peer_id` only
 /// when it looks like `host:port`. Never dials a raw crypto peer id.
-pub(crate) fn resolve_dial_target(game: &Game) -> Result<String> {
+pub(crate) fn resolve_dial_target(game: &Game) -> CliResult<String> {
     if let Some(metadata) = &game.metadata {
         if let Some(addr) = metadata.get("dial_address").and_then(|v| v.as_str()) {
             let trimmed = addr.trim();
@@ -626,10 +625,16 @@ pub(crate) fn resolve_dial_target(game: &Game) -> Result<String> {
         return Ok(game.opponent_peer_id.clone());
     }
 
-    anyhow::bail!(
-        "No dialable address for game {}. Expected metadata dial_address (host:port).",
-        game.id
-    )
+    Err(CliError::UserError {
+        message: format!(
+            "No dialable address for game {}. Expected metadata dial_address (host:port).",
+            game.id
+        ),
+        suggestion: Some(
+            "Ensure the game has a dial_address in metadata from a successful invite handshake."
+                .to_string(),
+        ),
+    })
 }
 
 #[cfg(test)]

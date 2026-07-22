@@ -220,7 +220,7 @@ async fn test_move_no_active_games_error_handling() {
     assert!(result.is_err(), "Should fail when no active games found");
     let error_msg = result.unwrap_err().to_string();
     assert!(
-        error_msg.contains("No current game"),
+        error_msg.contains("No active games") || error_msg.contains("No current game"),
         "Error should indicate no current game: {}",
         error_msg
     );
@@ -315,7 +315,7 @@ async fn test_accept_nonexistent_game_error_handling() {
 
     assert!(result.is_err(), "Should fail with nonexistent game ID");
     assert!(
-        result.unwrap_err().to_string().contains("Game not found"),
+        result.unwrap_err().to_string().contains("not found"),
         "Error should indicate game not found"
     );
 }
@@ -360,7 +360,7 @@ async fn test_history_no_games_returns_error() {
     );
     let error_msg = result.unwrap_err().to_string();
     assert!(
-        error_msg.contains("No current game"),
+        error_msg.contains("No active games") || error_msg.contains("No current game"),
         "Error should indicate no current game: {}",
         error_msg
     );
