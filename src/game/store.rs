@@ -5,7 +5,7 @@
 
 use serde::Serialize;
 
-use crate::messages::chess::{GameAccept, GameDecline, GameInvite};
+use crate::messages::chess::{GameAccept, GameDecline, GameInvite, Move};
 use crate::storage::{Database, StorageError};
 
 use super::StoredMessageType;
@@ -64,6 +64,24 @@ pub fn store_game_accept_message(
         signature,
         sender_peer_id,
         "GameAccept message content",
+    )
+}
+
+/// Serialize and store a `Move` row.
+pub fn store_game_move_message(
+    database: &Database,
+    mv: &Move,
+    signature: &str,
+    sender_peer_id: &str,
+) -> Result<(), StorageError> {
+    store_typed_message(
+        database,
+        mv.game_id.clone(),
+        StoredMessageType::Move,
+        mv,
+        signature,
+        sender_peer_id,
+        "Move message content",
     )
 }
 
@@ -160,6 +178,31 @@ mod tests {
         let parsed: GameAccept =
             serde_json::from_str(&messages[0].content).expect("parse accept content");
         assert_eq!(parsed, accept);
+    }
+
+    #[test]
+    fn store_move_uses_pascal_case_and_round_trips() {
+        let database = test_db();
+        let game_id = generate_game_id();
+        seed_game(&database, &game_id);
+
+        let mv = Move::new(game_id.clone(), "e2e4".to_string(), "hash-e2e4".to_string());
+        store_game_move_message(&database, &mv, "remote", "peer-3").expect("store move");
+
+        let messages = database
+            .get_messages_for_game(&game_id)
+            .expect("load messages");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].message_type,
+            StoredMessageType::Move.as_str()
+        );
+        assert_eq!(messages[0].signature, "remote");
+        assert_eq!(messages[0].sender_peer_id, "peer-3");
+
+        let parsed: Move =
+            serde_json::from_str(&messages[0].content).expect("parse move content");
+        assert_eq!(parsed, mv);
     }
 
     #[test]

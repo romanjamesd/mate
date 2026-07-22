@@ -903,9 +903,6 @@ fn dispatch_invalid_move_soft_rejects_with_decline() {
 
 #[test]
 fn handler_error_display_covers_variants() {
-    let not_implemented = HandlerError::NotImplemented("GameInvite");
-    assert!(not_implemented.to_string().contains("GameInvite"));
-
     let validation = Message::new_game_invite("bad".to_string(), None)
         .validate()
         .expect_err("invalid game id");

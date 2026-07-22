@@ -418,17 +418,31 @@ update command names / expected hints as needed.
 2. Ensure `cli/mod.rs` re-exports from `crate::game` only what the CLI
    public surface needs (or stop re-exporting and use `mate::game` in tests).
 
-#### Step C2. Confirm no chess snake_case writers/readers remain
+#### Step C2. Confirm no chess snake_case writers/readers remain (Done 2026/07/22)
 
 Grep for `"game_invite"`, `"game_accept"`, `"move"` in `src/cli` and chess
 handler paths — should be gone (storage opaque fixtures in
 `tests/storage/*` may remain; those are not chess wire types).
 
-#### Step C3. Final deletion pass
+**Verified:** no snake_case chess `message_type` writers/readers in
+`src/cli`, `src/network`, or `src/game` production code. Remaining `"move"`
+literals in `src/cli` are CLI command routing (`error_handler`) and network
+operation labels (`network_manager::classify_operation`), not persisted chess
+types. `StoredMessageType` unit tests reject snake_case; `cli_network` asserts
+no `"game_accept"` row is written.
+
+#### Step C3. Final deletion pass (Done 2026/07/22)
 
 Delete from `app.rs` any remaining unused imports (`Board` reconstruct
 locals, lowercase stores, duplicate formatters). Confirm handlers have no
 private store/rebuild duplicates.
+
+**Verified:** `app.rs` has no Path A leftovers. Handlers’ private
+`store_move_message` removed; Move persist goes through
+`game::store_game_move_message` (shared with `MoveProcessor::commit_move`).
+Removed obsolete `HandlerError::NotImplemented` and unused
+`InvitationRecord` / `list_pending_invitations`. `create_game_record` uses
+`StoredMessageType` for Move reads.
 
 #### Step C4. Docs touch-up
 
@@ -534,8 +548,8 @@ B3  CLI accept dials metadata address; PascalCase store
 B4  CLI move: prepare → send → commit; coordinate notation in tests
 B5  CliError mapping cleanup
 C1  Delete cli/game_ops shim
-C2  Grep: no chess snake_case left in cli/handlers
-C3  Dead-code deletion in app.rs / handlers
+C2  Grep: no chess snake_case left in cli/handlers (done)
+C3  Dead-code deletion in app.rs / handlers (done)
 C4  PRIORITIES note on completion (optional)
 ```
 

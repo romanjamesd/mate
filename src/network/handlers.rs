@@ -11,7 +11,7 @@
 use crate::chess::Color;
 use crate::game::{
     rebuild_board_from_stored_messages, store_game_accept_message, store_game_decline_message,
-    store_game_invite_message, StoredMessageType,
+    store_game_invite_message, store_game_move_message, StoredMessageType,
 };
 use crate::messages::chess::{
     create_sync_response, GameAccept, GameDecline, GameInvite, Move, MoveAck, SyncRequest,
@@ -32,9 +32,6 @@ pub enum HandlerError {
 
     #[error("storage error: {0}")]
     Storage(#[from] StorageError),
-
-    #[error("handler not implemented for {0}")]
-    NotImplemented(&'static str),
 }
 
 /// Route an inbound message to the appropriate handler.
@@ -175,19 +172,6 @@ fn ensure_decline_message_stored(
     Ok(())
 }
 
-fn store_move_message(database: &Database, peer_id: &str, mv: &Move) -> Result<(), StorageError> {
-    let content = serde_json::to_string(mv)
-        .map_err(|e| StorageError::serialization_error("Move message content", e))?;
-    database.store_message(
-        mv.game_id.clone(),
-        "Move".to_string(),
-        content,
-        "remote".to_string(),
-        peer_id.to_string(),
-    )?;
-    Ok(())
-}
-
 /// Skip insert when an identical Move payload is already stored for this game.
 fn ensure_move_message_stored(
     database: &Database,
@@ -197,11 +181,11 @@ fn ensure_move_message_stored(
     let content = serde_json::to_string(mv)
         .map_err(|e| StorageError::serialization_error("Move message content", e))?;
     let messages = database.get_messages_for_game(&mv.game_id)?;
-    let already_stored = messages
-        .iter()
-        .any(|m| m.message_type == "Move" && m.content == content);
+    let already_stored = messages.iter().any(|m| {
+        m.message_type == StoredMessageType::Move.as_str() && m.content == content
+    });
     if !already_stored {
-        store_move_message(database, peer_id, mv)?;
+        store_game_move_message(database, mv, "remote", peer_id)?;
     }
     Ok(())
 }

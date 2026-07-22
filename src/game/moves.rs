@@ -1,6 +1,7 @@
 use crate::chess::{Board, ChessError, Move as ChessMove};
 use crate::game::message_type::StoredMessageType;
 use crate::game::ops::{GameOps, GameOpsError};
+use crate::game::store::store_game_move_message;
 use crate::messages::chess::Move as MoveMessage;
 use crate::storage::{models::GameStatus, Database};
 
@@ -139,22 +140,13 @@ impl<'a> MoveProcessor<'a> {
         sender_peer_id: &str,
         signature: &str,
     ) -> MoveResult<()> {
-        let content = serde_json::to_string(move_message).map_err(|e| {
-            MoveProcessingError::TransactionError(format!("Failed to serialize move: {e}"))
-        })?;
-
-        // Individual operations are atomic at the SQLite level; the storage
-        // layer does not expose multi-statement transactions here.
-        self.game_ops
-            .database
-            .store_message(
-                game_id.to_string(),
-                StoredMessageType::Move.as_str().to_string(),
-                content,
-                signature.to_string(),
-                sender_peer_id.to_string(),
-            )
-            .map_err(|e| MoveProcessingError::TransactionError(format!("Database error: {e}")))?;
+        store_game_move_message(
+            self.game_ops.database,
+            move_message,
+            signature,
+            sender_peer_id,
+        )
+        .map_err(|e| MoveProcessingError::TransactionError(format!("Database error: {e}")))?;
 
         self.game_ops
             .database

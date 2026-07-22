@@ -1,11 +1,11 @@
 use crate::chess::{Board, ChessError};
-use crate::messages::chess::{GameInvite, Move as MoveMessage};
+use crate::messages::chess::Move as MoveMessage;
 use crate::storage::{
     models::{Game, GameStatus, PlayerColor},
     Database,
 };
 
-use super::{rebuild_board_from_stored_messages, RebuildError};
+use super::{rebuild_board_from_stored_messages, RebuildError, StoredMessageType};
 
 /// Result type for game operations
 pub type GameOpsResult<T> = Result<T, GameOpsError>;
@@ -71,24 +71,6 @@ pub struct GameRecord {
     pub last_move: Option<String>,
     pub your_turn: bool,
     pub move_count: u32,
-}
-
-/// Game invitation with tracking information
-#[derive(Debug, Clone)]
-pub struct InvitationRecord {
-    pub game_id: String,
-    pub opponent_peer_id: String,
-    pub suggested_color: Option<PlayerColor>,
-    pub created_at: i64,
-    pub status: InvitationStatus,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum InvitationStatus {
-    Pending,
-    Accepted,
-    Declined,
-    Expired,
 }
 
 /// Reconstructed game state with board and history
@@ -215,39 +197,6 @@ impl<'a> GameOps<'a> {
         }
     }
 
-    /// Track pending invitations
-    pub fn list_pending_invitations(&self) -> GameOpsResult<Vec<InvitationRecord>> {
-        let pending_games = self.database.get_games_by_status(GameStatus::Pending)?;
-        let mut invitations = Vec::new();
-
-        for game in pending_games {
-            // Check if this is an invitation we sent or received
-            let messages = self.database.get_messages_for_game(&game.id)?;
-
-            if let Some(invite_msg) = messages.iter().find(|m| m.message_type == "GameInvite") {
-                let invite: GameInvite =
-                    serde_json::from_str(&invite_msg.content).map_err(|e| {
-                        GameOpsError::Serialization(format!("Failed to parse invitation: {e}"))
-                    })?;
-
-                let suggested_color = invite.suggested_color.map(|c| match c {
-                    crate::chess::Color::White => PlayerColor::White,
-                    crate::chess::Color::Black => PlayerColor::Black,
-                });
-
-                invitations.push(InvitationRecord {
-                    game_id: game.id,
-                    opponent_peer_id: game.opponent_peer_id,
-                    suggested_color,
-                    created_at: game.created_at,
-                    status: InvitationStatus::Pending,
-                });
-            }
-        }
-
-        Ok(invitations)
-    }
-
     /// Count games by status
     pub fn count_games_by_status(&self, status: GameStatus) -> GameOpsResult<usize> {
         let games = self.database.get_games_by_status(status)?;
@@ -288,10 +237,11 @@ impl<'a> GameOps<'a> {
         let messages = self.database.get_messages_for_game(&game.id)?;
 
         // Find the last move
+        let move_type = StoredMessageType::Move.as_str();
         let last_move = messages
             .iter()
             .rev()
-            .find(|m| m.message_type == "Move")
+            .find(|m| m.message_type == move_type)
             .and_then(|m| {
                 serde_json::from_str::<MoveMessage>(&m.content)
                     .ok()
@@ -299,7 +249,10 @@ impl<'a> GameOps<'a> {
             });
 
         // Count moves (each move message represents one move)
-        let move_count = messages.iter().filter(|m| m.message_type == "Move").count() as u32;
+        let move_count = messages
+            .iter()
+            .filter(|m| m.message_type == move_type)
+            .count() as u32;
 
         // Determine if it's our turn (simplified - could be more sophisticated)
         let your_turn = match game.status {
