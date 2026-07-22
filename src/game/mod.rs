@@ -5,8 +5,10 @@ mod message_type;
 mod moves;
 mod ops;
 mod rebuild;
+mod store;
 
 pub use message_type::*;
 pub use moves::*;
 pub use ops::*;
 pub use rebuild::*;
+pub use store::*;

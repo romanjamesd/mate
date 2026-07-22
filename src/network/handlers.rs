@@ -9,7 +9,10 @@
 //! with `SyncResponse`. Inbound `SyncResponse` is ignored (no reply).
 
 use crate::chess::Color;
-use crate::game::rebuild_board_from_stored_messages;
+use crate::game::{
+    rebuild_board_from_stored_messages, store_game_accept_message, store_game_decline_message,
+    store_game_invite_message, StoredMessageType,
+};
 use crate::messages::chess::{
     create_sync_response, GameAccept, GameDecline, GameInvite, Move, MoveAck, SyncRequest,
     SyncResponse, ValidationError,
@@ -125,23 +128,6 @@ fn decline_invite(game_id: &str, reason: &str) -> Result<Option<Message>, Handle
     )))
 }
 
-fn store_invite_message(
-    database: &Database,
-    peer_id: &str,
-    invite: &GameInvite,
-) -> Result<(), StorageError> {
-    let content = serde_json::to_string(invite)
-        .map_err(|e| StorageError::serialization_error("GameInvite message content", e))?;
-    database.store_message(
-        invite.game_id.clone(),
-        "GameInvite".to_string(),
-        content,
-        "remote".to_string(),
-        peer_id.to_string(),
-    )?;
-    Ok(())
-}
-
 /// Idempotent retry for storing the invite message.
 fn ensure_invite_message_stored(
     database: &Database,
@@ -149,27 +135,12 @@ fn ensure_invite_message_stored(
     invite: &GameInvite,
 ) -> Result<(), StorageError> {
     let messages = database.get_messages_for_game(&invite.game_id)?;
-    let already_stored = messages.iter().any(|m| m.message_type == "GameInvite");
+    let already_stored = messages
+        .iter()
+        .any(|m| m.message_type == StoredMessageType::GameInvite.as_str());
     if !already_stored {
-        store_invite_message(database, peer_id, invite)?;
+        store_game_invite_message(database, invite, "remote", peer_id)?;
     }
-    Ok(())
-}
-
-fn store_accept_message(
-    database: &Database,
-    peer_id: &str,
-    accept: &GameAccept,
-) -> Result<(), StorageError> {
-    let content = serde_json::to_string(accept)
-        .map_err(|e| StorageError::serialization_error("GameAccept message content", e))?;
-    database.store_message(
-        accept.game_id.clone(),
-        "GameAccept".to_string(),
-        content,
-        "remote".to_string(),
-        peer_id.to_string(),
-    )?;
     Ok(())
 }
 
@@ -179,27 +150,12 @@ fn ensure_accept_message_stored(
     accept: &GameAccept,
 ) -> Result<(), StorageError> {
     let messages = database.get_messages_for_game(&accept.game_id)?;
-    let already_stored = messages.iter().any(|m| m.message_type == "GameAccept");
+    let already_stored = messages
+        .iter()
+        .any(|m| m.message_type == StoredMessageType::GameAccept.as_str());
     if !already_stored {
-        store_accept_message(database, peer_id, accept)?;
+        store_game_accept_message(database, accept, "remote", peer_id)?;
     }
-    Ok(())
-}
-
-fn store_decline_message(
-    database: &Database,
-    peer_id: &str,
-    decline: &GameDecline,
-) -> Result<(), StorageError> {
-    let content = serde_json::to_string(decline)
-        .map_err(|e| StorageError::serialization_error("GameDecline message content", e))?;
-    database.store_message(
-        decline.game_id.clone(),
-        "GameDecline".to_string(),
-        content,
-        "remote".to_string(),
-        peer_id.to_string(),
-    )?;
     Ok(())
 }
 
@@ -209,9 +165,11 @@ fn ensure_decline_message_stored(
     decline: &GameDecline,
 ) -> Result<(), StorageError> {
     let messages = database.get_messages_for_game(&decline.game_id)?;
-    let already_stored = messages.iter().any(|m| m.message_type == "GameDecline");
+    let already_stored = messages
+        .iter()
+        .any(|m| m.message_type == StoredMessageType::GameDecline.as_str());
     if !already_stored {
-        store_decline_message(database, peer_id, decline)?;
+        store_game_decline_message(database, decline, "remote", peer_id)?;
     }
     Ok(())
 }
@@ -264,7 +222,7 @@ pub(crate) fn handle_game_invite(
     match database.create_game_with_id(invite.game_id.clone(), peer_id.to_string(), my_color, None)
     {
         Ok(_) => {
-            if let Err(e) = store_invite_message(database, peer_id, &invite) {
+            if let Err(e) = store_game_invite_message(database, &invite, "remote", peer_id) {
                 warn!(
                     peer_id = %peer_id,
                     game_id = %invite.game_id,
@@ -423,7 +381,7 @@ pub(crate) fn handle_game_accept(
                 return decline_invite(&accept.game_id, "failed to update game color");
             }
 
-            if let Err(e) = store_accept_message(database, peer_id, &accept) {
+            if let Err(e) = store_game_accept_message(database, &accept, "remote", peer_id) {
                 warn!(
                     peer_id = %peer_id,
                     game_id = %accept.game_id,
@@ -524,7 +482,7 @@ pub(crate) fn handle_game_decline(
                 return decline_invite(&decline.game_id, "failed to abandon game");
             }
 
-            if let Err(e) = store_decline_message(database, peer_id, &decline) {
+            if let Err(e) = store_game_decline_message(database, &decline, "remote", peer_id) {
                 warn!(
                     peer_id = %peer_id,
                     game_id = %decline.game_id,

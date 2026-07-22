@@ -322,7 +322,7 @@ step failing until fixed in the same commit).
 
 **Verify:** `cli_database` move-processing tests still pass.
 
-#### Step A5. Domain store helpers for invite / accept / decline
+#### Step A5. Domain store helpers for invite / accept / decline (Done 2026/07/22)
 
 1. Add helpers that serialize the wire payload and
    `store_message(..., StoredMessageType::….as_str(), ...)`.
