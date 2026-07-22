@@ -351,7 +351,7 @@ Delete Path A’s hand-rolled tables and `"move"` filters.
 update assertions if output format changes to `display_*` (prefer updating
 tests to the better display, not preserving the old ASCII).
 
-#### Step B2. Invite path (writes + address/peer metadata)
+#### Step B2. Invite path (writes + address/peer metadata) (Done 2026/07/22)
 
 1. Validate address via `InputValidator` (already has peer-address checks).
 2. `create_game_with_id` with metadata `dial_address`; placeholder or empty

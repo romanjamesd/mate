@@ -768,10 +768,7 @@ mod tests {
         App::ensure_data_dir(&data_dir).unwrap();
     }
 
-    fn sample_game(
-        opponent_peer_id: &str,
-        metadata: Option<serde_json::Value>,
-    ) -> Game {
+    fn sample_game(opponent_peer_id: &str, metadata: Option<serde_json::Value>) -> Game {
         Game {
             id: "11111111-1111-1111-1111-111111111111".to_string(),
             opponent_peer_id: opponent_peer_id.to_string(),

@@ -535,7 +535,8 @@ mod message_specific_validation_tests {
         assert!(validate_game_invite(&with_reply_to).is_ok());
 
         // Invalid reply_to
-        let bad_reply_to = GameInvite::new(generate_game_id(), None).with_reply_to("not-an-address");
+        let bad_reply_to =
+            GameInvite::new(generate_game_id(), None).with_reply_to("not-an-address");
         assert!(matches!(
             validate_game_invite(&bad_reply_to),
             Err(ValidationError::InvalidMessageFormat(_))
