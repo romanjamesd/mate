@@ -126,7 +126,7 @@ async fn test_cli_commands_trigger_network_operations() {
 
     let move_result = timeout(
         Duration::from_secs(3),
-        app.handle_move(Some(move_game_id), "e4".to_string()),
+        app.handle_move(Some(move_game_id.clone()), "e2e4".to_string()),
     )
     .await;
 
@@ -135,6 +135,15 @@ async fn test_cli_commands_trigger_network_operations() {
         assert!(result.is_err(), "Should fail with unavailable peer");
     }
     // Timeout is acceptable (Err case ignored)
+
+    let messages = app
+        .database
+        .get_messages_for_game(&move_game_id)
+        .expect("Failed to load game messages");
+    assert!(
+        !messages.iter().any(|m| m.message_type == "Move"),
+        "Failed send must not persist a Move row"
+    );
 }
 
 #[tokio::test]

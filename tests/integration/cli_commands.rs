@@ -215,13 +215,13 @@ async fn test_move_no_active_games_error_handling() {
     .await
     .expect("Failed to create test game");
 
-    let result = app.handle_move(None, "e4".to_string()).await;
+    let result = app.handle_move(None, "e2e4".to_string()).await;
 
     assert!(result.is_err(), "Should fail when no active games found");
     let error_msg = result.unwrap_err().to_string();
     assert!(
-        error_msg.contains("No active games found"),
-        "Error should indicate no active games: {}",
+        error_msg.contains("No current game"),
+        "Error should indicate no current game: {}",
         error_msg
     );
 }
@@ -239,7 +239,7 @@ async fn test_move_invalid_game_states_error_handling() {
     .await
     .expect("Failed to create test game");
 
-    let result = app.handle_move(Some(game_id), "e4".to_string()).await;
+    let result = app.handle_move(Some(game_id), "e2e4".to_string()).await;
 
     assert!(result.is_err(), "Should fail when game is not active");
     let error_msg = result.unwrap_err().to_string();
@@ -270,6 +270,33 @@ async fn test_move_empty_move_notation_error_handling() {
     assert!(
         error_msg.contains("cannot be empty"),
         "Error should indicate empty move: {}",
+        error_msg
+    );
+}
+
+#[tokio::test]
+async fn test_move_unparsable_notation_error_handling() {
+    let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
+
+    let game_id = create_test_game(
+        &app,
+        "test_opponent",
+        PlayerColor::White,
+        GameStatus::Active,
+    )
+    .await
+    .expect("Failed to create test game");
+
+    let result = app.handle_move(Some(game_id), "e4".to_string()).await;
+
+    assert!(
+        result.is_err(),
+        "Should fail with unparsable coordinate notation"
+    );
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("Failed to parse move") || error_msg.contains("Invalid move"),
+        "Error should indicate parse failure: {}",
         error_msg
     );
 }

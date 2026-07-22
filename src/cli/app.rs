@@ -1,13 +1,12 @@
-use crate::chess::{Board, Color};
+use crate::chess::Color;
 use crate::cli::display::{
     display_board, display_game_status, display_games_list, display_move_history,
 };
 use crate::cli::network_manager::NetworkManager;
 use crate::cli::validation::{InputValidationUtils, InputValidator};
 use crate::crypto::Identity;
-use crate::game::{store_game_accept_message, store_game_invite_message, GameOps};
-use crate::messages::chess::Move as ChessMove;
-use crate::messages::chess::{generate_game_id, hash_board_state, GameAccept, GameInvite};
+use crate::game::{store_game_accept_message, store_game_invite_message, GameOps, MoveProcessor};
+use crate::messages::chess::{generate_game_id, GameAccept, GameInvite};
 use crate::messages::types::Message;
 
 use crate::storage::models::{Game, GameStatus, PlayerColor};
@@ -517,26 +516,7 @@ impl App {
 
     /// Handle the 'move' command - Make a chess move in a game
     pub async fn handle_move(&self, game_id: Option<String>, chess_move: String) -> Result<()> {
-        // Determine which game to make the move in
-        let target_game_id = match game_id {
-            Some(id) => id,
-            None => {
-                // Find the most recently active game
-                let games = self
-                    .database
-                    .get_all_games()
-                    .context("Failed to retrieve games from database")?;
-
-                let active_game = games.iter().find(|g| g.status == GameStatus::Active);
-
-                match active_game {
-                    Some(game) => game.id.clone(),
-                    None => {
-                        anyhow::bail!("No active games found. Use --game-id to specify a game or start a new game with 'mate invite <address>'");
-                    }
-                }
-            }
-        };
+        let target_game_id = self.resolve_read_game_id(game_id.as_deref())?;
 
         println!(
             "Making move '{}' in game {}...",
@@ -549,109 +529,34 @@ impl App {
             }
         );
 
-        // Get the game from database
+        let processor = MoveProcessor::new(&self.database);
+        let prepared = processor
+            .prepare_move(&target_game_id, &chess_move, true)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
         let game = self
             .database
             .get_game(&target_game_id)
             .context("Game not found")?;
 
-        if game.status != GameStatus::Active {
-            anyhow::bail!(
-                "Game {target_game_id} is not active (current status: {status:?})",
-                target_game_id = target_game_id,
-                status = game.status
-            );
-        }
+        let dial = resolve_dial_target(&game)?;
 
-        // Get move history to reconstruct current board state
-        let messages = self
-            .database
-            .get_messages_for_game(&target_game_id)
-            .context("Failed to retrieve game messages")?;
-
-        // Reconstruct board state from move history
-        let board = Board::new(); // Start with initial position
-        let mut move_count = 0;
-
-        // Apply moves from message history
-        for message in &messages {
-            if message.message_type == "move" {
-                // Parse the move message content and apply to board
-                // For now, we'll increment move count and skip actual board updates
-                // since implementing full move parsing is complex
-                move_count += 1;
-            }
-        }
-
-        // Check if it's our turn
-        let current_turn = if move_count % 2 == 0 {
-            Color::White
-        } else {
-            Color::Black
-        };
-        let is_our_turn = matches!(
-            (current_turn, &game.my_color),
-            (Color::White, PlayerColor::White) | (Color::Black, PlayerColor::Black)
-        );
-
-        if !is_our_turn {
-            anyhow::bail!(
-                "It's not your turn to move. Current turn: {current_turn:?}, Your color: {my_color:?}",
-                current_turn = current_turn,
-                my_color = game.my_color
-            );
-        }
-
-        // Validate move format (basic validation)
-        if chess_move.trim().is_empty() {
-            anyhow::bail!("Move cannot be empty");
-        }
-
-        // For now, we'll accept any non-empty move string
-        // In a full implementation, we would:
-        // 1. Parse the algebraic notation
-        // 2. Validate it's a legal move on the current board
-        // 3. Apply the move to get the new board state
-
-        // Create board state hash (using current board for now)
-        let board_hash = hash_board_state(&board);
-
-        // Create chess move
-        let chess_move_msg = ChessMove::new(
-            target_game_id.clone(),
-            chess_move.clone(),
-            board_hash.clone(),
-        );
-
-        // Send the move using network manager
         match self
             .network_manager
-            .send_chess_move(
-                &game.opponent_peer_id,
-                target_game_id.clone(),
-                chess_move_msg,
-            )
+            .send_chess_move(&dial, target_game_id.clone(), prepared.move_message.clone())
             .await
         {
             Ok(_outcome) => {
+                processor
+                    .commit_move(
+                        &target_game_id,
+                        &prepared.move_message,
+                        self.peer_id(),
+                        "local",
+                    )
+                    .map_err(|e| anyhow::anyhow!("Move sent but failed to persist locally: {e}"))?;
+
                 println!("✓ Move '{}' sent successfully!", chess_move);
-
-                // Store the move message in database
-                if let Err(e) = self.database.store_message(
-                    target_game_id.clone(),
-                    "move".to_string(),
-                    serde_json::to_string(&ChessMove::new(
-                        target_game_id.clone(),
-                        chess_move.clone(),
-                        board_hash,
-                    ))
-                    .unwrap_or_default(),
-                    "local".to_string(), // Placeholder signature for sent messages
-                    self.peer_id().to_string(),
-                ) {
-                    eprintln!("Warning: Failed to store move message: {}", e);
-                }
-
                 println!("Waiting for opponent's response...");
                 println!(
                     "Use 'mate board --game-id {}' to view the updated board.",
@@ -663,8 +568,8 @@ impl App {
                 );
             }
             Err(e) => {
-                eprintln!("❌ Failed to send move: {}", e);
-                anyhow::bail!("Could not send move to opponent: {}", e);
+                eprintln!("❌ Failed to send move: {e}");
+                anyhow::bail!("Could not send move to opponent: {e}");
             }
         }
 

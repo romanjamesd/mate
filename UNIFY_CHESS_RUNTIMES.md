@@ -371,7 +371,7 @@ unchanged; add/adjust a test that metadata contains `dial_address` and
 `opponent_peer_id` is not the raw address after a successful handshake
 (can use the existing server harness).
 
-#### Step B3. Accept path
+#### Step B3. Accept path (Done 2026/07/22)
 
 1. Load game; require `Pending`.
 2. Resolve dial target from metadata `dial_address` (fallback rules in §5.4).
@@ -383,7 +383,7 @@ unchanged; add/adjust a test that metadata contains `dial_address` and
 case if not already present that invitee accept dials metadata address while
 `opponent_peer_id` is a peer id (this is the regression lock for §5.4).
 
-#### Step B4. Move path
+#### Step B4. Move path (Done 2026/07/22)
 
 1. Resolve game id (validator / current active game).
 2. `prepare_move` — rejects empty and unparsable notation (coordinate/castling).
