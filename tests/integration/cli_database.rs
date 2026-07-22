@@ -206,10 +206,7 @@ fn test_database_current_game_detection_logic() {
     // Test with no active games
     let result = game_ops.get_current_game();
     assert!(
-        matches!(
-            result,
-            Err(GameOpsError::NoCurrentGame)
-        ),
+        matches!(result, Err(GameOpsError::NoCurrentGame)),
         "Should return NoCurrentGame error when no active games exist"
     );
 
