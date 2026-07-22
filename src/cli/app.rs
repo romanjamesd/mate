@@ -1,6 +1,10 @@
 use crate::chess::{Board, Color};
+use crate::cli::display::{
+    display_board, display_game_status, display_games_list, display_move_history,
+};
 use crate::cli::network_manager::NetworkManager;
 use crate::crypto::Identity;
+use crate::game::GameOps;
 use crate::messages::chess::Move as ChessMove;
 use crate::messages::chess::{generate_game_id, hash_board_state, GameAccept, GameInvite};
 use crate::messages::types::Message;
@@ -234,188 +238,53 @@ impl App {
         self.config.save().context("Failed to save configuration")
     }
 
+    /// Resolve a game id for read commands (`board` / `history`).
+    ///
+    /// With no id, picks the most recent Pending/Active game. With an id,
+    /// matches any status (exact or unique prefix) so completed games remain viewable.
+    fn resolve_read_game_id(&self, game_id: Option<&str>) -> Result<String> {
+        let ops = GameOps::new(&self.database);
+        match game_id {
+            Some(id) => Ok(ops.find_game_by_partial_id(id)?.id),
+            None => Ok(ops.get_current_game_id()?),
+        }
+    }
+
     /// Handle the 'games' command - List active games with status information
     pub async fn handle_games(&self) -> Result<()> {
-        let games = self
-            .database
-            .get_all_games()
-            .context("Failed to retrieve games from database")?;
-
-        if games.is_empty() {
-            println!("No games found.");
+        let records = GameOps::new(&self.database).list_games()?;
+        display_games_list(&records);
+        if records.is_empty() {
             println!("Use 'mate invite <address>' to start a new game.");
-            return Ok(());
         }
-
-        // Display header
-        println!("{}", "=".repeat(80));
-        println!("{:^80}", "CHESS GAMES");
-        println!("{}", "=".repeat(80));
-        println!(
-            "{:<12} {:<20} {:<8} {:<10} {:<15} {:<10}",
-            "GAME ID", "OPPONENT", "COLOR", "STATUS", "LAST UPDATED", "RESULT"
-        );
-        println!("{}", "-".repeat(80));
-
-        // Display each game
-        for game in &games {
-            let game_id_short = if game.id.len() > 8 {
-                let short_id = &game.id[..8];
-                format!("{short_id}...")
-            } else {
-                game.id.clone()
-            };
-
-            let opponent_short = if game.opponent_peer_id.len() > 16 {
-                let short_opponent = &game.opponent_peer_id[..16];
-                format!("{short_opponent}...")
-            } else {
-                game.opponent_peer_id.clone()
-            };
-
-            let color_str = match game.my_color {
-                PlayerColor::White => "White",
-                PlayerColor::Black => "Black",
-            };
-
-            let status_str = match game.status {
-                GameStatus::Pending => "Pending",
-                GameStatus::Active => "Active",
-                GameStatus::Completed => "Completed",
-                GameStatus::Abandoned => "Abandoned",
-            };
-
-            // Format timestamp (simple approach)
-            let updated_time = format_timestamp(game.updated_at);
-
-            let result_str = match &game.result {
-                Some(result) => format!("{result:?}"),
-                None => "-".to_string(),
-            };
-
-            println!(
-                "{game_id_short:<12} {opponent_short:<20} {color_str:<8} {status_str:<10} {updated_time:<15} {result_str:<10}"
-            );
-        }
-
-        println!("{}", "-".repeat(80));
-        let game_count = games.len();
-        println!("Total games: {}", game_count);
-        println!();
-        println!("Use 'mate board --game-id <id>' to view a specific game board.");
-        println!("Use 'mate history --game-id <id>' to view game move history.");
-
         Ok(())
     }
 
     /// Handle the 'board' command - Show board for a game
     pub async fn handle_board(&self, game_id: Option<String>) -> Result<()> {
-        // Determine which game to show
-        let target_game_id = match game_id {
-            Some(id) => id,
-            None => {
-                // Find the most recently active game
-                let games = self
-                    .database
-                    .get_all_games()
-                    .context("Failed to retrieve games from database")?;
+        let target_game_id = self.resolve_read_game_id(game_id.as_deref())?;
+        let state = GameOps::new(&self.database).reconstruct_game_state(&target_game_id)?;
 
-                let active_game = games
-                    .iter()
-                    .find(|g| matches!(g.status, GameStatus::Active | GameStatus::Pending))
-                    .or_else(|| games.first());
-
-                match active_game {
-                    Some(game) => game.id.clone(),
-                    None => {
-                        println!("No games found.");
-                        println!("Use 'mate invite <address>' to start a new game.");
-                        return Ok(());
-                    }
-                }
-            }
-        };
-
-        // Get the game from database
-        let game = self
-            .database
-            .get_game(&target_game_id)
-            .context("Failed to retrieve game from database")?;
-
-        // Get move history for the game
-        let messages = self
-            .database
-            .get_messages_for_game(&target_game_id)
-            .context("Failed to retrieve game messages")?;
-
-        // Reconstruct board state from move history
-        let board = Board::new(); // Start with initial position
-        let mut move_count = 0;
-
-        // Apply moves from message history
-        for message in &messages {
-            if message.message_type == "move" {
-                // Parse the move message content
-                match serde_json::from_str::<ChessMove>(&message.content) {
-                    Ok(_move_msg) => {
-                        // Parse algebraic notation and apply to board
-                        // For now, we'll show a placeholder since move parsing is complex
-                        move_count += 1;
-                    }
-                    Err(_) => {
-                        // Skip invalid move messages
-                        continue;
-                    }
-                }
-            }
-        }
-
-        // Display game information
-        println!("{}", "=".repeat(60));
         let game_display = if target_game_id.len() > 8 {
-            let short_id = &target_game_id[..8];
-            format!("{short_id}...")
+            format!("{}...", &target_game_id[..8])
         } else {
             target_game_id.clone()
         };
-        println!("{:^60}", format!("CHESS BOARD - GAME {game_display}"));
-        println!("{}", "=".repeat(60));
-        println!("Opponent: {}", game.opponent_peer_id);
-        println!("Your Color: {:?}", game.my_color);
-        println!("Status: {:?}", game.status);
-        println!("Moves Played: {}", move_count);
-        if let Some(result) = &game.result {
-            println!("Result: {result:?}");
-        }
-        println!("{}", "-".repeat(60));
+        println!("Game: {game_display}");
+        println!("Opponent: {}", state.game.opponent_peer_id);
+        display_game_status(&state.game.status, state.game.result.as_ref());
+        display_board(&state.board, Color::from(state.game.my_color));
 
-        // Display the board
-        println!("{}", board.to_ascii());
-
-        println!("{}", "-".repeat(60));
-
-        // Show whose turn it is
-        let turn_color = board.active_color();
-        let is_my_turn = matches!(
-            (turn_color, game.my_color),
-            (Color::White, PlayerColor::White) | (Color::Black, PlayerColor::Black)
-        );
-
-        if game.status == GameStatus::Active {
-            if is_my_turn {
+        if state.game.status == GameStatus::Active {
+            if state.your_turn {
                 println!("It's your turn to move!");
-                println!("Use 'mate move <move>' to make a move (e.g., 'mate move e4')");
+                println!("Use 'mate move <move>' to make a move (e.g., 'mate move e2e4')");
             } else {
                 println!("Waiting for opponent's move...");
             }
-        } else if game.status == GameStatus::Pending {
-            println!("Game is pending - waiting for opponent to accept invitation.");
         }
 
-        println!(
-            "Use 'mate history --game-id {}' to see the complete move history.",
-            target_game_id
-        );
+        println!("Use 'mate history --game-id {target_game_id}' to see the complete move history.");
 
         Ok(())
     }
@@ -828,134 +697,21 @@ impl App {
 
     /// Handle the 'history' command - Show move history for a game
     pub async fn handle_history(&self, game_id: Option<String>) -> Result<()> {
-        // Determine which game to show history for
-        let target_game_id = match game_id {
-            Some(id) => id,
-            None => {
-                // Find the most recently active game
-                let games = self
-                    .database
-                    .get_all_games()
-                    .context("Failed to retrieve games from database")?;
+        let target_game_id = self.resolve_read_game_id(game_id.as_deref())?;
+        let state = GameOps::new(&self.database).reconstruct_game_state(&target_game_id)?;
 
-                let recent_game = games
-                    .iter()
-                    .find(|g| matches!(g.status, GameStatus::Active | GameStatus::Completed))
-                    .or_else(|| games.first());
-
-                match recent_game {
-                    Some(game) => game.id.clone(),
-                    None => {
-                        println!("No games found.");
-                        println!("Use 'mate invite <address>' to start a new game.");
-                        return Ok(());
-                    }
-                }
-            }
-        };
-
-        // Get the game from database
-        let game = self
-            .database
-            .get_game(&target_game_id)
-            .context("Game not found")?;
-
-        // Get move history for the game
-        let messages = self
-            .database
-            .get_messages_for_game(&target_game_id)
-            .context("Failed to retrieve game messages")?;
-
-        // Filter for move messages
-        let moves: Vec<_> = messages
-            .iter()
-            .filter(|m| m.message_type == "move")
-            .collect();
-
-        // Display game header
-        println!("{}", "=".repeat(70));
-        println!(
-            "{:^70}",
-            format!(
-                "MOVE HISTORY - GAME {}",
-                if target_game_id.len() > 8 {
-                    let truncated = &target_game_id[..8];
-                    format!("{truncated}...")
-                } else {
-                    target_game_id.clone()
-                }
-            )
-        );
-        println!("{}", "=".repeat(70));
-
-        // Display game metadata
-        println!("Game ID: {}", target_game_id);
-        println!("Opponent: {}", game.opponent_peer_id);
-        println!("Your Color: {:?}", game.my_color);
-        println!("Status: {:?}", game.status);
-        if let Some(result) = &game.result {
-            println!("Result: {:?}", result);
-        }
-        println!("Created: {}", format_timestamp(game.created_at));
-        if let Some(completed_at) = game.completed_at {
-            println!("Completed: {}", format_timestamp(completed_at));
-        }
-        println!("{}", "-".repeat(70));
-
-        if moves.is_empty() {
-            println!("No moves have been made in this game yet.");
-            if game.status == GameStatus::Active {
-                println!("Use 'mate move <move>' to make the first move!");
-            }
+        let game_display = if target_game_id.len() > 8 {
+            format!("{}...", &target_game_id[..8])
         } else {
-            println!("Moves:");
-            println!(
-                "{:<4} {:<12} {:<15} {:<20} {:<15}",
-                "№", "MOVE", "PLAYER", "TIMESTAMP", "NOTATION"
-            );
-            println!("{}", "-".repeat(70));
+            target_game_id.clone()
+        };
+        println!("Game: {game_display}");
+        println!("Opponent: {}", state.game.opponent_peer_id);
+        display_game_status(&state.game.status, state.game.result.as_ref());
+        display_move_history(&state.move_history, state.move_history.len() as u32);
 
-            for (index, message) in moves.iter().enumerate() {
-                let move_number = index + 1;
-                let player = if message.sender_peer_id == self.peer_id() {
-                    "You"
-                } else {
-                    "Opponent"
-                };
-                let timestamp = format_timestamp(message.created_at);
-
-                // Try to parse the move content
-                let move_notation = match serde_json::from_str::<ChessMove>(&message.content) {
-                    Ok(chess_move) => chess_move.chess_move,
-                    Err(_) => "Invalid".to_string(),
-                };
-
-                println!(
-                    "{:<4} {:<12} {:<15} {:<20} {:<15}",
-                    move_number,
-                    move_notation,
-                    player,
-                    timestamp,
-                    "-" // Placeholder for standard notation
-                );
-            }
-        }
-
-        println!("{}", "-".repeat(70));
-        println!("Total moves: {}", moves.len());
-
-        if game.status == GameStatus::Active {
-            let current_turn = if moves.len() % 2 == 0 {
-                Color::White
-            } else {
-                Color::Black
-            };
-            let is_our_turn = matches!(
-                (current_turn, &game.my_color),
-                (Color::White, PlayerColor::White) | (Color::Black, PlayerColor::Black)
-            );
-
-            if is_our_turn {
+        if state.game.status == GameStatus::Active {
+            if state.your_turn {
                 println!("It's your turn to move!");
                 println!(
                     "Use 'mate move <move> --game-id {target_game_id}' to make your next move."
@@ -968,31 +724,6 @@ impl App {
         println!("Use 'mate board --game-id {target_game_id}' to view the current board position.");
 
         Ok(())
-    }
-}
-
-/// Format a Unix timestamp into a human-readable string
-fn format_timestamp(timestamp: i64) -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    match UNIX_EPOCH.checked_add(std::time::Duration::from_secs(timestamp as u64)) {
-        Some(time) => {
-            let elapsed = SystemTime::now().duration_since(time).unwrap_or_default();
-
-            if elapsed.as_secs() < 60 {
-                "Just now".to_string()
-            } else if elapsed.as_secs() < 3600 {
-                let minutes = elapsed.as_secs() / 60;
-                format!("{minutes}m ago")
-            } else if elapsed.as_secs() < 86400 {
-                let hours = elapsed.as_secs() / 3600;
-                format!("{hours}h ago")
-            } else {
-                let days = elapsed.as_secs() / 86400;
-                format!("{days}d ago")
-            }
-        }
-        None => "Unknown".to_string(),
     }
 }
 
