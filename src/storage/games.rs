@@ -159,6 +159,28 @@ impl Database {
         })
     }
 
+    /// Update the opponent peer id (e.g. replace a placeholder after handshake)
+    pub fn update_opponent_peer_id(&self, game_id: &str, opponent_peer_id: &str) -> Result<()> {
+        let now = Self::current_timestamp();
+
+        self.with_connection(|conn| {
+            let rows_affected = conn.execute(
+                r#"
+                UPDATE games 
+                SET opponent_peer_id = ?1, updated_at = ?2
+                WHERE id = ?3
+                "#,
+                (opponent_peer_id, now, game_id),
+            )?;
+
+            if rows_affected == 0 {
+                return Err(StorageError::game_not_found(game_id));
+            }
+
+            Ok(())
+        })
+    }
+
     /// Update game result
     pub fn update_game_result(&self, game_id: &str, result: GameResult) -> Result<()> {
         let now = Self::current_timestamp();

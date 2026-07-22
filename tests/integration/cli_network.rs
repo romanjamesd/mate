@@ -9,6 +9,7 @@ use mate::cli::network_manager::{NetworkConfig, NetworkManager};
 use mate::crypto::Identity;
 use mate::messages::chess::Move as ChessMove;
 use mate::messages::{GameAccept, GameInvite, RetryStrategy};
+use mate::network::Server;
 use mate::storage::{models::PlayerColor, GameStatus};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,6 +17,7 @@ use tempfile::TempDir;
 use tokio::time::timeout;
 
 use crate::common::port_utils::get_unique_test_address;
+use crate::common::test_helpers::test_server_database;
 
 // =============================================================================
 // Test Utilities & Mock Infrastructure
@@ -447,4 +449,58 @@ async fn test_timeout_behavior_consistency() {
         elapsed >= Duration::from_millis(50),
         "Should take at least minimum expected time"
     );
+}
+
+#[tokio::test]
+async fn test_invite_stores_dial_address_and_handshake_peer_id() {
+    let server_identity = Arc::new(Identity::generate().expect("server identity"));
+    let server_peer_id = server_identity.peer_id().to_string();
+    let database = test_server_database(server_identity.peer_id().as_str());
+
+    let server = Server::bind("127.0.0.1:0", server_identity, database)
+        .await
+        .expect("bind server");
+    let server_addr = server.local_addr().expect("server addr").to_string();
+    let server_handle = tokio::spawn(async move { server.run().await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
+
+    timeout(
+        Duration::from_secs(5),
+        app.handle_invite(server_addr.clone(), Some("white".to_string())),
+    )
+    .await
+    .expect("invite should complete before timeout")
+    .expect("invite should succeed against live server");
+
+    let games = app.database.get_all_games().expect("list games");
+    assert_eq!(games.len(), 1, "successful invite should leave one game");
+    let game = &games[0];
+
+    assert_eq!(
+        game.opponent_peer_id, server_peer_id,
+        "opponent_peer_id should be the handshake peer id"
+    );
+    assert_ne!(
+        game.opponent_peer_id, server_addr,
+        "opponent_peer_id must not remain the dial address"
+    );
+    assert_eq!(
+        game.metadata,
+        Some(serde_json::json!({ "dial_address": server_addr })),
+        "metadata should retain dial_address"
+    );
+    assert_eq!(game.status, GameStatus::Pending);
+
+    let messages = app
+        .database
+        .get_messages_for_game(&game.id)
+        .expect("messages for game");
+    assert!(
+        messages.iter().any(|m| m.message_type == "GameInvite"),
+        "invite should persist PascalCase GameInvite"
+    );
+
+    server_handle.abort();
 }

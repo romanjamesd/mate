@@ -3,8 +3,9 @@ use crate::cli::display::{
     display_board, display_game_status, display_games_list, display_move_history,
 };
 use crate::cli::network_manager::NetworkManager;
+use crate::cli::validation::InputValidator;
 use crate::crypto::Identity;
-use crate::game::GameOps;
+use crate::game::{store_game_invite_message, GameOps};
 use crate::messages::chess::Move as ChessMove;
 use crate::messages::chess::{generate_game_id, hash_board_state, GameAccept, GameInvite};
 use crate::messages::types::Message;
@@ -14,6 +15,7 @@ use crate::storage::Database;
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::path::PathBuf;
 
 use std::sync::Arc;
@@ -291,42 +293,20 @@ impl App {
 
     /// Handle the 'invite' command - Send game invitation to a peer
     pub async fn handle_invite(&self, address: String, color: Option<String>) -> Result<()> {
-        // Validate address format and length
-        const MAX_ADDR_LEN: usize = 256;
-        if address.len() > MAX_ADDR_LEN {
-            anyhow::bail!(
-                "Address too long ({} characters). Maximum allowed: {} characters",
-                address.len(),
-                MAX_ADDR_LEN
-            );
-        }
+        let validator = InputValidator::new(&self.database);
+        validator
+            .validate_peer_address(&address)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        let address = address.trim().to_string();
 
-        if address.trim().is_empty() {
-            anyhow::bail!("Address cannot be empty");
-        }
-
-        // Basic format validation for host:port
-        if !address.contains(':') {
-            anyhow::bail!(
-                "Invalid address format '{}'. Expected format: host:port (e.g., 127.0.0.1:8080)",
-                address
-            );
-        }
-
-        println!("Sending chess game invitation to {}...", address);
-
-        // Parse color preference
         let suggested_color = match color.as_deref() {
-            Some("white") => Some(Color::White),
-            Some("black") => Some(Color::Black),
-            Some("random") | None => None,
-            Some(invalid) => {
-                anyhow::bail!(
-                    "Invalid color '{}'. Use 'white', 'black', or 'random'",
-                    invalid
-                );
-            }
+            Some(c) => validator
+                .validate_color(c)
+                .map_err(|e| anyhow::anyhow!(e))?,
+            None => None,
         };
+
+        println!("Sending chess game invitation to {address}...");
 
         // Determine our color based on suggestion
         let my_color = match suggested_color {
@@ -338,15 +318,15 @@ impl App {
             }
         };
 
-        // Create the game record with a UUID id — wire GameInvite validation
-        // requires UUID format (legacy storage ids are peer-timestamp-counter).
+        // Create the game record with dial address in metadata. Opponent peer
+        // id is filled in after a successful handshake.
         let game = self
             .database
             .create_game_with_id(
                 generate_game_id(),
-                address.clone(),
+                String::new(),
                 my_color.clone(),
-                None, // No metadata for now
+                Some(json!({ "dial_address": address })),
             )
             .context("Failed to create game record")?;
 
@@ -365,21 +345,22 @@ impl App {
         // Send the invitation using network manager
         match self
             .network_manager
-            .send_game_invite(&address, game.id.clone(), invite)
+            .send_game_invite(&address, game.id.clone(), invite.clone())
             .await
         {
-            Ok(response) => {
+            Ok(outcome) => {
                 println!("✓ Invitation sent successfully!");
 
-                // Store the invitation message in database
-                if let Err(e) = self.database.store_message(
-                    game.id.clone(),
-                    "game_invite".to_string(),
-                    serde_json::to_string(&GameInvite::new(game.id.clone(), suggested_color))
-                        .unwrap_or_default(),
-                    "local".to_string(), // Placeholder signature for sent messages
-                    self.peer_id().to_string(),
-                ) {
+                if let Err(e) = self
+                    .database
+                    .update_opponent_peer_id(&game.id, &outcome.peer_id)
+                {
+                    eprintln!("Warning: Failed to update opponent peer id: {e}");
+                }
+
+                if let Err(e) =
+                    store_game_invite_message(&self.database, &invite, "local", self.peer_id())
+                {
                     eprintln!("Warning: Failed to store invitation message: {e}");
                 }
 
@@ -394,7 +375,7 @@ impl App {
                 println!("Use 'mate games' to check invitation status.");
 
                 // Log the response type for debugging
-                match response {
+                match outcome.response {
                     Message::GameAccept(_) => {
                         println!("⚡ Invitation accepted immediately!");
                         // Update game status to active
@@ -488,7 +469,7 @@ impl App {
             .send_game_accept(&game.opponent_peer_id, game_id.clone(), accept)
             .await
         {
-            Ok(_response) => {
+            Ok(_outcome) => {
                 println!("✓ Game accepted successfully!");
 
                 // Update game status to active
@@ -657,7 +638,7 @@ impl App {
             )
             .await
         {
-            Ok(_response) => {
+            Ok(_outcome) => {
                 println!("✓ Move '{}' sent successfully!", chess_move);
 
                 // Store the move message in database
