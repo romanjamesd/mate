@@ -181,9 +181,9 @@ fn ensure_move_message_stored(
     let content = serde_json::to_string(mv)
         .map_err(|e| StorageError::serialization_error("Move message content", e))?;
     let messages = database.get_messages_for_game(&mv.game_id)?;
-    let already_stored = messages.iter().any(|m| {
-        m.message_type == StoredMessageType::Move.as_str() && m.content == content
-    });
+    let already_stored = messages
+        .iter()
+        .any(|m| m.message_type == StoredMessageType::Move.as_str() && m.content == content);
     if !already_stored {
         store_game_move_message(database, mv, "remote", peer_id)?;
     }

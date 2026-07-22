@@ -193,15 +193,11 @@ mod tests {
             .get_messages_for_game(&game_id)
             .expect("load messages");
         assert_eq!(messages.len(), 1);
-        assert_eq!(
-            messages[0].message_type,
-            StoredMessageType::Move.as_str()
-        );
+        assert_eq!(messages[0].message_type, StoredMessageType::Move.as_str());
         assert_eq!(messages[0].signature, "remote");
         assert_eq!(messages[0].sender_peer_id, "peer-3");
 
-        let parsed: Move =
-            serde_json::from_str(&messages[0].content).expect("parse move content");
+        let parsed: Move = serde_json::from_str(&messages[0].content).expect("parse move content");
         assert_eq!(parsed, mv);
     }
 
