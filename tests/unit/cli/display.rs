@@ -5,7 +5,7 @@
 
 use mate::chess::{Board, Color};
 use mate::cli::display::*;
-use mate::cli::GameRecord;
+use mate::game::GameRecord;
 use mate::storage::models::{Game, GameResult, GameStatus, PlayerColor};
 
 /// Helper function to create test game records

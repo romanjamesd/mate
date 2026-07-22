@@ -412,7 +412,7 @@ update command names / expected hints as needed.
 
 ### Milestone C — Remove shims and dead Path A code
 
-#### Step C1. Delete the CLI shim
+#### Step C1. Delete the CLI shim (Done 2026/07/22)
 
 1. Remove `src/cli/game_ops.rs` re-export (or the whole file).
 2. Ensure `cli/mod.rs` re-exports from `crate::game` only what the CLI

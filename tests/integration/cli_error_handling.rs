@@ -15,7 +15,8 @@ use mate::cli::error_handler::{
     create_input_validation_error, create_network_timeout_error, handle_chess_command_error,
     is_recoverable_error,
 };
-use mate::cli::{CliError, GameOpsError, MoveProcessingError, ValidationError};
+use mate::cli::{CliError, ValidationError};
+use mate::game::{GameOpsError, MoveProcessingError};
 use mate::messages::wire::WireProtocolError;
 use mate::network::ConnectionError;
 use mate::storage::errors::StorageError;

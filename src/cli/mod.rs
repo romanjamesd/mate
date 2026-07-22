@@ -2,15 +2,9 @@ pub mod app;
 pub mod commands;
 pub mod display;
 pub mod error_handler;
-pub mod game_ops;
 pub mod network_manager;
 pub mod validation;
 
-pub use crate::game::{
-    GameOps, GameOpsError, GameOpsResult, GameRecord, GameState, GameStatistics, InvitationRecord,
-    MoveHistoryEntry, MoveProcessingError, MoveProcessingResult, MoveProcessor, MoveResult,
-    PreparedMove,
-};
 pub use app::{App, Config};
 pub use commands::{Cli, Commands, KeyCommand};
 pub use display::{
