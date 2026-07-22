@@ -109,7 +109,7 @@ impl NetworkManager {
         game_id: String,
         invite: GameInvite,
     ) -> Result<SendOutcome> {
-        let message = Message::new_game_invite(game_id.clone(), invite.suggested_color);
+        let message = Message::GameInvite(invite);
 
         match self
             .send_message_with_retry(peer_address, message.clone(), &game_id)

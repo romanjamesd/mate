@@ -528,6 +528,41 @@ mod message_specific_validation_tests {
             validate_game_invite(&empty_id_invite),
             Err(ValidationError::InvalidGameId(_))
         ));
+
+        // Valid reply_to
+        let with_reply_to =
+            GameInvite::new(generate_game_id(), None).with_reply_to("127.0.0.1:8080");
+        assert!(validate_game_invite(&with_reply_to).is_ok());
+
+        // Invalid reply_to
+        let bad_reply_to = GameInvite::new(generate_game_id(), None).with_reply_to("not-an-address");
+        assert!(matches!(
+            validate_game_invite(&bad_reply_to),
+            Err(ValidationError::InvalidMessageFormat(_))
+        ));
+    }
+
+    #[test]
+    fn test_game_invite_reply_to_serde_round_trip() {
+        let invite = GameInvite::new(generate_game_id(), Some(Color::White))
+            .with_reply_to("192.168.1.5:9090");
+        let json = serde_json::to_string(&invite).unwrap();
+        assert!(json.contains("reply_to"));
+        let parsed: GameInvite = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.reply_to.as_deref(), Some("192.168.1.5:9090"));
+
+        let without = GameInvite::new(generate_game_id(), None);
+        let json_without = serde_json::to_string(&without).unwrap();
+        let parsed_without: GameInvite = serde_json::from_str(&json_without).unwrap();
+        assert!(parsed_without.reply_to.is_none());
+
+        // Older payloads without the field still deserialize.
+        let legacy = format!(
+            r#"{{"game_id":"{}","suggested_color":null}}"#,
+            generate_game_id()
+        );
+        let legacy_parsed: GameInvite = serde_json::from_str(&legacy).unwrap();
+        assert!(legacy_parsed.reply_to.is_none());
     }
 
     #[test]

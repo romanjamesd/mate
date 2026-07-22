@@ -3,14 +3,14 @@ use crate::cli::display::{
     display_board, display_game_status, display_games_list, display_move_history,
 };
 use crate::cli::network_manager::NetworkManager;
-use crate::cli::validation::InputValidator;
+use crate::cli::validation::{InputValidationUtils, InputValidator};
 use crate::crypto::Identity;
-use crate::game::{store_game_invite_message, GameOps};
+use crate::game::{store_game_accept_message, store_game_invite_message, GameOps};
 use crate::messages::chess::Move as ChessMove;
 use crate::messages::chess::{generate_game_id, hash_board_state, GameAccept, GameInvite};
 use crate::messages::types::Message;
 
-use crate::storage::models::{GameStatus, PlayerColor};
+use crate::storage::models::{Game, GameStatus, PlayerColor};
 use crate::storage::Database;
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
@@ -339,8 +339,9 @@ impl App {
         let game_full_id = &game.id;
         println!("Created game {game_display} with ID: {game_full_id}");
 
-        // Create game invitation
-        let invite = GameInvite::new(game.id.clone(), suggested_color);
+        // Create game invitation with dial-back listen address for the invitee.
+        let invite = GameInvite::new(game.id.clone(), suggested_color)
+            .with_reply_to(self.config.default_bind_addr.clone());
 
         // Send the invitation using network manager
         match self
@@ -454,39 +455,34 @@ impl App {
             }
         };
 
-        // Update our color preference in the database if needed
-        let _final_my_color = match accepted_color {
+        let my_color = match accepted_color {
             Color::White => PlayerColor::White,
             Color::Black => PlayerColor::Black,
         };
 
-        // Create game acceptance
+        let dial = resolve_dial_target(&game)?;
         let accept = GameAccept::new(game_id.clone(), accepted_color);
 
-        // Send the acceptance using network manager
         match self
             .network_manager
-            .send_game_accept(&game.opponent_peer_id, game_id.clone(), accept)
+            .send_game_accept(&dial, game_id.clone(), accept.clone())
             .await
         {
             Ok(_outcome) => {
                 println!("✓ Game accepted successfully!");
 
-                // Update game status to active
                 self.database
                     .update_game_status(&game_id, GameStatus::Active)
                     .context("Failed to update game status to active")?;
 
-                // Store the acceptance message in database
-                if let Err(e) = self.database.store_message(
-                    game_id.clone(),
-                    "game_accept".to_string(),
-                    serde_json::to_string(&GameAccept::new(game_id.clone(), accepted_color))
-                        .unwrap_or_default(),
-                    "local".to_string(), // Placeholder signature for sent messages
-                    self.peer_id().to_string(),
-                ) {
-                    eprintln!("Warning: Failed to store acceptance message: {}", e);
+                if let Err(e) = self.database.update_game_color(&game_id, my_color) {
+                    eprintln!("Warning: Failed to update game color: {e}");
+                }
+
+                if let Err(e) =
+                    store_game_accept_message(&self.database, &accept, "local", self.peer_id())
+                {
+                    eprintln!("Warning: Failed to store acceptance message: {e}");
                 }
 
                 println!(
@@ -500,7 +496,6 @@ impl App {
                 );
                 println!("You are playing as: {accepted_color:?}");
 
-                // Show if it's our turn to move
                 if accepted_color == Color::White {
                     println!(
                         "It's your turn to move! Use 'mate move <move>' to make your first move."
@@ -512,8 +507,8 @@ impl App {
                 println!("Use 'mate board --game-id {game_id}' to view the board.");
             }
             Err(e) => {
-                eprintln!("❌ Failed to send acceptance: {}", e);
-                anyhow::bail!("Could not send acceptance: {}", e);
+                eprintln!("❌ Failed to send acceptance: {e}");
+                anyhow::bail!("Could not send acceptance: {e}");
             }
         }
 
@@ -708,6 +703,30 @@ impl App {
     }
 }
 
+/// Resolve a dialable TCP address for outbound chess sends.
+///
+/// Prefers `metadata.dial_address`, then falls back to `opponent_peer_id` only
+/// when it looks like `host:port`. Never dials a raw crypto peer id.
+pub(crate) fn resolve_dial_target(game: &Game) -> Result<String> {
+    if let Some(metadata) = &game.metadata {
+        if let Some(addr) = metadata.get("dial_address").and_then(|v| v.as_str()) {
+            let trimmed = addr.trim();
+            if !trimmed.is_empty() {
+                return Ok(trimmed.to_string());
+            }
+        }
+    }
+
+    if InputValidationUtils::has_valid_address_format(&game.opponent_peer_id) {
+        return Ok(game.opponent_peer_id.clone());
+    }
+
+    anyhow::bail!(
+        "No dialable address for game {}. Expected metadata dial_address (host:port).",
+        game.id
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -747,5 +766,44 @@ mod tests {
 
         // Should work if directory already exists
         App::ensure_data_dir(&data_dir).unwrap();
+    }
+
+    fn sample_game(
+        opponent_peer_id: &str,
+        metadata: Option<serde_json::Value>,
+    ) -> Game {
+        Game {
+            id: "11111111-1111-1111-1111-111111111111".to_string(),
+            opponent_peer_id: opponent_peer_id.to_string(),
+            my_color: PlayerColor::White,
+            status: GameStatus::Pending,
+            created_at: 0,
+            updated_at: 0,
+            completed_at: None,
+            result: None,
+            metadata,
+        }
+    }
+
+    #[test]
+    fn resolve_dial_target_prefers_metadata() {
+        let game = sample_game(
+            "crypto-peer-id-not-an-address",
+            Some(json!({ "dial_address": "127.0.0.1:9000" })),
+        );
+        assert_eq!(resolve_dial_target(&game).unwrap(), "127.0.0.1:9000");
+    }
+
+    #[test]
+    fn resolve_dial_target_falls_back_to_host_port_peer_id() {
+        let game = sample_game("192.168.1.10:8080", None);
+        assert_eq!(resolve_dial_target(&game).unwrap(), "192.168.1.10:8080");
+    }
+
+    #[test]
+    fn resolve_dial_target_rejects_raw_peer_id() {
+        let game = sample_game("abcdef0123456789abcdef0123456789abcdef01", None);
+        let err = resolve_dial_target(&game).unwrap_err().to_string();
+        assert!(err.contains("No dialable address"));
     }
 }

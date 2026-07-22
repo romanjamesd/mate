@@ -20,6 +20,7 @@ use crate::messages::chess::{
 use crate::messages::Message;
 use crate::storage::models::{GameStatus, PlayerColor};
 use crate::storage::{Database, StorageError};
+use serde_json::json;
 use thiserror::Error;
 use tracing::{debug, warn};
 
@@ -218,9 +219,17 @@ pub(crate) fn handle_game_invite(
     invite: GameInvite,
 ) -> Result<Option<Message>, HandlerError> {
     let my_color = invitee_color(invite.suggested_color);
+    let metadata = invite
+        .reply_to
+        .as_ref()
+        .map(|addr| json!({ "dial_address": addr }));
 
-    match database.create_game_with_id(invite.game_id.clone(), peer_id.to_string(), my_color, None)
-    {
+    match database.create_game_with_id(
+        invite.game_id.clone(),
+        peer_id.to_string(),
+        my_color,
+        metadata,
+    ) {
         Ok(_) => {
             if let Err(e) = store_game_invite_message(database, &invite, "remote", peer_id) {
                 warn!(

@@ -104,6 +104,39 @@ fn dispatch_valid_game_invite_echoes_and_persists_pending() {
 }
 
 #[test]
+fn dispatch_game_invite_with_reply_to_stamps_dial_address() {
+    let db = test_db();
+    let game_id = generate_game_id();
+    let invite = Message::GameInvite(
+        GameInvite::new(game_id.clone(), Some(Color::Black)).with_reply_to("127.0.0.1:9000"),
+    );
+
+    let result = dispatch(db.as_ref(), "peer-a", invite).expect("dispatch should succeed");
+    assert!(matches!(result, Some(Message::GameInvite(_))));
+
+    let game = db.get_game(&game_id).expect("pending game should exist");
+    assert_eq!(game.opponent_peer_id, "peer-a");
+    assert_eq!(
+        game.metadata,
+        Some(serde_json::json!({ "dial_address": "127.0.0.1:9000" }))
+    );
+}
+
+#[test]
+fn dispatch_game_invite_without_reply_to_leaves_metadata_none() {
+    let db = test_db();
+    let game_id = generate_game_id();
+    let invite = Message::new_game_invite(game_id.clone(), Some(Color::White));
+
+    dispatch(db.as_ref(), "peer-a", invite)
+        .expect("dispatch")
+        .expect("reply");
+
+    let game = db.get_game(&game_id).expect("pending game should exist");
+    assert!(game.metadata.is_none());
+}
+
+#[test]
 fn dispatch_game_invite_color_conventions() {
     let db = test_db();
 

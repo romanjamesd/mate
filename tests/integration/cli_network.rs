@@ -7,8 +7,8 @@ use anyhow::Result;
 use mate::cli::app::App;
 use mate::cli::network_manager::{NetworkConfig, NetworkManager};
 use mate::crypto::Identity;
-use mate::messages::chess::Move as ChessMove;
-use mate::messages::{GameAccept, GameInvite, RetryStrategy};
+use mate::messages::chess::{generate_game_id, GameInvite, Move as ChessMove};
+use mate::messages::{GameAccept, RetryStrategy};
 use mate::network::Server;
 use mate::storage::{models::PlayerColor, GameStatus};
 use std::sync::Arc;
@@ -500,6 +500,114 @@ async fn test_invite_stores_dial_address_and_handshake_peer_id() {
     assert!(
         messages.iter().any(|m| m.message_type == "GameInvite"),
         "invite should persist PascalCase GameInvite"
+    );
+    let invite_msg = messages
+        .iter()
+        .find(|m| m.message_type == "GameInvite")
+        .expect("GameInvite row");
+    let parsed: GameInvite =
+        serde_json::from_str(&invite_msg.content).expect("parse stored invite");
+    assert_eq!(
+        parsed.reply_to.as_deref(),
+        Some(app.config.default_bind_addr.as_str()),
+        "stored invite should advertise reply_to from default_bind_addr"
+    );
+
+    server_handle.abort();
+}
+
+/// Invitee-shaped pending row: peer id in opponent_peer_id, dial via metadata.
+#[tokio::test]
+async fn test_accept_dials_metadata_address_while_opponent_is_peer_id() {
+    let inviter_identity = Arc::new(Identity::generate().expect("inviter identity"));
+    let inviter_peer_id = inviter_identity.peer_id().to_string();
+    let inviter_db = test_server_database(inviter_identity.peer_id().as_str());
+    let inviter_db_assert = Arc::clone(&inviter_db);
+
+    let inviter_server = Server::bind("127.0.0.1:0", inviter_identity, inviter_db)
+        .await
+        .expect("bind inviter server");
+    let inviter_addr = inviter_server.local_addr().expect("addr").to_string();
+    let server_handle = tokio::spawn(async move { inviter_server.run().await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (invitee_app, _temp_dir) = create_test_app().await.expect("invitee app");
+    let invitee_peer_id = invitee_app.peer_id().to_string();
+    let game_id = generate_game_id();
+
+    // Inviter DB: pending game expecting accept from invitee peer id.
+    inviter_db_assert
+        .create_game_with_id(
+            game_id.clone(),
+            invitee_peer_id.clone(),
+            PlayerColor::White,
+            None,
+        )
+        .expect("seed inviter pending game");
+
+    // Invitee DB: peer id opponent + dial_address pointing at inviter serve.
+    invitee_app
+        .database
+        .create_game_with_id(
+            game_id.clone(),
+            inviter_peer_id.clone(),
+            PlayerColor::Black,
+            Some(serde_json::json!({ "dial_address": inviter_addr })),
+        )
+        .expect("seed invitee pending game");
+
+    assert!(
+        !inviter_peer_id.contains(':')
+            || !mate::cli::validation::InputValidationUtils::has_valid_address_format(
+                &inviter_peer_id
+            ),
+        "fixture opponent_peer_id must not be dialable as host:port"
+    );
+
+    timeout(
+        Duration::from_secs(5),
+        invitee_app.handle_accept(game_id.clone(), Some("black".to_string())),
+    )
+    .await
+    .expect("accept should complete before timeout")
+    .expect("accept should succeed by dialing metadata dial_address");
+
+    let invitee_game = invitee_app
+        .database
+        .get_game(&game_id)
+        .expect("invitee game");
+    assert_eq!(invitee_game.status, GameStatus::Active);
+    assert_eq!(invitee_game.my_color, PlayerColor::Black);
+    assert_eq!(
+        invitee_game.opponent_peer_id, inviter_peer_id,
+        "opponent_peer_id should remain the crypto peer id"
+    );
+
+    let invitee_messages = invitee_app
+        .database
+        .get_messages_for_game(&game_id)
+        .expect("invitee messages");
+    assert!(
+        invitee_messages
+            .iter()
+            .any(|m| m.message_type == "GameAccept"),
+        "accept should persist PascalCase GameAccept"
+    );
+    assert!(
+        !invitee_messages
+            .iter()
+            .any(|m| m.message_type == "game_accept"),
+        "must not write snake_case game_accept"
+    );
+
+    let inviter_game = inviter_db_assert
+        .get_game(&game_id)
+        .expect("inviter game after accept");
+    assert_eq!(inviter_game.status, GameStatus::Active);
+    assert_eq!(
+        inviter_game.my_color,
+        PlayerColor::White,
+        "inviter keeps opposite of accepted black"
     );
 
     server_handle.abort();
