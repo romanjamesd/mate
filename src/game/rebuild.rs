@@ -146,8 +146,7 @@ mod tests {
             .map(|mv| stored_message(StoredMessageType::Move.as_str(), &move_content(mv)))
             .collect();
 
-        let (board, history) =
-            rebuild_board_from_stored_messages(&messages).expect("black castle");
+        let (board, history) = rebuild_board_from_stored_messages(&messages).expect("black castle");
         assert_eq!(history.len(), 8);
 
         let black_castle = history.last().expect("castle ply");
@@ -158,10 +157,7 @@ mod tests {
 
     #[test]
     fn malformed_json_fails() {
-        let messages = vec![stored_message(
-            StoredMessageType::Move.as_str(),
-            "not json",
-        )];
+        let messages = vec![stored_message(StoredMessageType::Move.as_str(), "not json")];
         let err = rebuild_board_from_stored_messages(&messages).expect_err("bad json");
         assert!(matches!(err, RebuildError::Serialization(_)));
     }

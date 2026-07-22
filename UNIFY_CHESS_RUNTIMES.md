@@ -335,7 +335,7 @@ step failing until fixed in the same commit).
 
 ### Milestone B — Wire CLI to the domain (delete Path A chess logic)
 
-#### Step B1. Read paths: `games`, `board`, `history`
+#### Step B1. Read paths: `games`, `board`, `history` (Done 2026/07/22)
 
 Rewrite:
 
