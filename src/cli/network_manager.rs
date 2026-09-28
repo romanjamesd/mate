@@ -1,5 +1,7 @@
 use crate::crypto::Identity;
-use crate::messages::chess::{GameAccept, GameInvite, Move as ChessMove};
+use crate::messages::chess::{
+    ChessProtocolError, GameAccept, GameDecline, GameInvite, Move as ChessMove,
+};
 use crate::messages::types::Message;
 use crate::messages::{FailureClass, RetryStrategy};
 use crate::network::{Client, Connection};
@@ -64,6 +66,54 @@ pub struct SendOutcome {
     pub response: Message,
     /// Authenticated peer id from the connection handshake
     pub peer_id: String,
+}
+
+/// Application-level response to an acceptance, separate from transport success.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GameAcceptOutcome {
+    Accepted {
+        acknowledgement: GameAccept,
+        peer_id: String,
+    },
+    Rejected {
+        decline: GameDecline,
+        peer_id: String,
+    },
+}
+
+impl GameAcceptOutcome {
+    pub fn peer_id(&self) -> &str {
+        match self {
+            Self::Accepted { peer_id, .. } | Self::Rejected { peer_id, .. } => peer_id,
+        }
+    }
+}
+
+/// Correlate a received response with the acceptance actually sent.
+pub fn classify_accept_response(
+    request: &GameAccept,
+    outcome: SendOutcome,
+) -> Result<GameAcceptOutcome, ChessProtocolError> {
+    let SendOutcome { response, peer_id } = outcome;
+    match response {
+        Message::GameAccept(acknowledgement) if acknowledgement == *request => {
+            Ok(GameAcceptOutcome::Accepted {
+                acknowledgement,
+                peer_id,
+            })
+        }
+        Message::GameDecline(decline) if decline.game_id == request.game_id => {
+            Ok(GameAcceptOutcome::Rejected { decline, peer_id })
+        }
+        response => Err(ChessProtocolError::UnexpectedMessage {
+            game_id: request.game_id.clone(),
+            expected: format!(
+                "GameAccept {request:?} or GameDecline for {}",
+                request.game_id
+            ),
+            received: format!("{response:?}"),
+        }),
+    }
 }
 
 /// A message waiting to be sent when peer comes online
@@ -139,16 +189,24 @@ impl NetworkManager {
         peer_address: &str,
         game_id: String,
         accept: GameAccept,
-    ) -> Result<SendOutcome> {
-        let message = Message::new_game_accept(game_id.clone(), accept.accepted_color);
+    ) -> Result<GameAcceptOutcome> {
+        if game_id != accept.game_id {
+            return Err(ChessProtocolError::UnexpectedMessage {
+                game_id,
+                expected: "acceptance payload with the requested game ID".to_string(),
+                received: format!("{accept:?}"),
+            }
+            .into());
+        }
+        let message = Message::GameAccept(accept.clone());
 
         match self
             .send_message_with_retry(peer_address, message.clone(), &game_id)
             .await
         {
             Ok(outcome) => {
-                info!("Game acceptance sent successfully to {}", peer_address);
-                Ok(outcome)
+                // Received rejections and protocol errors must never be queued for retry.
+                Ok(classify_accept_response(&accept, outcome)?)
             }
             Err(e) => {
                 warn!("Failed to send game acceptance to {}: {}", peer_address, e);

@@ -16,5 +16,7 @@ pub use error_handler::{
     display_error, display_error_and_exit, handle_chess_command_error, is_recoverable_error,
     CliError, CliResult,
 };
-pub use network_manager::{NetworkConfig, NetworkManager, NetworkStats, SendOutcome};
+pub use network_manager::{
+    GameAcceptOutcome, NetworkConfig, NetworkManager, NetworkStats, SendOutcome,
+};
 pub use validation::{InputValidationUtils, InputValidator, ValidationError, ValidationResult};

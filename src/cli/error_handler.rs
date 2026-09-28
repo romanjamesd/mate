@@ -20,6 +20,8 @@ pub enum CliError {
     Connection(ConnectionError),
     /// Chess protocol error
     Protocol(ChessProtocolError),
+    /// A correlated remote refusal of a game acceptance.
+    GameAcceptanceRejected { reason: Option<String> },
     /// Wire protocol error
     Wire(WireProtocolError),
     /// Input validation error
@@ -56,6 +58,13 @@ impl fmt::Display for CliError {
             CliError::Storage(e) => write!(f, "{}", format_storage_error(e)),
             CliError::Connection(e) => write!(f, "{}", format_connection_error(e)),
             CliError::Protocol(e) => write!(f, "{}", format_protocol_error(e)),
+            CliError::GameAcceptanceRejected { reason } => write!(
+                f,
+                "❌ Game acceptance rejected: {}",
+                reason
+                    .as_deref()
+                    .unwrap_or("the opponent did not provide a reason")
+            ),
             CliError::Wire(e) => write!(f, "{}", format_wire_error(e)),
             CliError::InvalidInput {
                 field,
@@ -223,6 +232,9 @@ pub fn cli_error_from_anyhow(err: anyhow::Error) -> CliError {
 }
 
 fn typed_cli_error_from_source(err: &(dyn std::error::Error + 'static)) -> Option<CliError> {
+    if let Some(e) = err.downcast_ref::<ChessProtocolError>() {
+        return Some(CliError::Protocol(e.clone()));
+    }
     if let Some(e) = err.downcast_ref::<ConnectionError>() {
         return Some(connection_error_from_ref(e));
     }

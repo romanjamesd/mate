@@ -3,13 +3,13 @@ use crate::cli::display::{
     display_board, display_game_status, display_games_list, display_move_history,
 };
 use crate::cli::error_handler::{cli_error_from_anyhow, CliError, CliResult};
-use crate::cli::network_manager::NetworkManager;
+use crate::cli::network_manager::{GameAcceptOutcome, NetworkManager};
 use crate::cli::validation::{InputValidationUtils, InputValidator};
 use crate::crypto::Identity;
 use crate::game::{
     store_game_accept_message, store_game_invite_message, GameOps, GameOpsError, MoveProcessor,
 };
-use crate::messages::chess::{generate_game_id, GameAccept, GameInvite};
+use crate::messages::chess::{generate_game_id, ChessProtocolError, GameAccept, GameInvite};
 use crate::messages::types::Message;
 
 use crate::storage::models::{Game, GameStatus, PlayerColor};
@@ -464,28 +464,44 @@ impl App {
         let dial = resolve_dial_target(&game)?;
         let accept = GameAccept::new(game_id.clone(), accepted_color);
 
-        match self
+        let outcome = self
             .network_manager
             .send_game_accept(&dial, game_id.clone(), accept.clone())
             .await
-        {
-            Ok(_outcome) => {
-                println!("✓ Game accepted successfully!");
+            .map_err(cli_error_from_anyhow)?;
 
+        if game.opponent_peer_id.is_empty() || outcome.peer_id() != game.opponent_peer_id {
+            return Err(CliError::Protocol(ChessProtocolError::SecurityViolation {
+                game_id,
+                violation: format!(
+                    "Acceptance response peer {} does not match game opponent {}",
+                    outcome.peer_id(),
+                    game.opponent_peer_id
+                ),
+            }));
+        }
+
+        match outcome {
+            GameAcceptOutcome::Accepted {
+                acknowledgement, ..
+            } => {
                 self.database
                     .update_game_status(&game_id, GameStatus::Active)
                     .map_err(CliError::from)?;
 
-                if let Err(e) = self.database.update_game_color(&game_id, my_color) {
-                    eprintln!("Warning: Failed to update game color: {e}");
-                }
+                self.database
+                    .update_game_color(&game_id, my_color)
+                    .map_err(CliError::from)?;
 
-                if let Err(e) =
-                    store_game_accept_message(&self.database, &accept, "local", self.peer_id())
-                {
-                    eprintln!("Warning: Failed to store acceptance message: {e}");
-                }
+                store_game_accept_message(
+                    &self.database,
+                    &acknowledgement,
+                    "local",
+                    self.peer_id(),
+                )
+                .map_err(CliError::from)?;
 
+                println!("✓ Game accepted successfully!");
                 println!(
                     "Game {} is now active!",
                     if game_id.len() > 8 {
@@ -507,7 +523,11 @@ impl App {
 
                 println!("Use 'mate board --game-id {game_id}' to view the board.");
             }
-            Err(e) => return Err(cli_error_from_anyhow(e)),
+            GameAcceptOutcome::Rejected { decline, .. } => {
+                return Err(CliError::GameAcceptanceRejected {
+                    reason: decline.reason,
+                });
+            }
         }
 
         Ok(())

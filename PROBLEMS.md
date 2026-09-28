@@ -27,6 +27,10 @@ replies with `GameDecline`, but B's CLI still prints "✓ Game accepted
 successfully!", flips the local game to Active, and stores a GameAccept row —
 while the remote never activated the game. Permanent desync, no error shown.
 
+A secondary ordering defect compounds this: "✓ Game accepted successfully!"
+is printed *before* the local writes, so even on a genuine acceptance a
+failing `update_game_status` prints success and then returns an error.
+
 **Recommended fix — typed per-command outcome:** Change the specialized
 `NetworkManager::send_game_accept` API so a successfully completed transport
 is not itself represented as a successful acceptance. Keep the existing
@@ -48,40 +52,53 @@ enum GameAcceptOutcome {
 }
 ```
 
-`send_game_accept` should return `Result<GameAcceptOutcome, ...>` and classify
-the received message using the request it just sent:
+`send_game_accept` should return `Result<GameAcceptOutcome, ...>`. Put the
+classification in a pure function (e.g. `classify_accept_response(&GameAccept,
+SendOutcome) -> Result<GameAcceptOutcome, ChessProtocolError>` in
+`src/cli/network_manager.rs`) so it is unit-testable without a network. It
+classifies the received message using the request just sent:
 
 - A `Message::GameAccept` is `Accepted` only when its `game_id` and
-  `accepted_color` exactly match the request. An echo with different values is
-  not confirmation of this operation.
+  `accepted_color` exactly match the request. This is a correlation check
+  only: the server echoes the request verbatim in both its Pending and
+  already-Active branches (`src/network/handlers.rs`), so a matching color does
+  **not** prove the remote's stored acceptance agrees. Detecting a conflicting
+  earlier acceptance is the server-side idempotency fix in finding 3.
 - A `Message::GameDecline` is `Rejected` only when its `game_id` matches the
   request. Preserve its optional reason so the CLI can explain why the remote
   refused the accept.
 - A mismatched game ID, mismatched accepted color, or any other message variant
-  is a protocol error, preferably `ChessProtocolError::UnexpectedMessage` (or
-  a more specific correlation error if one is introduced). It must never be
-  treated as either acceptance or an ordinary remote rejection.
+  is a protocol error. It must never be treated as either acceptance or an
+  ordinary remote rejection. `ChessProtocolError` has not been confirmed to
+  have an `UnexpectedMessage` variant; if it lacks one, add an
+  `UnexpectedResponse { expected, got }` (or similar) variant, which already
+  maps to `CliError::Protocol`.
 - Preserve the authenticated `peer_id` in both typed outcomes. Before applying
-  either outcome, `handle_accept` should verify it is the opponent recorded for
-  the game whenever `opponent_peer_id` contains a cryptographic peer ID.
-  Transitional rows that still contain a dial address should be handled
-  explicitly rather than silently weakening identity validation.
+  either outcome, `handle_accept` must require
+  `outcome.peer_id == game.opponent_peer_id` and return an error otherwise
+  (including when `opponent_peer_id` is empty). No transitional/legacy
+  handling is needed: the invitee's row is always created by
+  `handle_game_invite` with the handshake-authenticated peer ID, and there is
+  no deployed-data compatibility requirement.
 
-Transport failure and remote rejection must remain different error paths.
-Connection/send/receive failures may retain the current retry or offline-queue
-behavior. A received `GameDecline` proves that the request reached an online
-peer, so it must not queue the `GameAccept` for later retransmission and should
-not be retried as though the peer were unavailable.
+Transport failure and remote rejection must remain different error paths. A
+received `GameDecline` already arrives as `Ok` from `send_message_with_retry`
+and therefore never reaches `store_pending_message`; the refactor must keep it
+that way (a received decline or protocol error must not be queued). Note that
+the pending-message queue lives in memory in a per-process `NetworkManager`, so
+for a one-shot `mate accept` it has no practical retransmission effect; this is
+a regression guard, not a behavioral feature.
 
 `handle_accept` should then exhaustively match `GameAcceptOutcome` before
 performing local writes:
 
 - On validated `Accepted`, update the local status and color and store the
-  `GameAccept` row, then print the success messages.
+  `GameAccept` row, and only then print the success messages. Keep the
+  existing three writes for now; making them atomic is finding 3's scope.
 - On `Rejected`, return a user-facing error containing the decline reason and
   leave the local status, color, and message history unchanged.
 - On a transport, identity, correlation, or unexpected-response error, return
-  an error and likewise perform no local acceptance writes.
+  an error and likewise perform no local acceptance writes or success output.
 
 Do not automatically mark the local game `Abandoned` merely because
 `send_game_accept` received `GameDecline`. The server currently overloads
@@ -92,12 +109,11 @@ Leave the local invitation `Pending` unless the protocol later adds a typed
 terminal rejection or an explicit synchronization step determines the remote
 state.
 
-As adjacent hardening, the three post-ack writes should be moved behind one
-database operation that transactionally performs a conditional
-`Pending -> Active` transition, updates `my_color`, and stores the
-`GameAccept`. If that transaction fails after the remote has accepted, return
-an error that states the remote may already be Active. The server's idempotent
-same-peer `GameAccept` handling then makes a retry a viable recovery path.
+**Out of scope for this finding:** transactional accept finalization (one
+conditional `Pending -> Active` + `my_color` + `GameAccept` operation, with an
+explicit "remote may already be Active" error on failure) and strict
+server-side idempotency for conflicting Active-state retries. Both belong to
+finding 3 and should be implemented and tested there, not duplicated here.
 
 Regression coverage should include:
 
@@ -106,9 +122,11 @@ Regression coverage should include:
 - a live CLI/server test where the remote game is already Abandoned;
 - a live CLI/server test where the authenticated peer does not match;
 - assertions that every rejection/error leaves the local game Pending, keeps
-  its original color, and stores no local `GameAccept`;
+  its original color, stores no local `GameAccept`, and prints no success
+  message;
 - an assertion that the remote decline reason reaches the CLI error;
-- an assertion that a remote rejection is not placed in the offline queue; and
+- an assertion that a remote rejection leaves
+  `get_network_stats().total_pending_messages == 0`; and
 - the existing happy-path test proving a matching authenticated
   `GameAccept` still activates both peers with opposite colors.
 
