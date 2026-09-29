@@ -72,6 +72,9 @@ pub enum Commands {
         color: Option<String>,
     },
 
+    /// Resend a persisted outbound invitation using its original payload and peer identity
+    RetryInvite { game_id: String },
+
     /// Accept a pending game invitation
     ///
     /// Accepts an incoming chess game invitation by game ID.

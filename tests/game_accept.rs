@@ -162,7 +162,28 @@ async fn accept_remote_rejections_and_identity_errors_leave_invitation_unchanged
             "blank inviter" => "",
             _ => &peer_id,
         };
-        seed_local(&app, &game_id, opponent, &address);
+        seed_local(
+            &app,
+            &game_id,
+            if opponent.is_empty() {
+                "legacy-peer"
+            } else {
+                opponent
+            },
+            &address,
+        );
+        if opponent.is_empty() {
+            // Simulate an old branch database; new storage APIs reject blank peers.
+            app.database
+                .with_connection(|conn| {
+                    conn.execute(
+                        "UPDATE games SET opponent_peer_id = '' WHERE id = ?1",
+                        [&game_id],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+        }
         let error = timeout(
             Duration::from_secs(5),
             app.handle_accept(game_id.clone(), Some("black".to_string())),

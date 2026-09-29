@@ -13,38 +13,56 @@ impl Database {
         signature: String,
         sender_peer_id: String,
     ) -> Result<Message> {
+        self.with_connection(|conn| {
+            Self::store_message_on(
+                conn,
+                game_id,
+                message_type,
+                content,
+                signature,
+                sender_peer_id,
+            )
+        })
+    }
+
+    pub(crate) fn store_message_on(
+        conn: &rusqlite::Connection,
+        game_id: String,
+        message_type: String,
+        content: String,
+        signature: String,
+        sender_peer_id: String,
+    ) -> Result<Message> {
         let now = Self::current_timestamp();
 
-        self.with_connection(|conn| {
-            conn.execute(
-                r#"
+        conn.execute(
+            r#"
                 INSERT INTO messages (
                     game_id, message_type, content, signature, sender_peer_id, created_at
                 ) VALUES (
                     :game_id, :message_type, :content, :signature, :sender_peer_id, :created_at
                 )
                 "#,
-                named_params! {
-                    ":game_id": game_id,
-                    ":message_type": message_type,
-                    ":content": content,
-                    ":signature": signature,
-                    ":sender_peer_id": sender_peer_id,
-                    ":created_at": now,
-                },
-            )?;
+            named_params! {
+                ":game_id": game_id,
+                ":message_type": message_type,
+                ":content": content,
+                ":signature": signature,
+                ":sender_peer_id": sender_peer_id,
+                ":created_at": now,
+            },
+        )?;
 
-            let message_id = conn.last_insert_rowid();
+        let message_id = conn.last_insert_rowid();
 
-            Ok(Message {
-                id: Some(message_id),
-                game_id,
-                message_type,
-                content,
-                signature,
-                sender_peer_id,
-                created_at: now,
-            })
+        Ok(Message {
+            id: Some(message_id),
+            game_id,
+            message_type,
+            content,
+            signature,
+            sender_peer_id,
+            created_at: now,
         })
     }
 

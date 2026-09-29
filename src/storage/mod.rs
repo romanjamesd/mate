@@ -1,6 +1,7 @@
 pub mod database;
 pub mod errors;
 pub mod games;
+mod invites;
 pub mod messages;
 pub mod models;
 pub mod schema;

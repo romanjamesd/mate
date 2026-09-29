@@ -535,6 +535,7 @@ async fn main() -> Result<()> {
         Commands::Games
         | Commands::Board { .. }
         | Commands::Invite { .. }
+        | Commands::RetryInvite { .. }
         | Commands::Accept { .. }
         | Commands::Move { .. }
         | Commands::History { .. } => {
@@ -603,6 +604,10 @@ async fn main() -> Result<()> {
                         }
                     }
                     (result, "board")
+                }
+
+                Commands::RetryInvite { game_id } => {
+                    (app.handle_retry_invite(game_id).await, "retry-invite")
                 }
 
                 Commands::Invite { address, color } => {

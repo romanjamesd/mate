@@ -31,6 +31,24 @@ impl Database {
         my_color: PlayerColor,
         metadata: Option<serde_json::Value>,
     ) -> Result<Game> {
+        self.with_connection(|conn| {
+            Self::create_game_on(conn, id, opponent_peer_id, my_color, metadata)
+        })
+    }
+
+    pub(crate) fn create_game_on(
+        conn: &rusqlite::Connection,
+        id: String,
+        opponent_peer_id: String,
+        my_color: PlayerColor,
+        metadata: Option<serde_json::Value>,
+    ) -> Result<Game> {
+        if opponent_peer_id.trim().is_empty() {
+            return Err(StorageError::invalid_data(
+                "game.opponent_peer_id",
+                "peer ID must not be blank",
+            ));
+        }
         if id.is_empty() {
             return Err(StorageError::invalid_data(
                 "game.id",
@@ -62,9 +80,8 @@ impl Database {
             })
             .transpose()?;
 
-        self.with_connection(|conn| {
-            conn.execute(
-                r#"
+        conn.execute(
+            r#"
                 INSERT INTO games (
                     id, opponent_peer_id, my_color, status, 
                     created_at, updated_at, completed_at, result, metadata
@@ -73,21 +90,20 @@ impl Database {
                     :created_at, :updated_at, :completed_at, :result, :metadata
                 )
                 "#,
-                named_params! {
-                    ":id": game.id,
-                    ":opponent_peer_id": game.opponent_peer_id,
-                    ":my_color": game.my_color.as_str(),
-                    ":status": game.status.as_str(),
-                    ":created_at": game.created_at,
-                    ":updated_at": game.updated_at,
-                    ":completed_at": game.completed_at,
-                    ":result": game.result.as_ref().map(|r| r.as_str()),
-                    ":metadata": serialized_metadata,
-                },
-            )
-            .map_err(|e| map_game_insert_error(e, &id))?;
-            Ok(game)
-        })
+            named_params! {
+                ":id": game.id,
+                ":opponent_peer_id": game.opponent_peer_id,
+                ":my_color": game.my_color.as_str(),
+                ":status": game.status.as_str(),
+                ":created_at": game.created_at,
+                ":updated_at": game.updated_at,
+                ":completed_at": game.completed_at,
+                ":result": game.result.as_ref().map(|r| r.as_str()),
+                ":metadata": serialized_metadata,
+            },
+        )
+        .map_err(|e| map_game_insert_error(e, &id))?;
+        Ok(game)
     }
 
     /// Get a game by ID
@@ -159,8 +175,14 @@ impl Database {
         })
     }
 
-    /// Update the opponent peer id (e.g. replace a placeholder after handshake)
+    /// Update the opponent peer ID, rejecting blank identities.
     pub fn update_opponent_peer_id(&self, game_id: &str, opponent_peer_id: &str) -> Result<()> {
+        if opponent_peer_id.trim().is_empty() {
+            return Err(StorageError::invalid_data(
+                "game.opponent_peer_id",
+                "peer ID must not be blank",
+            ));
+        }
         let now = Self::current_timestamp();
 
         self.with_connection(|conn| {
@@ -316,7 +338,7 @@ fn map_game_insert_error(err: rusqlite::Error, game_id: &str) -> StorageError {
 }
 
 /// Convert a database row to a Game struct
-fn game_from_row(row: &Row) -> rusqlite::Result<Game> {
+pub(crate) fn game_from_row(row: &Row) -> rusqlite::Result<Game> {
     let metadata_str: Option<String> = row.get("metadata")?;
     let metadata = match metadata_str {
         Some(s) => Some(serde_json::from_str(&s).map_err(|_e| {
