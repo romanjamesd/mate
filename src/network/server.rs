@@ -1,7 +1,6 @@
 use crate::crypto::Identity;
 use crate::storage::Database;
 use anyhow::{Context, Result};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
@@ -10,7 +9,7 @@ use tokio::net::TcpListener;
 use crate::messages::wire::{WireConfig, WireProtocolError, SERVER_MAX_CONCURRENT_CONNECTIONS};
 use crate::network::{Connection, ConnectionError};
 // Add async handling imports
-use tokio::task::{self, JoinHandle};
+use tokio::task::JoinSet;
 use tracing::{debug, error, info, instrument, warn};
 
 // Step 3: Shutdown communication imports
@@ -212,28 +211,25 @@ impl Server {
         );
 
         // Create shutdown broadcast channel for distributing signals to connections
-        let (shutdown_tx, mut shutdown_rx) = broadcast::channel::<()>(1);
+        let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
         // Track active connections for management
-        let mut active_connections: HashMap<usize, JoinHandle<()>> = HashMap::new();
+        // Dropping the server future also cancels its connection tasks.
+        let mut active_connections = JoinSet::new();
         let mut connection_counter = 0usize;
 
-        // Spawn shutdown signal handler
-        let shutdown_handle = {
-            let shutdown_tx = shutdown_tx.clone();
-            tokio::spawn(async move {
-                if let Err(e) = Self::wait_for_shutdown().await {
-                    error!("Error in shutdown handler: {}", e);
-                }
-                let _ = shutdown_tx.send(());
-            })
-        };
+        let shutdown_signal = Self::wait_for_shutdown();
+        tokio::pin!(shutdown_signal);
 
         // Main server loop with shutdown handling
         loop {
             tokio::select! {
                 // Handle shutdown signal
-                _ = shutdown_rx.recv() => {
+                result = &mut shutdown_signal => {
+                    if let Err(e) = result {
+                        error!("Error in shutdown handler: {}", e);
+                    }
+                    let _ = shutdown_tx.send(());
                     info!("Shutdown signal received, stopping accept loop");
                     break;
                 }
@@ -246,6 +242,9 @@ impl Server {
                             let connection_id = connection_counter;
 
                             info!("Accepted new connection {} from {}", connection_id, peer_addr);
+
+                            // Reap completed tasks before applying the connection limit.
+                            while active_connections.try_join_next().is_some() {}
 
                             // Check connection limits
                             if active_connections.len() >= SERVER_MAX_CONCURRENT_CONNECTIONS {
@@ -261,7 +260,7 @@ impl Server {
                             let shutdown_rx = shutdown_tx.subscribe(); // Create subscriber for connection
 
                             // Spawn async task for each connection with shutdown support
-                            let handle = task::spawn(async move {
+                            active_connections.spawn(async move {
                                 if let Err(e) = Self::handle_connection_with_shutdown(
                                     stream,
                                     identity,
@@ -273,19 +272,6 @@ impl Server {
                                     error!("Connection {} failed: {}", connection_id, e);
                                 } else {
                                     info!("Connection {} completed successfully", connection_id);
-                                }
-                            });
-
-                            // Track the connection
-                            active_connections.insert(connection_id, handle);
-
-                            // Clean up completed connections
-                            active_connections.retain(|id, handle| {
-                                if handle.is_finished() {
-                                    debug!("Cleaning up completed connection {}", id);
-                                    false
-                                } else {
-                                    true
                                 }
                             });
                         }
@@ -300,8 +286,7 @@ impl Server {
 
         // Graceful shutdown process
         info!("Performing graceful shutdown...");
-        self.graceful_shutdown(active_connections, shutdown_handle)
-            .await?;
+        self.graceful_shutdown(active_connections).await?;
 
         Ok(())
     }
@@ -445,11 +430,7 @@ impl Server {
     }
 
     /// Perform graceful shutdown of the server
-    async fn graceful_shutdown(
-        &self,
-        mut active_connections: HashMap<usize, JoinHandle<()>>,
-        shutdown_handle: JoinHandle<()>,
-    ) -> Result<()> {
+    async fn graceful_shutdown(&self, mut active_connections: JoinSet<()>) -> Result<()> {
         info!("Shutting down server gracefully...");
 
         // Stop accepting new connections (listener is dropped automatically)
@@ -464,38 +445,23 @@ impl Server {
             active_connections.len()
         );
 
-        while !active_connections.is_empty() && start_time.elapsed() < shutdown_timeout {
-            // Check for completed connections
-            active_connections.retain(|id, handle| {
-                if handle.is_finished() {
-                    info!("Connection {} completed during shutdown", id);
-                    false
-                } else {
-                    true
+        let shutdown_result = tokio::time::timeout(shutdown_timeout, async {
+            while let Some(result) = active_connections.join_next().await {
+                if let Err(e) = result {
+                    warn!("Connection task failed during shutdown: {}", e);
                 }
-            });
-
-            if !active_connections.is_empty() {
-                debug!("Still waiting for {} connections", active_connections.len());
-                tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        }
+        })
+        .await;
 
-        // Force close any remaining connections after timeout
-        if !active_connections.is_empty() {
+        if shutdown_result.is_err() {
             warn!(
-                "Forcing closure of {} remaining connections after timeout",
-                active_connections.len()
+                "Forcing closure of {} remaining connections after {:?}",
+                active_connections.len(),
+                start_time.elapsed()
             );
-
-            for (id, handle) in active_connections {
-                handle.abort();
-                warn!("Force-closed connection {}", id);
-            }
+            active_connections.shutdown().await;
         }
-
-        // Clean up shutdown handler
-        shutdown_handle.abort();
 
         info!("Server shutdown complete");
         Ok(())

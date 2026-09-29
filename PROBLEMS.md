@@ -11,7 +11,7 @@ out of scope for that work.
 
 ## Correctness bugs
 
-### 1. `handle_accept` ignores decline responses
+### 1. `handle_accept` ignores decline responses (DONE)
 
 **File:** `src/cli/app.rs:472`
 
@@ -137,64 +137,109 @@ state.
 
 ### 2. Failed peer-id backfill only warns, bricks the game
 
-**File:** `src/cli/app.rs:353`
+**File:** `src/cli/app.rs:321-401`
 
-`handle_invite` creates the game with a placeholder empty `opponent_peer_id`,
-then backfills it via `database.update_opponent_peer_id` after a successful
-handshake. If that DB write fails, the code only `eprintln!`s a warning and
-continues as if the invite succeeded.
+`handle_invite` creates the game with a placeholder empty `opponent_peer_id`
+(`app.rs:321-329`), then backfills it via `database.update_opponent_peer_id`
+after a successful send (`app.rs:353-358`). If that DB write fails, the code
+only `eprintln!`s a warning and continues as if the invite succeeded.
 
 **Failure scenario:** Invite send succeeds but the follow-up
 `update_opponent_peer_id` hits a transient SQLite error. `opponent_peer_id`
 stays `""` permanently. Every subsequent inbound `GameAccept`/`Move`/sync
 from the real opponent fails the `game.opponent_peer_id != peer_id` check in
-`src/network/handlers.rs` and is soft-declined — the game is silently
-bricked with no further error shown.
+`src/network/handlers.rs` (`:327`, `:440`, `:541`, `:627`) and is
+soft-declined. Outbound sends still work because they dial
+`metadata.dial_address`, so the game is silently one-way bricked with no
+further error shown.
 
-**Recommended fix — authenticate before creating the game:** Eliminate the
-placeholder/backfill sequence. Split authenticated connection establishment
-from invitation sending so `handle_invite` can first obtain the remote's
-cryptographically authenticated peer ID, then create the local game with that
-real peer ID and the dial address in metadata, and only then send the invite
-over the same authenticated connection. If sending retries on a new
-connection, require it to authenticate as the same peer before transmitting.
-This ordering ensures a local persistence failure occurs before the remote
-receives the invite, so a normal `Pending` game can never contain an empty
-opponent identity.
+**Related defects in the same function (verified):**
 
-Enforce that invariant in both the storage API and schema by rejecting blank
-`opponent_peer_id` values for ordinary game rows. The network path should also
-require `Connection::peer_identity()` after a successful handshake instead of
-falling back to an identity taken from the response envelope, and it should
-only report success after receiving a correlated `GameInvite` echo for the
-same game ID.
+- Any response counts as "✓ Invitation sent successfully!", including a
+  `GameDecline`. The peer-id backfill and the local `GameInvite` store run
+  even when the remote declined.
+- The `Message::GameAccept` branch (`app.rs:378`) is dead code:
+  `handle_game_invite` never auto-accepts. It replies only with a
+  `GameInvite` echo or a `GameDecline`.
+- `send_message_with_strategy` in `src/cli/network_manager.rs` falls back to
+  the unauthenticated envelope `sender` when `Connection::peer_identity()` is
+  `None`.
+- On send failure, `send_game_invite` queues the invite in the in-memory
+  pending-message queue for resending, while `handle_invite` marks the game
+  `Abandoned`. These contradict each other. It is harmless today only because
+  the queue dies when the CLI process exits.
 
-As a short-term bridge, make the current backfill mandatory: transactionally
-update the peer ID and store the local `GameInvite`, retry recoverable storage
-errors with a bounded policy, and print success only after that transaction
-commits. If finalization still fails after the remote acknowledged the invite,
-return an explicit error explaining that delivery may have succeeded; merely
-propagating the SQLite error still leaves an unrecoverable row.
+**Scope note:** The empty-ID placeholder was introduced on this branch
+(`fb91c6a`) and is not on `main`. Blank-ID rows can therefore only exist in
+dev databases created from this branch. On `main`, `handle_invite` stores the
+**dial address** in `opponent_peer_id`. Those address-shaped rows are the real
+legacy population, and they are a separate issue (see "Out of scope" below).
 
-Existing rows with an empty peer ID must be surfaced as incomplete rather than
-as normal pending games. A repair flow may reconnect to the stored
-`metadata.dial_address`, show or require confirmation of the authenticated
-peer fingerprint, resend the same game ID using the server's idempotent
-same-peer invite handling, and then conditionally persist that identity. Do
-not automatically let the first inbound peer claim an empty row: that would
-make knowledge of the game ID sufficient to replace cryptographic opponent
-authentication.
+**Recommended fix — authenticate, persist, then send:**
+
+1. **Split connect from send.** Add something like
+   `NetworkManager::connect_authenticated(addr) -> (Connection, peer_id)`
+   that requires `Connection::peer_identity()` after the handshake and never
+   falls back to the envelope `sender`. Add a send-on-connection variant, for
+   example `send_game_invite_on(&mut conn, invite) -> InviteOutcome`. If a
+   retry reconnects, the new connection must authenticate as the same peer id
+   before anything is transmitted. Otherwise fail.
+
+2. **Persist everything before sending.** After the handshake and before
+   sending, create the game with the real peer id and
+   `metadata.dial_address`, and store the local `GameInvite` message, in a
+   **single transaction**. The invite payload is fully known before sending,
+   so nothing mandatory remains to persist afterwards. A persistence failure
+   then aborts before the remote sees anything.
+
+3. **Classify the response (mirror `classify_accept_response` from item
+   1).** `InviteOutcome::Acknowledged` means the response is a
+   `Message::GameInvite` equal to the sent invite (same `game_id` and
+   payload). `InviteOutcome::Declined` means a `GameDecline` for the same
+   `game_id`. Any other response is a `ChessProtocolError::UnexpectedMessage`.
+   Print success only on `Acknowledged`. Remove the dead `GameAccept` branch.
+
+4. **Post-send writes are status-only.** On `Declined` or a send failure, set
+   the game to `Abandoned`. If that status write fails, the worst case is a
+   stale `Pending` row that the remote never received. That row can be
+   inspected and discarded; it cannot desync or brick a game. Stop queueing
+   invites in the pending-message queue on failure (or, alternatively, leave
+   the game `Pending`), so that local state and retry intent agree.
+
+5. **Enforce the invariant in the storage API.** Reject a blank
+   `opponent_peer_id` in `create_game_with_id` and `update_opponent_peer_id`.
+   Once the backfill is gone, `update_opponent_peer_id` may have no callers
+   and can be deleted. A schema-level `CHECK(opponent_peer_id <> '')` is
+   optional: SQLite cannot add a CHECK in place, so it needs migration v2 with
+   a table rebuild. Add it only if database-level enforcement is wanted.
+
+**Not recommended:**
+
+- A "short-term bridge" that keeps the backfill but makes it mandatory, with
+  bounded SQLite retries and a "delivery may have succeeded" error. It
+  contradicts the fix above and would be throwaway work.
+- A reconnect/fingerprint repair flow for blank-ID rows. Those rows exist only
+  in branch dev databases, so delete or ignore them. An unrelated peer
+  claiming an empty row is already impossible, because `"" != peer_id` in
+  every handler.
+
+**Out of scope (track separately):** Rows from `main` whose
+`opponent_peer_id` is a dial address, not a peer id, are also rejected by
+every handler's peer check. `app.rs:644` already treats that shape as a
+fallback address. These rows need their own migration or repair decision.
 
 Regression coverage should include:
 
-- a local game-insert failure after handshake proving no invite reaches the
-  remote;
-- an invariant that successful invites never leave a blank opponent peer ID;
+- a local game-insert or transaction failure after the handshake, proving no
+  invite reaches the remote;
+- an invariant that a successful invite never leaves a blank opponent peer
+  id, and that the local `GameInvite` message exists;
 - rejection when an invite retry reconnects to a different peer identity;
-- fault-injected finalization failure proving the CLI returns an error and
-  does not print success;
-- detection and explicit repair of legacy blank-ID rows; and
-- rejection of attempts by an unrelated peer to claim an incomplete game.
+- a `GameDecline` response, proving the CLI prints no success and the game
+  ends `Abandoned`;
+- an uncorrelated response (wrong game id or unexpected message type),
+  proving a protocol error is returned; and
+- storage API rejection of a blank `opponent_peer_id`.
 
 ### 3. Failed color update only warns, breaks turn parity
 

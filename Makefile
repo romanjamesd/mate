@@ -15,7 +15,7 @@ clippy:
 test-ci:
 	CI=true GITHUB_ACTIONS=true TEST_TIMEOUT_MULTIPLIER=8.0 RUST_LOG=debug cargo test
 
-# Run tests single-threaded for CI reliability (avoids race conditions)
+# Run tests with one build job and quieter logs for resource-constrained CI
 test-ci-safe:
 	CI=true GITHUB_ACTIONS=true TEST_TIMEOUT_MULTIPLIER=8.0 RUST_LOG=error cargo test --jobs 1
 
@@ -29,4 +29,4 @@ check-coverage:
 
 # Quick local check
 check: fmt clippy
-	@echo "All code quality checks passed!" 
+	@echo "All code quality checks passed!"

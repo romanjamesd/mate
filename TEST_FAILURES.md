@@ -67,3 +67,39 @@ No `error` or `failed` string appears, even though the test aborts and restarts 
 `integration::interactive_initialization::test_connection_information_display` (`tests/integration/interactive_initialization.rs:90`).
 
 The session banner shows the peer id and `Connection status: Active`. It does not contain the dial address (`127.0.0.1:18091` in this test) or the substring `127.0.0.1`. The earlier assertion (`Connected` or `connection`) passes; the address assertion fails.
+
+
+## Root causes and patches (2026-09-29)
+
+The same seven failures reproduced with loopback networking allowed. The initial
+sandboxed run failed earlier because binding local TCP listeners was denied;
+that was an execution restriction, not an application defect.
+
+- All five one-shot failures shared one cause: `connect --message` reported its
+  successful echo and round-trip time with `info!`, which `RUST_LOG=error` filters
+  out. The result now uses `println!`, and the one-shot regression tests explicitly
+  run with error-only logging.
+- The interactive address failure came from displaying only the authenticated
+  peer ID. Both the session banner and `info` command now show the dial address.
+- The multiple reconnection failure came from detached server tasks. Dropping
+  ordinary Tokio `JoinHandle`s does not cancel their tasks. Aborting `Server::run`
+  left its connection handlers and signal listener running, so the original
+  connection kept echoing messages. Connections now belong to a `JoinSet`, which
+  aborts them when the server future is dropped; signal handling stays in that
+  future. Graceful shutdown still broadcasts to handlers and waits up to 30 seconds.
+  The regression test now waits for child output and requires two disconnections,
+  two reconnections, and successful echoes after each restart.
+
+With real disconnections, `test_reconnection_behavior_when_receiving_fails`
+exposed a further defect: the receive-error branch reconnected but never retried
+its pending ping. Send and receive errors now share the existing reconnect and
+single-retry path, preserving echo messages and session statistics.
+
+The Makefile comment now correctly describes `--jobs 1` as limiting build jobs;
+it does not serialize test execution.
+
+Validation after the patches: `make test-ci-safe` exited 0 with 811 unit and
+integration tests plus 33 documentation tests passing (844 total, no failures).
+`cargo fmt --all -- --check`,
+`cargo clippy --all-targets --all-features -- -D warnings`, and
+`git diff --check` also passed.
