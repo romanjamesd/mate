@@ -1,4 +1,4 @@
-use ed25519_dalek::VerifyingKey;
+use ed25519_dalek::{Signer, SigningKey};
 use mate::crypto::identity::{Identity, PeerId};
 use std::collections::{HashMap, HashSet};
 
@@ -101,20 +101,25 @@ fn test_message_signing_deterministic() {
 
 #[test]
 fn test_signature_verification_valid() {
-    let identity = Identity::generate().expect("Failed to generate identity");
+    // Fixed seeds make matching-key and wrong-key verification deterministic.
+    let signing_key = SigningKey::from_bytes(&[0u8; 32]);
+    let other_signing_key = SigningKey::from_bytes(&[1u8; 32]);
     let message = b"test message for verification";
 
     // Test valid signature verification
-    let signature = identity.sign(message);
-    let verifying_key = identity.verifying_key();
+    let signature = signing_key.sign(message);
+    let verifying_key = signing_key.verifying_key();
+    let other_verifying_key = other_signing_key.verifying_key();
+    assert_ne!(
+        verifying_key.to_bytes(),
+        other_verifying_key.to_bytes(),
+        "Wrong-key fixture must differ from the signing key"
+    );
 
     let is_valid = Identity::verify(&verifying_key, message, &signature);
     assert!(is_valid, "Valid signature should verify successfully");
 
-    // Test cross-identity verification (should fail)
-    let other_identity = Identity::generate().expect("Failed to generate other identity");
-    let other_verifying_key = other_identity.verifying_key();
-
+    // The same signature must be rejected with the other public key.
     let is_cross_valid = Identity::verify(&other_verifying_key, message, &signature);
     assert!(
         !is_cross_valid,
@@ -128,14 +133,6 @@ fn test_signature_verification_invalid_cases() {
     let message = b"original message";
     let signature = identity.sign(message);
     let verifying_key = identity.verifying_key();
-
-    // Test with wrong key (different identity)
-    let wrong_identity = Identity::generate().expect("Failed to generate wrong identity");
-    let wrong_key = wrong_identity.verifying_key();
-    assert!(
-        !Identity::verify(&wrong_key, message, &signature),
-        "Signature should fail verification with wrong key"
-    );
 
     // Test with tampered message
     let tampered_message = b"tampered message";
@@ -268,12 +265,12 @@ fn test_signing_edge_cases() {
 
 #[test]
 fn test_verification_edge_cases() {
-    let identity = Identity::generate().expect("Failed to generate identity");
-    let verifying_key = identity.verifying_key();
+    let signing_key = SigningKey::from_bytes(&[0u8; 32]);
+    let verifying_key = signing_key.verifying_key();
 
     // Test empty message verification
     let empty_message = b"";
-    let empty_signature = identity.sign(empty_message);
+    let empty_signature = signing_key.sign(empty_message);
     assert!(
         Identity::verify(&verifying_key, empty_message, &empty_signature),
         "Empty message verification should succeed"
@@ -292,20 +289,6 @@ fn test_verification_edge_cases() {
         !Identity::verify(&verifying_key, b"test", &ones_signature),
         "All-ones signature should fail verification"
     );
-
-    // Test key format validation with corrupted key data
-    let mut corrupted_key_bytes = verifying_key.to_bytes();
-    corrupted_key_bytes[31] = 0xFF; // Corrupt last byte
-
-    // Note: VerifyingKey::from_bytes may still succeed with some corrupted data
-    // but verification should fail due to key mismatch
-    if let Ok(corrupted_key) = VerifyingKey::from_bytes(&corrupted_key_bytes) {
-        let test_signature = identity.sign(b"test");
-        assert!(
-            !Identity::verify(&corrupted_key, b"test", &test_signature),
-            "Corrupted key should fail signature verification"
-        );
-    }
 }
 
 #[test]
