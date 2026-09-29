@@ -199,14 +199,51 @@ legacy population, and they are a separate issue (see "Out of scope" below).
    `game_id`. Any other response is a `ChessProtocolError::UnexpectedMessage`.
    Print success only on `Acknowledged`. Remove the dead `GameAccept` branch.
 
-4. **Post-send writes are status-only.** On `Declined` or a send failure, set
-   the game to `Abandoned`. If that status write fails, the worst case is a
-   stale `Pending` row that the remote never received. That row can be
-   inspected and discarded; it cannot desync or brick a game. Stop queueing
-   invites in the pending-message queue on failure (or, alternatively, leave
-   the game `Pending`), so that local state and retry intent agree.
+4. **Preserve recoverable state after uncertain delivery.** A send or
+   receive failure does not prove that the remote never received the invite:
+   the server persists the game before sending its acknowledgement, which can
+   be lost. After retries are exhausted, leave the local game `Pending` and
+   return an explicit error that delivery may have succeeded. Likewise, an
+   unexpected or uncorrelated response must not authorize success or an
+   automatic transition to `Abandoned`. A concurrent inbound acceptance may
+   already have activated the game; error handling must not overwrite that
+   state.
 
-5. **Enforce the invariant in the storage API.** Reject a blank
+   A correlated `GameDecline` is an application-level rejection, but the
+   current protocol does not distinguish permanent rejection from transient
+   persistence failures or state conflicts. Report its reason, print no
+   success, and preserve the local state. Only abandon automatically when a
+   future typed response reliably establishes terminal rejection or explicit
+   synchronization determines the remote state. Do not infer terminal
+   semantics from the free-text decline reason.
+
+   Provide a retry path for the already-persisted invitation, including after
+   a process restart. It must load the original `GameInvite` and reuse its
+   **game ID, exact payload, and authenticated opponent peer ID**, rather than
+   creating a new game or reconstructing the payload from current config.
+   Authenticate every reconnect against that stored opponent before sending.
+   The existing same-peer Pending invite handler supports idempotent retries;
+   retries against other remote states must return a rejection for inspection
+   or synchronization rather than blindly changing local state. Remove the
+   per-process in-memory invite queue in favor of this explicit retry path,
+   or make any retained retry mechanism follow the same stored-payload and
+   peer-identity rules. A Pending row alone does not provide usable recovery
+   unless a retry entry point exists.
+
+5. **Make inbound invite persistence atomic too.** In
+   `handle_game_invite`, create the remote game and store its `GameInvite`
+   message in a single transaction, and acknowledge only after commit. Today,
+   a message-insert failure returns `GameDecline` but leaves a remote
+   `Pending` game behind. Roll back both writes on failure. For an existing
+   same-peer Pending game, acknowledge an identical retry and reject a
+   conflicting stored invitation payload; do not echo a changed request as
+   though it matched the previously persisted invitation. Use
+   `Database::with_transaction` with connection-level SQL helpers, not calls
+   to methods that would lock the same database mutex again. This removes
+   partial persistence but does not make every `GameDecline` terminal or
+   eliminate acknowledgement loss.
+
+6. **Enforce the invariant in the storage API.** Reject a blank
    `opponent_peer_id` in `create_game_with_id` and `update_opponent_peer_id`.
    Once the backfill is gone, `update_opponent_peer_id` may have no callers
    and can be deleted. A schema-level `CHECK(opponent_peer_id <> '')` is
@@ -235,10 +272,22 @@ Regression coverage should include:
 - an invariant that a successful invite never leaves a blank opponent peer
   id, and that the local `GameInvite` message exists;
 - rejection when an invite retry reconnects to a different peer identity;
-- a `GameDecline` response, proving the CLI prints no success and the game
-  ends `Abandoned`;
+- a correlated `GameDecline` response, proving the CLI prints no success,
+  reports the reason, and preserves local state without assuming terminal
+  rejection;
+- a remote commit followed by a lost acknowledgement and exhausted retries,
+  proving the local game remains Pending and can still receive acceptance;
+- retrying the persisted invitation after a process restart, proving the
+  original game ID and exact payload are reused, the stored opponent is
+  authenticated, and no duplicate game or invitation message is created;
+- an inbound invitation-message insert failure, proving the remote game and
+  message are both rolled back before a persistence decline is returned;
+- an identical same-peer Pending retry succeeding and a conflicting payload
+  being rejected without changing the stored invitation;
+- an inbound acceptance racing with a failed invite operation, proving error
+  handling does not overwrite the resulting Active state;
 - an uncorrelated response (wrong game id or unexpected message type),
-  proving a protocol error is returned; and
+  proving a protocol error is returned without abandoning the game; and
 - storage API rejection of a blank `opponent_peer_id`.
 
 ### 3. Failed color update only warns, breaks turn parity

@@ -1,35 +1,54 @@
-# Unify chess runtime paths and improve peer communication
+# Persist invitations atomically and recover safely after delivery failures
 
 ## Summary
 
-Consolidates the CLI and server chess logic into a shared game module, replacing
-duplicated implementations and inconsistent stored message formats. Board views,
-move history, and synchronization now reconstruct positions through the same
-logic, and outgoing moves use the resulting board state before being persisted
-after a successful send.
+Previously, sending an invitation created a game with a blank opponent peer ID,
+then filled in the identity and stored the invitation after the network operation.
+Those writes could fail after the remote had already persisted the invitation,
+leaving an unusable local game. A lost acknowledgement could also mark the local
+game abandoned even though the remote had received it.
+
+Authenticate the opponent first, then commit the pending game and its original
+`GameInvite` together before transmitting the invitation. Preserve local state
+when delivery is uncertain and provide an explicit retry command that works after
+a process restart.
 
 ## Changes
 
-- Standardize chess message storage and route CLI game commands and server
-  handlers through shared game operations, persistence, and board reconstruction.
-- Fix invite and move routing by advertising a dial-back address and storing
-  network addresses separately from authenticated peer identities.
-- Require a matching acceptance acknowledgement from the expected peer before
-  activating a game. Report declines, invalid responses, and persistence failures
-  without announcing success.
-- Improve CLI validation and error messages, including coordinate/castling move
-  input and game selection for board and history commands.
-- Keep echo results visible with quiet logging, show the connected peer address,
-  and retry pending messages after send or receive failures.
-- Cancel connection tasks when the server stops and strengthen reconnection tests.
-- Update planning, known-issue, and test-failure documentation.
+- Add transactional storage operations for outbound and inbound invitations.
+  Persistence failures roll back both the game and invitation message; inbound
+  acknowledgements are returned only after commit.
+- Remove post-send peer ID backfilling and reject blank or whitespace-only
+  opponent identities in game creation and identity updates.
+- Require an acknowledgement matching the complete invitation payload, or a
+  decline matching its game ID. Declines and protocol errors report failure
+  without printing success or overwriting local game status, including a
+  concurrent acceptance that has already activated the game.
+- Add `mate retry-invite <game-id>` for pending outbound invitations. Reload the
+  original game ID, payload, dial address, and opponent identity; authenticate
+  every connection against that opponent before transmitting. Invitations no
+  longer enter the in-memory pending-message queue.
+- Acknowledge identical inbound retries without duplicate messages; reject
+  conflicting payloads, different peers, and games that are no longer pending.
+- Document recovery in the README and expand the invitation failure scenarios
+  and regression requirements in `PROBLEMS.md`.
 
 ## Validation
 
-Adds and updates regression coverage for shared game state, message storage,
-invitation acceptance, CLI behavior, and connection recovery. `TEST_FAILURES.md`
-records a successful `make test-ci-safe` run (844 tests, including documentation
-tests), formatting, and Clippy checks after the fixes.
+- `cargo fmt --all -- --check` — passed.
+- `cargo clippy --all-targets --all-features -- -D warnings` — passed.
+- `cargo test --test game_invite --test game_accept` — 14 tests passed.
+- `make test-ci-safe` — 852 tests passed, including documentation tests.
 
-Full chess legality/checkmate detection, SAN input, and migration of legacy
-snake_case message rows remain outside this change.
+Regression coverage includes rollback on injected persistence failures, no
+transmission before local commit, exact response correlation, peer replacement
+during reconnects, retries after restart without duplicates, lost acknowledgements,
+and acceptance racing with delivery failure.
+
+## Compatibility
+
+No wire-format or database-schema migration is introduced. Legacy invitations
+without a unique original outbound payload or a usable opponent identity are not
+repaired by this change. Declines preserve local state because the current
+free-text response does not reliably distinguish terminal rejection from a
+transient failure.

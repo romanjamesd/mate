@@ -3,21 +3,17 @@ use crate::cli::display::{
     display_board, display_game_status, display_games_list, display_move_history,
 };
 use crate::cli::error_handler::{cli_error_from_anyhow, CliError, CliResult};
-use crate::cli::network_manager::{GameAcceptOutcome, NetworkManager};
+use crate::cli::network_manager::{GameAcceptOutcome, InviteOutcome, NetworkManager};
 use crate::cli::validation::{InputValidationUtils, InputValidator};
 use crate::crypto::Identity;
-use crate::game::{
-    store_game_accept_message, store_game_invite_message, GameOps, GameOpsError, MoveProcessor,
-};
+use crate::game::{store_game_accept_message, GameOps, GameOpsError, MoveProcessor};
 use crate::messages::chess::{generate_game_id, ChessProtocolError, GameAccept, GameInvite};
-use crate::messages::types::Message;
 
 use crate::storage::models::{Game, GameStatus, PlayerColor};
 use crate::storage::Database;
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::path::PathBuf;
 
 use std::sync::Arc;
@@ -316,103 +312,130 @@ impl App {
             }
         };
 
-        // Create the game record with dial address in metadata. Opponent peer
-        // id is filled in after a successful handshake.
+        let (connection, peer_id) = self
+            .network_manager
+            .connect_authenticated(&address)
+            .await
+            .map_err(cli_error_from_anyhow)?;
+        let invite = GameInvite::new(generate_game_id(), suggested_color)
+            .with_reply_to(self.config.default_bind_addr.clone());
         let game = self
             .database
-            .create_game_with_id(
-                generate_game_id(),
-                String::new(),
-                my_color.clone(),
-                Some(json!({ "dial_address": address })),
-            )
+            .create_outbound_invite(&invite, &peer_id, my_color, &address, self.peer_id())
             .map_err(CliError::from)?;
-
-        let game_display = if game.id.len() > 8 {
-            let short_id = &game.id[..8];
-            format!("{short_id}...")
-        } else {
-            game.id.clone()
-        };
-        let game_full_id = &game.id;
-        println!("Created game {game_display} with ID: {game_full_id}");
-
-        // Create game invitation with dial-back listen address for the invitee.
-        let invite = GameInvite::new(game.id.clone(), suggested_color)
-            .with_reply_to(self.config.default_bind_addr.clone());
-
-        // Send the invitation using network manager
-        match self
-            .network_manager
-            .send_game_invite(&address, game.id.clone(), invite.clone())
+        println!("Created game with ID: {}", game.id);
+        self.deliver_invite(&address, connection, &peer_id, invite)
             .await
+    }
+
+    /// Retry the original outbound invitation, including after a process restart.
+    pub async fn handle_retry_invite(&self, game_id: String) -> CliResult<()> {
+        let game = self.database.get_game(&game_id).map_err(CliError::from)?;
+        if game.status != GameStatus::Pending {
+            return Err(CliError::UserError {
+                message: format!("Game {game_id} is not pending (status: {:?})", game.status),
+                suggestion: None,
+            });
+        }
+        let messages = self
+            .database
+            .get_messages_by_type(&game_id, "GameInvite")
+            .map_err(CliError::from)?;
+        if messages.len() != 1
+            || messages[0].sender_peer_id != self.peer_id()
+            || messages[0].signature != "local"
         {
-            Ok(outcome) => {
+            return Err(CliError::UserError {
+                message: format!("Game {game_id} has no unique original outbound invitation"),
+                suggestion: None,
+            });
+        }
+        let invite: GameInvite = serde_json::from_str(&messages[0].content).map_err(|e| {
+            CliError::Storage(crate::storage::StorageError::serialization_error(
+                "stored GameInvite",
+                e,
+            ))
+        })?;
+        if invite.game_id != game.id {
+            return Err(CliError::UserError {
+                message: "Stored invitation game ID mismatch".to_string(),
+                suggestion: None,
+            });
+        }
+        let address = game
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("dial_address"))
+            .and_then(|a| a.as_str())
+            .ok_or_else(|| CliError::UserError {
+                message: "Invitation has no stored dial address".to_string(),
+                suggestion: None,
+            })?;
+        let (connection, _) = self
+            .network_manager
+            .connect_authenticated(address)
+            .await
+            .map_err(cli_error_from_anyhow)?;
+        self.deliver_invite(address, connection, &game.opponent_peer_id, invite)
+            .await
+    }
+
+    async fn deliver_invite(
+        &self,
+        address: &str,
+        connection: crate::network::Connection,
+        peer_id: &str,
+        invite: GameInvite,
+    ) -> CliResult<()> {
+        let game_id = invite.game_id.clone();
+        let outcome = self
+            .network_manager
+            .send_game_invite_on(address, connection, peer_id, invite)
+            .await
+            .map_err(|error| {
+                // Neither an uncertain delivery nor a protocol error authorizes
+                // a status write: an inbound acceptance may already be Active.
+                if error.downcast_ref::<ChessProtocolError>().is_some() {
+                    cli_error_from_anyhow(error)
+                } else {
+                    CliError::UserError {
+                        message: format!(
+                            "Invitation delivery may have succeeded for game {game_id}: {error}"
+                        ),
+                        suggestion: Some(format!(
+                            "Inspect 'mate games' or retry with 'mate retry-invite {game_id}'"
+                        )),
+                    }
+                }
+            })?;
+        match outcome {
+            InviteOutcome::Acknowledged {
+                acknowledgement, ..
+            } => {
                 println!("✓ Invitation sent successfully!");
-
-                if let Err(e) = self
-                    .database
-                    .update_opponent_peer_id(&game.id, &outcome.peer_id)
-                {
-                    eprintln!("Warning: Failed to update opponent peer id: {e}");
-                }
-
-                if let Err(e) =
-                    store_game_invite_message(&self.database, &invite, "local", self.peer_id())
-                {
-                    eprintln!("Warning: Failed to store invitation message: {e}");
-                }
-
-                let game_id_str = &game.id;
-                println!("Game ID: {game_id_str}");
-                match suggested_color {
+                println!("Game ID: {game_id}");
+                match acknowledgement.suggested_color {
                     Some(Color::White) => println!("You will play as Black if they accept"),
                     Some(Color::Black) => println!("You will play as White if they accept"),
                     None => println!("Color will be determined when they accept"),
                 }
                 println!("Waiting for opponent to accept...");
                 println!("Use 'mate games' to check invitation status.");
-
-                // Log the response type for debugging
-                match outcome.response {
-                    Message::GameAccept(_) => {
-                        println!("⚡ Invitation accepted immediately!");
-                        // Update game status to active
-                        if let Err(e) = self
-                            .database
-                            .update_game_status(&game.id, GameStatus::Active)
-                        {
-                            eprintln!("Warning: Failed to update game status: {e}");
-                        }
-                    }
-                    Message::GameDecline(_) => {
-                        println!("❌ Invitation declined.");
-                        // Update game status to abandoned
-                        if let Err(e) = self
-                            .database
-                            .update_game_status(&game.id, GameStatus::Abandoned)
-                        {
-                            eprintln!("Warning: Failed to update game status: {e}");
-                        }
-                    }
-                    _ => {
-                        // Other response types - invitation is pending
-                    }
-                }
+                Ok(())
             }
-            Err(e) => {
-                // Update game status to abandoned since we couldn't send
-                if let Err(db_err) = self
-                    .database
-                    .update_game_status(&game.id, GameStatus::Abandoned)
-                {
-                    eprintln!("Warning: Failed to update game status: {db_err}");
-                }
-                return Err(cli_error_from_anyhow(e));
-            }
+            InviteOutcome::Declined { decline, .. } => Err(CliError::UserError {
+                message: format!(
+                    "Invitation rejected: {}",
+                    decline
+                        .reason
+                        .as_deref()
+                        .unwrap_or("the opponent did not provide a reason")
+                ),
+                suggestion: Some(format!(
+                    "Inspect game {game_id}; its local state has been preserved"
+                )),
+            }),
         }
-
-        Ok(())
     }
 
     /// Handle the 'accept' command - Accept a pending game invitation
@@ -660,6 +683,7 @@ pub(crate) fn resolve_dial_target(game: &Game) -> CliResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use tempfile::TempDir;
 
     #[test]

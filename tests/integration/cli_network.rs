@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use mate::cli::app::App;
-use mate::cli::network_manager::{NetworkConfig, NetworkManager};
+use mate::cli::network_manager::{InviteOutcome, NetworkConfig, NetworkManager};
 use mate::crypto::Identity;
 use mate::messages::chess::{generate_game_id, GameInvite, Move as ChessMove};
 use mate::messages::{GameAccept, RetryStrategy};
@@ -18,6 +18,29 @@ use tokio::time::timeout;
 
 use crate::common::port_utils::get_unique_test_address;
 use crate::common::test_helpers::test_server_database;
+
+// Exercise the split network API; failed invites never enter the memory queue.
+trait InviteTestExt {
+    async fn send_game_invite(
+        &self,
+        address: &str,
+        game_id: String,
+        invite: GameInvite,
+    ) -> Result<InviteOutcome>;
+}
+impl InviteTestExt for NetworkManager {
+    async fn send_game_invite(
+        &self,
+        address: &str,
+        game_id: String,
+        invite: GameInvite,
+    ) -> Result<InviteOutcome> {
+        assert_eq!(game_id, invite.game_id);
+        let (connection, peer) = self.connect_authenticated(address).await?;
+        self.send_game_invite_on(address, connection, &peer, invite)
+            .await
+    }
+}
 
 // =============================================================================
 // Test Utilities & Mock Infrastructure
@@ -77,12 +100,11 @@ async fn test_cli_commands_trigger_network_operations() {
     )
     .await;
 
-    // Verify game was created (database side effect)
+    // An unavailable peer cannot authenticate, so no game is persisted.
     let final_games_count = app.database.get_all_games().unwrap().len();
     assert_eq!(
-        final_games_count,
-        initial_games_count + 1,
-        "Invite command should create a game in database"
+        final_games_count, initial_games_count,
+        "Invite command must authenticate before creating a game"
     );
 
     // Network operation was attempted (even if it failed due to unavailable peer)
@@ -92,7 +114,7 @@ async fn test_cli_commands_trigger_network_operations() {
             assert!(result.is_err(), "Should fail with unavailable peer");
         }
         Err(_) => {
-            // Timeout occurred - but game was still created, so network attempt was made
+            // The connection attempt timed out before any game could be persisted
         }
     }
 
@@ -215,8 +237,8 @@ async fn test_network_manager_connection_state_tracking() {
 
     // Verify pending messages behavior
     assert!(
-        final_stats.total_pending_messages >= initial_pending,
-        "Failed operations may queue pending messages"
+        final_stats.total_pending_messages == initial_pending,
+        "Failed invitations must not queue pending messages"
     );
 }
 

@@ -325,13 +325,18 @@ fn test_update_opponent_peer_id() {
     let game = db
         .create_game_with_id(
             "peer-id-update-game".to_string(),
-            String::new(),
+            "original-peer".to_string(),
             PlayerColor::White,
             Some(serde_json::json!({ "dial_address": "127.0.0.1:8080" })),
         )
         .expect("Failed to create game");
 
-    assert_eq!(game.opponent_peer_id, "");
+    assert_eq!(game.opponent_peer_id, "original-peer");
+    assert!(db.update_opponent_peer_id(&game.id, "").is_err());
+    assert_eq!(
+        db.get_game(&game.id).unwrap().opponent_peer_id,
+        "original-peer"
+    );
     let initial_updated_at = game.updated_at;
     std::thread::sleep(std::time::Duration::from_millis(1100));
 

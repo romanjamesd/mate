@@ -444,43 +444,61 @@ impl Database {
 mod tests {
     use super::*;
 
+    /// Run environment-dependent assertions in a child with its own environment.
+    fn with_isolated_environment(test_name: &str, custom_data_dir: bool, check: impl FnOnce()) {
+        const CHILD_TEST: &str = "MATE_DATABASE_TEST_SUBPROCESS";
+        let full_test_name = format!("storage::database::tests::{test_name}");
+        if std::env::var(CHILD_TEST).as_deref() == Ok(full_test_name.as_str()) {
+            check();
+            return;
+        }
+
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", &full_test_name, "--nocapture"])
+            .env(CHILD_TEST, &full_test_name)
+            .env_remove("MATE_TEST_MODE")
+            .env_remove("MATE_DATA_DIR");
+
+        // Keep the directory alive until the child finishes.
+        let data_dir = custom_data_dir.then(|| tempfile::tempdir().unwrap());
+        if let Some(data_dir) = &data_dir {
+            command.env("MATE_DATA_DIR", data_dir.path());
+        }
+
+        let output = command.output().expect("Failed to run isolated test");
+        assert!(
+            output.status.success(),
+            "Isolated test {full_test_name} failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
     #[test]
     fn test_test_mode_detection() {
         // Test mode should be detected when running under cfg(test)
         assert!(Database::is_test_mode());
-
-        // Test explicit environment variable detection
-        std::env::set_var("MATE_TEST_MODE", "1");
-        assert!(Database::is_test_mode());
-        std::env::remove_var("MATE_TEST_MODE");
     }
 
     #[test]
     fn test_production_mode_with_mate_data_dir() {
-        // Simulate production environment with MATE_DATA_DIR set
-        // This should NOT trigger test mode anymore (fixing the bug)
-        std::env::remove_var("MATE_TEST_MODE");
-        std::env::set_var("MATE_DATA_DIR", "/custom/data/path");
+        with_isolated_environment("test_production_mode_with_mate_data_dir", true, || {
+            assert!(std::env::var_os("MATE_DATA_DIR").is_some());
+            assert!(std::env::var_os("MATE_TEST_MODE").is_none());
 
-        // Test the production logic (without cfg(test) interference)
-        // In the old buggy code, MATE_DATA_DIR would have triggered test mode
-        // In the fixed code, MATE_DATA_DIR should NOT trigger test mode
-
-        // Since we're running in a test thread, this will return true due to thread name
-        // But without MATE_TEST_MODE explicitly set, we're testing the fix works
-        let _is_test_by_production_logic = Database::is_test_mode_production_logic();
-
-        // Verify MATE_DATA_DIR is set
-        assert!(std::env::var("MATE_DATA_DIR").is_ok());
-
-        // The key fix: MATE_DATA_DIR alone should NOT cause test mode detection
-        // Remove the test thread name effect for this specific test
-        std::env::remove_var("MATE_TEST_MODE");
-
-        // Clean up
-        std::env::remove_var("MATE_DATA_DIR");
-
-        println!("✅ MATE_DATA_DIR no longer incorrectly triggers test mode");
+            // Avoid the test runner's thread-name heuristic as well as cfg(test).
+            let is_test_mode = std::thread::Builder::new()
+                .name("production".to_owned())
+                .spawn(Database::is_test_mode_production_logic)
+                .unwrap()
+                .join()
+                .unwrap();
+            assert!(
+                !is_test_mode,
+                "MATE_DATA_DIR alone must not enable test mode"
+            );
+        });
     }
 
     #[test]
@@ -507,9 +525,25 @@ mod tests {
 
     #[test]
     fn test_database_path() {
-        let path = get_database_path().unwrap();
-        assert!(path.to_string_lossy().contains("mate"));
-        assert!(path.to_string_lossy().ends_with("database.sqlite"));
+        with_isolated_environment("test_database_path", false, || {
+            assert!(std::env::var_os("MATE_DATA_DIR").is_none());
+            let project_dirs = ProjectDirs::from("dev", "mate", "mate").unwrap();
+            assert_eq!(
+                get_database_path().unwrap(),
+                project_dirs.data_dir().join("database.sqlite")
+            );
+        });
+    }
+
+    #[test]
+    fn test_database_path_with_mate_data_dir() {
+        with_isolated_environment("test_database_path_with_mate_data_dir", true, || {
+            let data_dir = PathBuf::from(std::env::var_os("MATE_DATA_DIR").unwrap());
+            assert_eq!(
+                get_database_path().unwrap(),
+                data_dir.join("database.sqlite")
+            );
+        });
     }
 
     #[test]

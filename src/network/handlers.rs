@@ -11,7 +11,7 @@
 use crate::chess::Color;
 use crate::game::{
     rebuild_board_from_stored_messages, store_game_accept_message, store_game_decline_message,
-    store_game_invite_message, store_game_move_message, StoredMessageType,
+    store_game_move_message, StoredMessageType,
 };
 use crate::messages::chess::{
     create_sync_response, GameAccept, GameDecline, GameInvite, Move, MoveAck, SyncRequest,
@@ -20,7 +20,6 @@ use crate::messages::chess::{
 use crate::messages::Message;
 use crate::storage::models::{GameStatus, PlayerColor};
 use crate::storage::{Database, StorageError};
-use serde_json::json;
 use thiserror::Error;
 use tracing::{debug, warn};
 
@@ -100,17 +99,6 @@ pub fn dispatch(
     }
 }
 
-/// Derive the invitee's local color from the inviter's suggestion.
-///
-/// `suggested_color` is the color offered to the invitee. When absent, use
-/// provisional White until accept finalizes the choice.
-fn invitee_color(suggested_color: Option<Color>) -> PlayerColor {
-    match suggested_color {
-        Some(color) => PlayerColor::from(color),
-        None => PlayerColor::White,
-    }
-}
-
 /// Local color for the peer receiving an accept (the inviter).
 ///
 /// `accepted_color` is the color the accepter plays as, so this peer takes
@@ -124,22 +112,6 @@ fn decline_invite(game_id: &str, reason: &str) -> Result<Option<Message>, Handle
         game_id.to_string(),
         Some(reason.to_string()),
     )))
-}
-
-/// Idempotent retry for storing the invite message.
-fn ensure_invite_message_stored(
-    database: &Database,
-    peer_id: &str,
-    invite: &GameInvite,
-) -> Result<(), StorageError> {
-    let messages = database.get_messages_for_game(&invite.game_id)?;
-    let already_stored = messages
-        .iter()
-        .any(|m| m.message_type == StoredMessageType::GameInvite.as_str());
-    if !already_stored {
-        store_game_invite_message(database, invite, "remote", peer_id)?;
-    }
-    Ok(())
 }
 
 fn ensure_accept_message_stored(
@@ -202,93 +174,15 @@ pub(crate) fn handle_game_invite(
     peer_id: &str,
     invite: GameInvite,
 ) -> Result<Option<Message>, HandlerError> {
-    let my_color = invitee_color(invite.suggested_color);
-    let metadata = invite
-        .reply_to
-        .as_ref()
-        .map(|addr| json!({ "dial_address": addr }));
-
-    match database.create_game_with_id(
-        invite.game_id.clone(),
-        peer_id.to_string(),
-        my_color,
-        metadata,
-    ) {
-        Ok(_) => {
-            if let Err(e) = store_game_invite_message(database, &invite, "remote", peer_id) {
-                warn!(
-                    peer_id = %peer_id,
-                    game_id = %invite.game_id,
-                    error = %e,
-                    "failed to store GameInvite message after creating game"
-                );
-                return decline_invite(&invite.game_id, "failed to persist invite");
-            }
-            debug!(
-                peer_id = %peer_id,
-                game_id = %invite.game_id,
-                "persisted pending game from invite; echoing"
-            );
-            Ok(Some(Message::GameInvite(invite)))
-        }
-        Err(StorageError::ConstraintViolation { .. }) => match database.get_game(&invite.game_id) {
-            Ok(existing) if existing.opponent_peer_id == peer_id => match existing.status {
-                GameStatus::Pending => {
-                    if let Err(e) = ensure_invite_message_stored(database, peer_id, &invite) {
-                        warn!(
-                            peer_id = %peer_id,
-                            game_id = %invite.game_id,
-                            error = %e,
-                            "failed to ensure GameInvite message on idempotent retry"
-                        );
-                        return decline_invite(&invite.game_id, "failed to persist invite");
-                    }
-                    debug!(
-                        peer_id = %peer_id,
-                        game_id = %invite.game_id,
-                        "idempotent GameInvite for existing pending game; echoing"
-                    );
-                    Ok(Some(Message::GameInvite(invite)))
-                }
-                other => {
-                    warn!(
-                        peer_id = %peer_id,
-                        game_id = %invite.game_id,
-                        status = ?other,
-                        "GameInvite for existing non-pending game"
-                    );
-                    decline_invite(
-                        &invite.game_id,
-                        &format!("game already exists (status: {other:?})"),
-                    )
-                }
-            },
-            Ok(_) => {
-                warn!(
-                    peer_id = %peer_id,
-                    game_id = %invite.game_id,
-                    "GameInvite conflicts with existing game for another peer"
-                );
-                decline_invite(&invite.game_id, "game id already exists for another peer")
-            }
-            Err(e) => {
-                warn!(
-                    peer_id = %peer_id,
-                    game_id = %invite.game_id,
-                    error = %e,
-                    "GameInvite duplicate but game lookup failed"
-                );
-                decline_invite(&invite.game_id, "failed to resolve invite conflict")
-            }
-        },
+    match database.receive_invite(&invite, peer_id) {
+        Ok(()) => Ok(Some(Message::GameInvite(invite))),
         Err(e) => {
-            warn!(
-                peer_id = %peer_id,
-                game_id = %invite.game_id,
-                error = %e,
-                "failed to create pending game from invite"
-            );
-            decline_invite(&invite.game_id, "failed to persist invite")
+            warn!(peer_id, game_id = %invite.game_id, error = %e, "failed to persist or validate invite");
+            let reason = match e {
+                StorageError::InvalidData { reason, .. } => reason,
+                _ => "failed to persist invite".to_string(),
+            };
+            decline_invite(&invite.game_id, &reason)
         }
     }
 }

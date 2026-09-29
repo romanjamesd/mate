@@ -92,6 +92,11 @@ mate accept game_abc123
 mate peers
 ```
 
+If an invitation's acknowledgement is lost, the game remains pending. Inspect
+`mate games` and resend the persisted invitation with `mate retry-invite <game-id>`.
+Retries reuse the original payload and require the original opponent's authenticated
+peer identity, including after restarting the CLI.
+
 ### Playing Chess
 ```bash
 # Make a move using algebraic notation

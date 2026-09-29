@@ -116,6 +116,53 @@ pub fn classify_accept_response(
     }
 }
 
+/// A transport success only acknowledges an invite when the full payload matches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InviteOutcome {
+    Acknowledged {
+        acknowledgement: GameInvite,
+        peer_id: String,
+    },
+    Declined {
+        decline: GameDecline,
+        peer_id: String,
+    },
+}
+
+pub fn classify_invite_response(
+    request: &GameInvite,
+    outcome: SendOutcome,
+) -> Result<InviteOutcome, ChessProtocolError> {
+    let SendOutcome { response, peer_id } = outcome;
+    match response {
+        Message::GameInvite(acknowledgement) if acknowledgement == *request => {
+            Ok(InviteOutcome::Acknowledged {
+                acknowledgement,
+                peer_id,
+            })
+        }
+        Message::GameDecline(decline) if decline.game_id == request.game_id => {
+            Ok(InviteOutcome::Declined { decline, peer_id })
+        }
+        response => Err(ChessProtocolError::UnexpectedMessage {
+            game_id: request.game_id.clone(),
+            expected: format!(
+                "GameInvite {request:?} or GameDecline for {}",
+                request.game_id
+            ),
+            received: format!("{response:?}"),
+        }),
+    }
+}
+
+fn authenticated_peer(connection: &Connection) -> Result<String> {
+    connection
+        .peer_identity()
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("Connection has no authenticated peer identity"))
+}
+
 /// A message waiting to be sent when peer comes online
 #[derive(Debug, Clone)]
 struct PendingMessage {
@@ -152,35 +199,69 @@ impl NetworkManager {
         }
     }
 
-    /// Send a game invitation with retry logic
-    pub async fn send_game_invite(
-        &self,
-        peer_address: &str,
-        game_id: String,
-        invite: GameInvite,
-    ) -> Result<SendOutcome> {
-        let message = Message::GameInvite(invite);
+    /// Complete the handshake without transmitting a chess payload.
+    pub async fn connect_authenticated(&self, address: &str) -> Result<(Connection, String)> {
+        let connection = self
+            .get_or_create_connection_with_strategy(
+                address,
+                RetryStrategy::for_cli_operation("invite"),
+            )
+            .await?;
+        let peer_id = authenticated_peer(&connection)?;
+        Ok((connection, peer_id))
+    }
 
-        match self
-            .send_message_with_retry(peer_address, message.clone(), &game_id)
-            .await
-        {
-            Ok(outcome) => {
-                info!("Game invitation sent successfully to {}", peer_address);
-                Ok(outcome)
-            }
-            Err(e) => {
-                warn!("Failed to send game invitation to {}: {}", peer_address, e);
-                // Store as pending message for when peer comes online
-                if let Err(store_err) = self
-                    .store_pending_message(peer_address, message, game_id)
+    /// Send a persisted invitation on the initial connection. Every reconnect
+    /// must authenticate as the stored opponent before sending any payload.
+    pub async fn send_game_invite_on(
+        &self,
+        address: &str,
+        connection: Connection,
+        expected_peer: &str,
+        invite: GameInvite,
+    ) -> Result<InviteOutcome> {
+        let strategy = RetryStrategy::for_cli_operation("invite");
+        let mut initial = Some(connection);
+        let mut last_error = None;
+        for attempt in 1..=strategy.max_attempts() {
+            let connected = match initial.take() {
+                Some(conn) => Ok(conn),
+                None => self
+                    .connect_authenticated(address)
                     .await
-                {
-                    warn!("Failed to store pending message: {}", store_err);
+                    .map(|(conn, _)| conn),
+            };
+            let result = match connected {
+                Ok(mut conn) => {
+                    let peer_id = authenticated_peer(&conn)?;
+                    if peer_id != expected_peer {
+                        anyhow::bail!("Authenticated opponent mismatch: expected {expected_peer}, got {peer_id}");
+                    }
+                    async {
+                        conn.send_message(Message::GameInvite(invite.clone()))
+                            .await?;
+                        let (response, _) = conn.receive_message().await?;
+                        Ok::<_, anyhow::Error>(SendOutcome { response, peer_id })
+                    }
+                    .await
                 }
-                Err(e)
+                Err(e) => Err(e),
+            };
+            match result {
+                Ok(outcome) => return Ok(classify_invite_response(&invite, outcome)?),
+                Err(e) => {
+                    if FailureClass::classify_error(&e) == FailureClass::NoRetry {
+                        return Err(e);
+                    }
+                    last_error = Some(e);
+                }
+            }
+            if attempt < strategy.max_attempts() {
+                tokio::time::sleep(self.calculate_retry_delay_for_strategy(attempt, strategy))
+                    .await;
             }
         }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Invitation retries exhausted")))
     }
 
     /// Send a game acceptance with retry logic
@@ -288,18 +369,15 @@ impl NetworkManager {
                 .await
             {
                 Ok(mut connection) => {
+                    let peer_id = authenticated_peer(&connection)?;
                     // Send the message
                     match connection.send_message(message.clone()).await {
                         Ok(()) => {
                             // Now receive the response
                             match connection.receive_message().await {
-                                Ok((response, sender)) => {
+                                Ok((response, _sender)) => {
                                     // Update connection as healthy
                                     self.update_connection_health(peer_address, true).await;
-                                    let peer_id = connection
-                                        .peer_identity()
-                                        .map(|id| id.to_string())
-                                        .unwrap_or(sender);
                                     return Ok(SendOutcome { response, peer_id });
                                 }
                                 Err(e) => {
