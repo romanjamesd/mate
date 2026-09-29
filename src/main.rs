@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use clap::Parser;
-use mate::cli::{app::App, display_error_and_exit, Cli, CliError, Commands, KeyCommand};
+use mate::cli::{
+    app::App, display_error_and_exit, handle_chess_command_error, Cli, Commands, KeyCommand,
+};
 use mate::crypto::Identity;
 use mate::messages::Message;
 use mate::network::Client;
@@ -303,7 +305,7 @@ async fn main() -> Result<()> {
                             Ok(()) => match connection.receive_message().await {
                                 Ok((response, _sender)) => {
                                     let round_trip_time = start_time.elapsed();
-                                    info!(
+                                    println!(
                                         "Received echo: \"{}\" (round-trip: {})",
                                         response.get_payload(),
                                         format_round_trip_time(round_trip_time)
@@ -321,6 +323,7 @@ async fn main() -> Result<()> {
                         // Interactive mode - enhanced session management with help commands and status display
                         println!("=== MATE Chat Session ===");
                         println!("Connected to peer: {}", peer_id);
+                        println!("Peer address: {}", address);
                         println!("Connection status: Active");
                         println!();
                         println!("Available commands:");
@@ -375,6 +378,7 @@ async fn main() -> Result<()> {
                                             let session_duration = session_start.elapsed();
                                             println!("=== Connection Information ===");
                                             println!("Peer ID: {}", peer_id);
+                                            println!("Peer address: {}", address);
                                             println!("Connection status: Active");
                                             println!(
                                                 "Session duration: {}",
@@ -404,56 +408,26 @@ async fn main() -> Result<()> {
                                     let ping_message =
                                         Message::new_ping(rand::random::<u64>(), input.clone());
 
-                                    match connection.send_message(ping_message).await {
-                                        Ok(()) => {
-                                            match connection.receive_message().await {
-                                                Ok((response, _sender)) => {
-                                                    let round_trip_time = start_time.elapsed();
-                                                    message_count += 1;
-                                                    total_round_trip_time += round_trip_time;
-                                                    println!(
-                                                        "← Received echo: \"{}\" (round-trip: {})",
-                                                        response.get_payload(),
-                                                        format_round_trip_time(round_trip_time)
-                                                    );
-                                                }
-                                                Err(e) => {
-                                                    error!("Connection error: Failed to receive response: {}", e);
-                                                    warn!("The connection to the peer may have been lost.");
-                                                    println!("Connection status: Disconnected");
-                                                    println!("Attempting to reconnect...");
+                                    let response = async {
+                                        connection.send_message(ping_message).await?;
+                                        connection.receive_message().await
+                                    }
+                                    .await;
 
-                                                    // Attempt to reconnect (basic retry logic)
-                                                    match client.connect(&address).await {
-                                                        Ok(new_connection) => {
-                                                            connection = new_connection;
-                                                            let new_peer_id = connection
-                                                                .peer_identity()
-                                                                .unwrap_or("unknown")
-                                                                .to_string();
-                                                            info!(
-                                                                "Reconnected to peer: {}",
-                                                                new_peer_id
-                                                            );
-                                                            println!(
-                                                                "Connection status: Reconnected"
-                                                            );
-                                                        }
-                                                        Err(reconnect_err) => {
-                                                            error!(
-                                                                "Failed to reconnect: {}",
-                                                                reconnect_err
-                                                            );
-                                                            println!("Reconnection failed. Please restart the session.");
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                    match response {
+                                        Ok((response, _sender)) => {
+                                            let round_trip_time = start_time.elapsed();
+                                            message_count += 1;
+                                            total_round_trip_time += round_trip_time;
+                                            println!(
+                                                "← Received echo: \"{}\" (round-trip: {})",
+                                                response.get_payload(),
+                                                format_round_trip_time(round_trip_time)
+                                            );
                                         }
                                         Err(e) => {
                                             error!(
-                                                "Connection error: Failed to send message: {}",
+                                                "Connection error: Failed to exchange message: {}",
                                                 e
                                             );
                                             warn!("The connection to the peer may have been lost.");
@@ -471,7 +445,7 @@ async fn main() -> Result<()> {
                                                     info!("Reconnected to peer: {}", new_peer_id);
                                                     println!("Connection status: Reconnected");
 
-                                                    // Retry sending the message
+                                                    // Retry the echo exchange after either a send or receive failure.
                                                     let retry_start_time = Instant::now();
                                                     let retry_ping_message = Message::new_ping(
                                                         rand::random::<u64>(),
@@ -578,12 +552,12 @@ async fn main() -> Result<()> {
             debug!("Data directory: {}", app.data_dir().display());
 
             // Execute the chess command with proper lifecycle management
-            let command_result = match cli.command {
+            let (command_result, command_name) = match cli.command {
                 Commands::Games => {
                     info!("Chess command lifecycle: Starting games list operation");
                     debug!("Retrieving active games from database");
 
-                    let result = app.handle_games().await.context("Failed to list games");
+                    let result = app.handle_games().await;
 
                     match &result {
                         Ok(()) => {
@@ -597,7 +571,7 @@ async fn main() -> Result<()> {
                             );
                         }
                     }
-                    result
+                    (result, "games")
                 }
 
                 Commands::Board { game_id } => {
@@ -614,10 +588,7 @@ async fn main() -> Result<()> {
                         debug!("Retrieving board state for most recent active game");
                     }
 
-                    let result = app
-                        .handle_board(game_id)
-                        .await
-                        .context("Failed to display board");
+                    let result = app.handle_board(game_id).await;
 
                     match &result {
                         Ok(()) => {
@@ -631,7 +602,7 @@ async fn main() -> Result<()> {
                             );
                         }
                     }
-                    result
+                    (result, "board")
                 }
 
                 Commands::Invite { address, color } => {
@@ -645,10 +616,7 @@ async fn main() -> Result<()> {
                         debug!("No color preference specified, will use random selection");
                     }
 
-                    let result = app
-                        .handle_invite(address, color)
-                        .await
-                        .context("Failed to send invitation");
+                    let result = app.handle_invite(address, color).await;
 
                     match &result {
                         Ok(()) => {
@@ -659,7 +627,7 @@ async fn main() -> Result<()> {
                             error!("Chess command lifecycle: Game invitation failed: {}", e);
                         }
                     }
-                    result
+                    (result, "invite")
                 }
 
                 Commands::Accept { game_id, color } => {
@@ -673,10 +641,7 @@ async fn main() -> Result<()> {
                         debug!("No color preference specified, will use automatic selection");
                     }
 
-                    let result = app
-                        .handle_accept(game_id, color)
-                        .await
-                        .context("Failed to accept invitation");
+                    let result = app.handle_accept(game_id, color).await;
 
                     match &result {
                         Ok(()) => {
@@ -687,7 +652,7 @@ async fn main() -> Result<()> {
                             error!("Chess command lifecycle: Game acceptance failed: {}", e);
                         }
                     }
-                    result
+                    (result, "accept")
                 }
 
                 Commands::Move {
@@ -708,10 +673,7 @@ async fn main() -> Result<()> {
                         debug!("Making move in most recent active game");
                     }
 
-                    let result = app
-                        .handle_move(game_id, chess_move)
-                        .await
-                        .context("Failed to make move");
+                    let result = app.handle_move(game_id, chess_move).await;
 
                     match &result {
                         Ok(()) => {
@@ -722,7 +684,7 @@ async fn main() -> Result<()> {
                             error!("Chess command lifecycle: Move execution failed: {}", e);
                         }
                     }
-                    result
+                    (result, "move")
                 }
 
                 Commands::History { game_id } => {
@@ -737,10 +699,7 @@ async fn main() -> Result<()> {
                         debug!("Retrieving move history for most recent active game");
                     }
 
-                    let result = app
-                        .handle_history(game_id)
-                        .await
-                        .context("Failed to show game history");
+                    let result = app.handle_history(game_id).await;
 
                     match &result {
                         Ok(()) => {
@@ -753,7 +712,7 @@ async fn main() -> Result<()> {
                             error!("Chess command lifecycle: History display failed: {}", e);
                         }
                     }
-                    result
+                    (result, "history")
                 }
 
                 _ => unreachable!("Non-chess commands should not reach this branch"),
@@ -772,7 +731,7 @@ async fn main() -> Result<()> {
 
             // Return the command result - handle errors gracefully
             if let Err(e) = command_result {
-                let cli_error = CliError::from(e);
+                let cli_error = handle_chess_command_error(e, command_name);
                 display_error_and_exit(cli_error, 1);
             }
             info!("Chess command lifecycle: Operation completed successfully");

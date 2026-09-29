@@ -463,118 +463,119 @@ async fn test_reconnection_preserves_session_state() {
 /// Test that multiple reconnection failures are handled appropriately
 #[tokio::test]
 async fn test_multiple_reconnection_failures_handled() {
-    println!("Testing that multiple reconnection failures are handled appropriately");
+    use tokio::io::{AsyncBufReadExt, BufReader};
 
-    let server_addr = "127.0.0.1:18135";
-    let server = start_test_server(server_addr)
+    // Wait for observable progress rather than guessing when the child has run.
+    async fn read_until(
+        reader: &mut BufReader<tokio::process::ChildStdout>,
+        output: &mut String,
+        expected: &str,
+    ) {
+        timeout(Duration::from_secs(10), async {
+            loop {
+                let mut line = String::new();
+                assert!(
+                    reader.read_line(&mut line).await.unwrap() > 0,
+                    "Client exited before {expected:?}. Output: {output}"
+                );
+                output.push_str(&line);
+                if line.contains(expected) {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("Timed out waiting for {expected:?}. Output: {output}"));
+    }
+
+    let server = start_test_server("127.0.0.1:0")
         .await
         .expect("Failed to start test server");
-
-    let mut server_handle = tokio::spawn(async move { server.run().await });
-
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let server_addr = server.local_addr().unwrap().to_string();
+    let mut server_handle = tokio::spawn(server.run());
 
     let mut child = Command::new(get_mate_binary_path())
-        .args(["connect", server_addr])
+        .args(["connect", &server_addr])
+        .env("RUST_LOG", "error")
+        .kill_on_drop(true)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("Failed to start mate command");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut output = String::new();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    stdin.write_all(b"Initial message\n").await.unwrap();
+    read_until(
+        &mut stdout,
+        &mut output,
+        "Received echo: \"Initial message\"",
+    )
+    .await;
 
-    if let Some(stdin) = child.stdin.as_mut() {
-        // Send initial message
-        let _ = stdin.write_all(b"Initial message\n").await;
-        tokio::time::sleep(Duration::from_millis(400)).await;
-
-        // First failure
+    for cycle in 1..=2 {
         server_handle.abort();
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(server_handle.await.unwrap_err().is_cancelled());
 
-        // Try to send during first failure
-        let _ = stdin.write_all(b"Message during first failure\n").await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        // Brief restart and immediate failure again
-        let server = start_test_server(server_addr)
+        // Restore the listener before the client attempts to reconnect, while its
+        // old connection has been closed by cancellation of the previous server.
+        let server = start_test_server(&server_addr)
             .await
             .expect("Failed to restart test server");
-        server_handle = tokio::spawn(async move { server.run().await });
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        server_handle = tokio::spawn(server.run());
 
-        // Second failure
-        server_handle.abort();
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        // Try to send during second failure
-        let _ = stdin.write_all(b"Message during second failure\n").await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        // Final restart
-        let server = start_test_server(server_addr)
+        stdin
+            .write_all(format!("Message after failure {cycle}\n").as_bytes())
             .await
-            .expect("Failed to restart test server");
-        server_handle = tokio::spawn(async move { server.run().await });
-        tokio::time::sleep(Duration::from_millis(800)).await;
-
-        // Test if connection is working after multiple failures
-        let _ = stdin.write_all(b"Final recovery message\n").await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        let _ = stdin.write_all(b"quit\n").await;
+            .unwrap();
+        read_until(&mut stdout, &mut output, "Connection status: Reconnected").await;
+        read_until(
+            &mut stdout,
+            &mut output,
+            &format!("Received echo: \"Message after failure {cycle}\""),
+        )
+        .await;
     }
 
-    let output = timeout(Duration::from_secs(15), child.wait_with_output()).await;
+    stdin.write_all(b"Final recovery message\n").await.unwrap();
+    read_until(
+        &mut stdout,
+        &mut output,
+        "Received echo: \"Final recovery message\"",
+    )
+    .await;
+    stdin.write_all(b"quit\n").await.unwrap();
+    drop(stdin);
 
+    use tokio::io::AsyncReadExt;
+    timeout(Duration::from_secs(5), stdout.read_to_string(&mut output))
+        .await
+        .unwrap()
+        .unwrap();
+    let command_output = timeout(Duration::from_secs(5), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
     server_handle.abort();
+    let _ = server_handle.await;
 
-    let command_output = output
-        .expect("Command should complete within timeout")
-        .expect("Command should execute successfully");
-
-    let stdout = String::from_utf8_lossy(&command_output.stdout);
-    let stderr = String::from_utf8_lossy(&command_output.stderr);
-    let combined_output = format!("{stdout}{stderr}");
-
-    println!(
-        "Multiple reconnection failures output:\n{}",
-        combined_output
+    assert_eq!(
+        output.matches("Connection status: Disconnected").count(),
+        2,
+        "Each stopped server must disconnect the client. Output: {output}"
     );
-
-    // Verify initial message was processed
-    assert!(
-        combined_output.contains("Initial message"),
-        "Initial message should be processed. Output: {}",
-        combined_output
+    assert_eq!(
+        output.matches("Connection status: Reconnected").count(),
+        2,
+        "Client must recover from both failures. Output: {output}"
     );
-
-    // Verify multiple connection issues are handled
-    let connection_issues = combined_output.matches("error").count()
-        + combined_output.matches("failed").count()
-        + combined_output.matches("connection").count();
-    assert!(
-        connection_issues >= 2,
-        "Should handle multiple connection issues. Connection issues: {}, Output: {}",
-        connection_issues,
-        combined_output
-    );
-
-    // Verify client doesn't crash despite multiple failures
     assert!(
         command_output.status.success(),
-        "Client should survive multiple connection failures. Status: {}",
-        command_output.status
+        "Client should survive both failures. Output: {output}. Stderr: {}",
+        String::from_utf8_lossy(&command_output.stderr)
     );
-
-    // Verify client can potentially recover after multiple failures
-    // (The exact behavior may vary, but we shouldn't crash)
-    println!("✅ Multiple reconnection failures handling test passed");
-    println!("   - Initial connection and message worked");
-    println!("   - Multiple connection failures were detected");
-    println!("   - Client survived multiple reconnection failures");
-    println!("   - Graceful handling of repeated connection issues");
 }
 
 /// Test comprehensive connection recovery workflow

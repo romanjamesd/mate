@@ -4,7 +4,9 @@
 
 use anyhow::Result;
 use mate::cli::app::App;
+use mate::game::StoredMessageType;
 use mate::storage::models::{GameStatus, PlayerColor};
+use serde_json::json;
 use tempfile::TempDir;
 
 /// Create a test app with isolated temporary directory
@@ -153,6 +155,49 @@ async fn test_board_invalid_game_id_error_handling() {
     );
 }
 
+#[tokio::test]
+async fn test_board_and_history_reconstruct_pascal_case_move() {
+    let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
+
+    let game_id = create_test_game(
+        &app,
+        "test_opponent",
+        PlayerColor::White,
+        GameStatus::Active,
+    )
+    .await
+    .expect("Failed to create test game");
+
+    app.database
+        .store_message(
+            game_id.clone(),
+            StoredMessageType::Move.as_str().to_string(),
+            json!({
+                "game_id": game_id,
+                "chess_move": "e2e4",
+                "board_state_hash": "test_hash"
+            })
+            .to_string(),
+            "test_sig".to_string(),
+            app.peer_id().to_string(),
+        )
+        .expect("Failed to store PascalCase Move");
+
+    let board_result = app.handle_board(Some(game_id.clone())).await;
+    assert!(
+        board_result.is_ok(),
+        "handle_board should reconstruct from PascalCase Move: {:?}",
+        board_result.err()
+    );
+
+    let history_result = app.handle_history(Some(game_id)).await;
+    assert!(
+        history_result.is_ok(),
+        "handle_history should reconstruct from PascalCase Move: {:?}",
+        history_result.err()
+    );
+}
+
 // =============================================================================
 // Move Command Tests
 // =============================================================================
@@ -170,13 +215,13 @@ async fn test_move_no_active_games_error_handling() {
     .await
     .expect("Failed to create test game");
 
-    let result = app.handle_move(None, "e4".to_string()).await;
+    let result = app.handle_move(None, "e2e4".to_string()).await;
 
     assert!(result.is_err(), "Should fail when no active games found");
     let error_msg = result.unwrap_err().to_string();
     assert!(
-        error_msg.contains("No active games found"),
-        "Error should indicate no active games: {}",
+        error_msg.contains("No active games") || error_msg.contains("No current game"),
+        "Error should indicate no current game: {}",
         error_msg
     );
 }
@@ -194,7 +239,7 @@ async fn test_move_invalid_game_states_error_handling() {
     .await
     .expect("Failed to create test game");
 
-    let result = app.handle_move(Some(game_id), "e4".to_string()).await;
+    let result = app.handle_move(Some(game_id), "e2e4".to_string()).await;
 
     assert!(result.is_err(), "Should fail when game is not active");
     let error_msg = result.unwrap_err().to_string();
@@ -229,6 +274,33 @@ async fn test_move_empty_move_notation_error_handling() {
     );
 }
 
+#[tokio::test]
+async fn test_move_unparsable_notation_error_handling() {
+    let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
+
+    let game_id = create_test_game(
+        &app,
+        "test_opponent",
+        PlayerColor::White,
+        GameStatus::Active,
+    )
+    .await
+    .expect("Failed to create test game");
+
+    let result = app.handle_move(Some(game_id), "e4".to_string()).await;
+
+    assert!(
+        result.is_err(),
+        "Should fail with unparsable coordinate notation"
+    );
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("Failed to parse move") || error_msg.contains("Invalid move"),
+        "Error should indicate parse failure: {}",
+        error_msg
+    );
+}
+
 // =============================================================================
 // Accept Command Tests
 // =============================================================================
@@ -243,7 +315,7 @@ async fn test_accept_nonexistent_game_error_handling() {
 
     assert!(result.is_err(), "Should fail with nonexistent game ID");
     assert!(
-        result.unwrap_err().to_string().contains("Game not found"),
+        result.unwrap_err().to_string().contains("not found"),
         "Error should indicate game not found"
     );
 }
@@ -277,14 +349,20 @@ async fn test_accept_non_pending_game_error_handling() {
 // =============================================================================
 
 #[tokio::test]
-async fn test_history_no_games_shows_helpful_message() {
+async fn test_history_no_games_returns_error() {
     let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
 
     let result = app.handle_history(None).await;
 
     assert!(
-        result.is_ok(),
-        "handle_history should handle empty database gracefully"
+        result.is_err(),
+        "handle_history should fail when no current game exists"
+    );
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("No active games") || error_msg.contains("No current game"),
+        "Error should indicate no current game: {}",
+        error_msg
     );
 }
 

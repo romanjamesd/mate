@@ -1,5 +1,5 @@
 use crate::chess::{Board, Color};
-use crate::cli::GameRecord;
+use crate::game::GameRecord;
 use crate::storage::models::GameStatus;
 use std::io::{self, Write};
 

@@ -12,6 +12,10 @@ pub struct GameInvite {
     pub game_id: String,
     /// Suggested color for the invitee (None means invitee can choose)
     pub suggested_color: Option<Color>,
+    /// Optional listen address (`host:port`) where the inviter can be dialed back.
+    /// Always serialized (including `None`) so bincode wire framing stays aligned.
+    #[serde(default)]
+    pub reply_to: Option<String>,
 }
 
 impl GameInvite {
@@ -20,6 +24,7 @@ impl GameInvite {
         Self {
             game_id,
             suggested_color,
+            reply_to: None,
         }
     }
 
@@ -31,6 +36,12 @@ impl GameInvite {
     /// Create a game invitation with a specific color suggestion
     pub fn new_with_color(game_id: String, color: Color) -> Self {
         Self::new(game_id, Some(color))
+    }
+
+    /// Set the dial-back listen address advertised to the invitee.
+    pub fn with_reply_to(mut self, reply_to: impl Into<String>) -> Self {
+        self.reply_to = Some(reply_to.into());
+        self
     }
 }
 
@@ -421,7 +432,36 @@ pub fn validate_game_invite(invite: &GameInvite) -> Result<(), ValidationError> 
     // Validate suggested color is a reasonable value (Color enum is already validated by type system)
     // Additional business logic validation could go here if needed
 
+    if let Some(reply_to) = &invite.reply_to {
+        if !validate_reply_to_address(reply_to) {
+            return Err(ValidationError::InvalidMessageFormat(format!(
+                "Invalid reply_to address '{reply_to}'. Expected format: 'host:port'"
+            )));
+        }
+    }
+
     Ok(())
+}
+
+/// Basic `host:port` syntax check for advertised dial-back addresses.
+fn validate_reply_to_address(address: &str) -> bool {
+    let trimmed = address.trim();
+    if trimmed.is_empty() || !trimmed.contains(':') {
+        return false;
+    }
+    if trimmed.starts_with(':') || trimmed.ends_with(':') {
+        return false;
+    }
+
+    let parts: Vec<&str> = trimmed.split(':').collect();
+    if parts.len() < 2 || parts.len() > 8 {
+        return false;
+    }
+
+    match parts.last().and_then(|port| port.parse::<u16>().ok()) {
+        Some(port) => port > 0,
+        None => false,
+    }
 }
 
 /// Validate a chess move message

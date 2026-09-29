@@ -319,6 +319,43 @@ fn test_update_game_color() {
 }
 
 #[test]
+fn test_update_opponent_peer_id() {
+    let (db, _env) = create_test_database();
+
+    let game = db
+        .create_game_with_id(
+            "peer-id-update-game".to_string(),
+            String::new(),
+            PlayerColor::White,
+            Some(serde_json::json!({ "dial_address": "127.0.0.1:8080" })),
+        )
+        .expect("Failed to create game");
+
+    assert_eq!(game.opponent_peer_id, "");
+    let initial_updated_at = game.updated_at;
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    db.update_opponent_peer_id(&game.id, "remote-peer-abc")
+        .expect("Failed to update opponent peer id");
+
+    let updated = db
+        .get_game(&game.id)
+        .expect("Failed to retrieve game after peer id update");
+    assert_eq!(updated.opponent_peer_id, "remote-peer-abc");
+    assert_eq!(
+        updated.metadata,
+        Some(serde_json::json!({ "dial_address": "127.0.0.1:8080" }))
+    );
+    assert!(
+        updated.updated_at > initial_updated_at,
+        "Updated timestamp should change after peer id update"
+    );
+
+    let missing = db.update_opponent_peer_id("nonexistent", "peer");
+    assert!(missing.is_err(), "Missing game should fail peer id update");
+}
+
+#[test]
 fn test_game_status_updates() {
     let (db, _env) = create_test_database();
 

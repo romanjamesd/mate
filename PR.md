@@ -1,81 +1,35 @@
-# Implement server-side chess message handlers
+# Unify chess runtime paths and improve peer communication
 
 ## Summary
 
-The server's connection loop previously only echoed `Ping` messages and
-logged everything else ("no specific handler") without touching storage.
-This branch adds a typed dispatch layer that persists chess protocol
-messages (`GameInvite`, `GameAccept`, `GameDecline`, `Move`, `SyncRequest`)
-against the peer's SQLite database and replies appropriately, so two `mate
-serve` peers can actually play a game over the wire instead of the invite
-just hanging.
+Consolidates the CLI and server chess logic into a shared game module, replacing
+duplicated implementations and inconsistent stored message formats. Board views,
+move history, and synchronization now reconstruct positions through the same
+logic, and outgoing moves use the resulting board state before being persisted
+after a successful send.
 
-## What changed
+## Changes
 
-- **`src/network/handlers.rs` (new)** — `dispatch()` validates each inbound
-  message, then routes to a per-message handler:
-  - `GameInvite` → creates a `Pending` game using the inviter's `game_id`
-    and echoes the invite back as an ack. Duplicate invites from the same
-    peer against a `Pending` game are treated as idempotent; conflicts or
-    non-pending state soft-reject with `GameDecline`.
-  - `GameAccept` → transitions `Pending` → `Active`, finalizes the local
-    player's color, and echoes the accept.
-  - `GameDecline` → transitions `Pending` → `Abandoned` and echoes the
-    decline.
-  - `Move` → persists the move against an `Active` game and replies with
-    `MoveAck` (no legality/board verification yet).
-  - `SyncRequest` → rebuilds the board and move history from stored
-    `Move` messages and replies with `SyncResponse`.
-  - `MoveAck` / inbound `SyncResponse` are ignored (no reply expected).
-  - Any message with a `game_id` that fails validation or an ownership/
-    state check soft-fails as `GameDecline` (rather than dropping the
-    connection) so send-and-wait clients never hang.
-- **`src/network/server.rs`** — `Server::bind` / `bind_with_config` now take
-  an `Arc<Database>`, threaded into each spawned connection task and passed
-  to `handlers::dispatch` in the receive loop.
-- **`src/main.rs`** — `serve` now opens the same peer SQLite database the
-  CLI uses (via `Database::new(identity.peer_id())`) before binding the
-  server.
-- **`src/storage/games.rs`** — adds `Database::create_game_with_id` (used
-  to materialize an incoming invite under the inviter's `game_id`;
-  `create_game` now delegates to it with a generated ID) and
-  `Database::update_game_color` (finalizes color at accept time). Duplicate
-  primary keys surface as `StorageError::ConstraintViolation` instead of a
-  raw SQLite error.
-- **`src/cli/app.rs`** — CLI invite now creates the local game record with
-  an explicit UUID (`generate_game_id`) via `create_game_with_id`, since
-  wire `GameInvite` validation requires UUID-format IDs (legacy storage IDs
-  were peer-timestamp-counter strings).
-- **`src/cli/commands.rs`** — updates the `serve` command's help text to
-  reflect that it's no longer just an echo server.
+- Standardize chess message storage and route CLI game commands and server
+  handlers through shared game operations, persistence, and board reconstruction.
+- Fix invite and move routing by advertising a dial-back address and storing
+  network addresses separately from authenticated peer identities.
+- Require a matching acceptance acknowledgement from the expected peer before
+  activating a game. Report declines, invalid responses, and persistence failures
+  without announcing success.
+- Improve CLI validation and error messages, including coordinate/castling move
+  input and game selection for board and history commands.
+- Keep echo results visible with quiet logging, show the connected peer address,
+  and retry pending messages after send or receive failures.
+- Cancel connection tasks when the server stops and strengthen reconnection tests.
+- Update planning, known-issue, and test-failure documentation.
 
-## Testing
+## Validation
 
-- `tests/integration/server_chess_handlers.rs` (new) — end-to-end coverage
-  over real TCP connections: invite → accept → move → sync round trips,
-  idempotent retries, and soft-decline paths (unknown game, wrong peer,
-  wrong state, malformed messages).
-- `tests/unit/network/handlers.rs` (new) — unit-level coverage of
-  `dispatch` and each handler against an in-memory/temp database.
-- `tests/storage/storage_tests.rs` / `storage_error_tests.rs` — coverage
-  for `create_game_with_id` (including duplicate-ID and empty-ID
-  rejection) and `update_game_color` (including not-found).
-- Existing integration suites updated only where the `Server::bind`
-  signature change or shared test helpers required it.
+Adds and updates regression coverage for shared game state, message storage,
+invitation acceptance, CLI behavior, and connection recovery. `TEST_FAILURES.md`
+records a successful `make test-ci-safe` run (844 tests, including documentation
+tests), formatting, and Clippy checks after the fixes.
 
-## Known gaps / follow-ups
-
-- `Move` handling does not reconstruct the board or verify move legality
-  before persisting — it trusts the wire payload.
-- `SyncRequest` rebuilds from stored move notation without verifying
-  clients' post-move board-state hashes.
-- Full CLI-driven accept/move end-to-end (as opposed to direct protocol
-  tests) is deferred — see `SERVER_CHESS_HANDLERS.md` for the address-vs-
-  peer-ID issue that blocks it.
-- Color selection at invite time is currently a fixed default
-  (invitee gets White unless the inviter suggests otherwise); letting the
-  invitee choose at accept time, with the inviter as fallback, is future
-  work (noted in `SERVER_CHESS_HANDLERS.md`).
-
-See `SERVER_CHESS_HANDLERS.md` for the full step-by-step design and
-implementation log this branch followed.
+Full chess legality/checkmate detection, SAN input, and migration of legacy
+snake_case message rows remain outside this change.

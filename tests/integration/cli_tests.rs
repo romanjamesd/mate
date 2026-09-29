@@ -56,6 +56,7 @@ async fn test_successful_message_send_with_timing() {
     let output = timeout(
         Duration::from_secs(10),
         Command::new(get_mate_binary_path())
+            .env("RUST_LOG", "error")
             .args(["connect", server_addr, "--message", test_message])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -133,6 +134,7 @@ async fn test_message_content_echo_correctness() {
         let output = timeout(
             Duration::from_secs(10),
             Command::new(get_mate_binary_path())
+                .env("RUST_LOG", "error")
                 .args(["connect", server_addr, "--message", test_message])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -203,6 +205,7 @@ async fn test_response_timing_measurement() {
     let output = timeout(
         Duration::from_secs(10),
         Command::new(get_mate_binary_path())
+            .env("RUST_LOG", "error")
             .args(["connect", server_addr, "--message", test_message])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -268,6 +271,7 @@ async fn test_error_handling_send_failure() {
     let output = timeout(
         Duration::from_secs(10),
         Command::new(get_mate_binary_path())
+            .env("RUST_LOG", "error")
             .args(["connect", invalid_addr, "--message", test_message])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -337,6 +341,7 @@ async fn test_error_handling_receive_failure() {
     let output = timeout(
         Duration::from_secs(10),
         Command::new(get_mate_binary_path())
+            .env("RUST_LOG", "error")
             .args(["connect", server_addr, "--message", test_message])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -397,6 +402,7 @@ async fn test_program_exits_after_single_exchange() {
     let output = timeout(
         Duration::from_secs(10),
         Command::new(get_mate_binary_path())
+            .env("RUST_LOG", "error")
             .args(["connect", server_addr, "--message", test_message])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -558,6 +564,7 @@ async fn test_one_shot_mode_comprehensive() {
         let output = timeout(
             Duration::from_secs(10),
             Command::new(get_mate_binary_path())
+                .env("RUST_LOG", "error")
                 .args(["connect", server_addr, "--message", test_message])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())

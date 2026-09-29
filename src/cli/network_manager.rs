@@ -1,5 +1,7 @@
 use crate::crypto::Identity;
-use crate::messages::chess::{GameAccept, GameInvite, Move as ChessMove};
+use crate::messages::chess::{
+    ChessProtocolError, GameAccept, GameDecline, GameInvite, Move as ChessMove,
+};
 use crate::messages::types::Message;
 use crate::messages::{FailureClass, RetryStrategy};
 use crate::network::{Client, Connection};
@@ -57,6 +59,63 @@ pub struct NetworkManager {
     pending_messages: Arc<Mutex<HashMap<String, Vec<PendingMessage>>>>,
 }
 
+/// Result of a successful chess send: wire response plus remote peer identity.
+#[derive(Debug, Clone)]
+pub struct SendOutcome {
+    /// Response message from the remote peer
+    pub response: Message,
+    /// Authenticated peer id from the connection handshake
+    pub peer_id: String,
+}
+
+/// Application-level response to an acceptance, separate from transport success.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GameAcceptOutcome {
+    Accepted {
+        acknowledgement: GameAccept,
+        peer_id: String,
+    },
+    Rejected {
+        decline: GameDecline,
+        peer_id: String,
+    },
+}
+
+impl GameAcceptOutcome {
+    pub fn peer_id(&self) -> &str {
+        match self {
+            Self::Accepted { peer_id, .. } | Self::Rejected { peer_id, .. } => peer_id,
+        }
+    }
+}
+
+/// Correlate a received response with the acceptance actually sent.
+pub fn classify_accept_response(
+    request: &GameAccept,
+    outcome: SendOutcome,
+) -> Result<GameAcceptOutcome, ChessProtocolError> {
+    let SendOutcome { response, peer_id } = outcome;
+    match response {
+        Message::GameAccept(acknowledgement) if acknowledgement == *request => {
+            Ok(GameAcceptOutcome::Accepted {
+                acknowledgement,
+                peer_id,
+            })
+        }
+        Message::GameDecline(decline) if decline.game_id == request.game_id => {
+            Ok(GameAcceptOutcome::Rejected { decline, peer_id })
+        }
+        response => Err(ChessProtocolError::UnexpectedMessage {
+            game_id: request.game_id.clone(),
+            expected: format!(
+                "GameAccept {request:?} or GameDecline for {}",
+                request.game_id
+            ),
+            received: format!("{response:?}"),
+        }),
+    }
+}
+
 /// A message waiting to be sent when peer comes online
 #[derive(Debug, Clone)]
 struct PendingMessage {
@@ -99,16 +158,16 @@ impl NetworkManager {
         peer_address: &str,
         game_id: String,
         invite: GameInvite,
-    ) -> Result<Message> {
-        let message = Message::new_game_invite(game_id.clone(), invite.suggested_color);
+    ) -> Result<SendOutcome> {
+        let message = Message::GameInvite(invite);
 
         match self
             .send_message_with_retry(peer_address, message.clone(), &game_id)
             .await
         {
-            Ok(response) => {
+            Ok(outcome) => {
                 info!("Game invitation sent successfully to {}", peer_address);
-                Ok(response)
+                Ok(outcome)
             }
             Err(e) => {
                 warn!("Failed to send game invitation to {}: {}", peer_address, e);
@@ -130,16 +189,24 @@ impl NetworkManager {
         peer_address: &str,
         game_id: String,
         accept: GameAccept,
-    ) -> Result<Message> {
-        let message = Message::new_game_accept(game_id.clone(), accept.accepted_color);
+    ) -> Result<GameAcceptOutcome> {
+        if game_id != accept.game_id {
+            return Err(ChessProtocolError::UnexpectedMessage {
+                game_id,
+                expected: "acceptance payload with the requested game ID".to_string(),
+                received: format!("{accept:?}"),
+            }
+            .into());
+        }
+        let message = Message::GameAccept(accept.clone());
 
         match self
             .send_message_with_retry(peer_address, message.clone(), &game_id)
             .await
         {
-            Ok(response) => {
-                info!("Game acceptance sent successfully to {}", peer_address);
-                Ok(response)
+            Ok(outcome) => {
+                // Received rejections and protocol errors must never be queued for retry.
+                Ok(classify_accept_response(&accept, outcome)?)
             }
             Err(e) => {
                 warn!("Failed to send game acceptance to {}: {}", peer_address, e);
@@ -157,7 +224,7 @@ impl NetworkManager {
         peer_address: &str,
         game_id: String,
         chess_move: ChessMove,
-    ) -> Result<Message> {
+    ) -> Result<SendOutcome> {
         let message = Message::new_move(
             game_id.clone(),
             chess_move.chess_move.clone(),
@@ -168,9 +235,9 @@ impl NetworkManager {
             .send_message_with_retry(peer_address, message.clone(), &game_id)
             .await
         {
-            Ok(response) => {
+            Ok(outcome) => {
                 info!("Chess move sent successfully to {}", peer_address);
-                Ok(response)
+                Ok(outcome)
             }
             Err(e) => {
                 warn!("Failed to send chess move to {}: {}", peer_address, e);
@@ -188,7 +255,7 @@ impl NetworkManager {
         peer_address: &str,
         message: Message,
         game_id: &str,
-    ) -> Result<Message> {
+    ) -> Result<SendOutcome> {
         // Determine retry strategy based on operation type
         let operation = self.classify_operation(&message);
         let retry_strategy = RetryStrategy::for_cli_operation(&operation);
@@ -204,7 +271,7 @@ impl NetworkManager {
         message: Message,
         _game_id: &str,
         strategy: RetryStrategy,
-    ) -> Result<Message> {
+    ) -> Result<SendOutcome> {
         let max_attempts = strategy.max_attempts();
         let base_delay = strategy.base_delay();
         let mut last_error = None;
@@ -226,10 +293,14 @@ impl NetworkManager {
                         Ok(()) => {
                             // Now receive the response
                             match connection.receive_message().await {
-                                Ok((response, _sender)) => {
+                                Ok((response, sender)) => {
                                     // Update connection as healthy
                                     self.update_connection_health(peer_address, true).await;
-                                    return Ok(response);
+                                    let peer_id = connection
+                                        .peer_identity()
+                                        .map(|id| id.to_string())
+                                        .unwrap_or(sender);
+                                    return Ok(SendOutcome { response, peer_id });
                                 }
                                 Err(e) => {
                                     error!(

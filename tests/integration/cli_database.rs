@@ -5,7 +5,7 @@
 //! for game management, move processing, and data persistence.
 
 use mate::chess::Board;
-use mate::cli::game_ops::{GameOps, MoveProcessor};
+use mate::game::{GameOps, GameOpsError, MoveProcessor};
 use mate::storage::models::{GameResult, GameStatus, PlayerColor};
 use mate::storage::Database;
 use serde_json::json;
@@ -206,10 +206,7 @@ fn test_database_current_game_detection_logic() {
     // Test with no active games
     let result = game_ops.get_current_game();
     assert!(
-        matches!(
-            result,
-            Err(mate::cli::game_ops::GameOpsError::NoCurrentGame)
-        ),
+        matches!(result, Err(GameOpsError::NoCurrentGame)),
         "Should return NoCurrentGame error when no active games exist"
     );
 
@@ -648,13 +645,13 @@ fn test_database_malformed_messages_handling() {
                 assert_eq!(game_state.move_history[0], "e2e4");
             }
         }
-        Err(mate::cli::game_ops::GameOpsError::Serialization(_)) => {
+        Err(GameOpsError::Serialization(_)) => {
             // Expected behavior - malformed messages cause serialization errors
         }
-        Err(mate::cli::game_ops::GameOpsError::Chess(_)) => {
+        Err(GameOpsError::Chess(_)) => {
             // Expected behavior - invalid moves cause chess errors
         }
-        Err(mate::cli::game_ops::GameOpsError::InvalidGameState(_)) => {
+        Err(GameOpsError::InvalidGameState(_)) => {
             // Expected behavior - corrupted state
         }
         Err(_) => panic!("Unexpected error type for malformed messages"),

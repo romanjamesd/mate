@@ -15,7 +15,8 @@ use mate::cli::error_handler::{
     create_input_validation_error, create_network_timeout_error, handle_chess_command_error,
     is_recoverable_error,
 };
-use mate::cli::{CliError, GameOpsError};
+use mate::cli::{CliError, ValidationError};
+use mate::game::{GameOpsError, MoveProcessingError};
 use mate::messages::wire::WireProtocolError;
 use mate::network::ConnectionError;
 use mate::storage::errors::StorageError;
@@ -205,6 +206,9 @@ async fn test_error_handling_connection_timeouts() {
     let binary_path = verify_binary_availability().expect("mate binary should be available");
     println!("   Using binary: {}", binary_path);
 
+    let temp_dir = create_unique_temp_dir().expect("Failed to create temp directory");
+    let temp_path = temp_dir.path().to_string_lossy().to_string();
+
     // Test connection to non-responsive server (focus on error handling, not timing)
     let start_time = Instant::now();
 
@@ -212,6 +216,7 @@ async fn test_error_handling_connection_timeouts() {
         get_adaptive_timeout(25), // More generous timeout for CI
         Command::new(binary_path)
             .args(["invite", "192.168.254.254:8080"]) // Non-routable IP for timeout
+            .env("MATE_DATA_DIR", &temp_path)
             .env("RUST_LOG", "error")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -254,6 +259,8 @@ async fn test_error_handling_connection_timeouts() {
                 || combined_output.contains("failed to connect")
                 || combined_output.contains("connection failed")
                 || combined_output.contains("unreachable")
+                || combined_output.contains("Failed to send game invitation")
+                || combined_output.contains("Network operation")
                 || combined_output.contains("Failed to initialize"), // App initialization may fail first
             "Should show timeout or connection error. Output: {}",
             combined_output
@@ -1175,6 +1182,18 @@ async fn test_error_type_consistency_across_components() {
             CliError::from(WireProtocolError::ProtocolViolation {
                 description: "test violation".to_string(),
             }),
+        ),
+        (
+            "MoveProcessingError",
+            CliError::from(MoveProcessingError::InvalidMove(
+                "Failed to parse move 'e4': invalid notation".to_string(),
+            )),
+        ),
+        (
+            "ValidationError",
+            CliError::from(ValidationError::InvalidPeerAddress(
+                "missing port".to_string(),
+            )),
         ),
     ];
 

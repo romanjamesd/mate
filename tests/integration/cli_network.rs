@@ -7,8 +7,9 @@ use anyhow::Result;
 use mate::cli::app::App;
 use mate::cli::network_manager::{NetworkConfig, NetworkManager};
 use mate::crypto::Identity;
-use mate::messages::chess::Move as ChessMove;
-use mate::messages::{GameAccept, GameInvite, RetryStrategy};
+use mate::messages::chess::{generate_game_id, GameInvite, Move as ChessMove};
+use mate::messages::{GameAccept, RetryStrategy};
+use mate::network::Server;
 use mate::storage::{models::PlayerColor, GameStatus};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,6 +17,7 @@ use tempfile::TempDir;
 use tokio::time::timeout;
 
 use crate::common::port_utils::get_unique_test_address;
+use crate::common::test_helpers::test_server_database;
 
 // =============================================================================
 // Test Utilities & Mock Infrastructure
@@ -124,7 +126,7 @@ async fn test_cli_commands_trigger_network_operations() {
 
     let move_result = timeout(
         Duration::from_secs(3),
-        app.handle_move(Some(move_game_id), "e4".to_string()),
+        app.handle_move(Some(move_game_id.clone()), "e2e4".to_string()),
     )
     .await;
 
@@ -133,6 +135,15 @@ async fn test_cli_commands_trigger_network_operations() {
         assert!(result.is_err(), "Should fail with unavailable peer");
     }
     // Timeout is acceptable (Err case ignored)
+
+    let messages = app
+        .database
+        .get_messages_for_game(&move_game_id)
+        .expect("Failed to load game messages");
+    assert!(
+        !messages.iter().any(|m| m.message_type == "Move"),
+        "Failed send must not persist a Move row"
+    );
 }
 
 #[tokio::test]
@@ -447,4 +458,166 @@ async fn test_timeout_behavior_consistency() {
         elapsed >= Duration::from_millis(50),
         "Should take at least minimum expected time"
     );
+}
+
+#[tokio::test]
+async fn test_invite_stores_dial_address_and_handshake_peer_id() {
+    let server_identity = Arc::new(Identity::generate().expect("server identity"));
+    let server_peer_id = server_identity.peer_id().to_string();
+    let database = test_server_database(server_identity.peer_id().as_str());
+
+    let server = Server::bind("127.0.0.1:0", server_identity, database)
+        .await
+        .expect("bind server");
+    let server_addr = server.local_addr().expect("server addr").to_string();
+    let server_handle = tokio::spawn(async move { server.run().await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (app, _temp_dir) = create_test_app().await.expect("Failed to create test app");
+
+    timeout(
+        Duration::from_secs(5),
+        app.handle_invite(server_addr.clone(), Some("white".to_string())),
+    )
+    .await
+    .expect("invite should complete before timeout")
+    .expect("invite should succeed against live server");
+
+    let games = app.database.get_all_games().expect("list games");
+    assert_eq!(games.len(), 1, "successful invite should leave one game");
+    let game = &games[0];
+
+    assert_eq!(
+        game.opponent_peer_id, server_peer_id,
+        "opponent_peer_id should be the handshake peer id"
+    );
+    assert_ne!(
+        game.opponent_peer_id, server_addr,
+        "opponent_peer_id must not remain the dial address"
+    );
+    assert_eq!(
+        game.metadata,
+        Some(serde_json::json!({ "dial_address": server_addr })),
+        "metadata should retain dial_address"
+    );
+    assert_eq!(game.status, GameStatus::Pending);
+
+    let messages = app
+        .database
+        .get_messages_for_game(&game.id)
+        .expect("messages for game");
+    assert!(
+        messages.iter().any(|m| m.message_type == "GameInvite"),
+        "invite should persist PascalCase GameInvite"
+    );
+    let invite_msg = messages
+        .iter()
+        .find(|m| m.message_type == "GameInvite")
+        .expect("GameInvite row");
+    let parsed: GameInvite =
+        serde_json::from_str(&invite_msg.content).expect("parse stored invite");
+    assert_eq!(
+        parsed.reply_to.as_deref(),
+        Some(app.config.default_bind_addr.as_str()),
+        "stored invite should advertise reply_to from default_bind_addr"
+    );
+
+    server_handle.abort();
+}
+
+/// Invitee-shaped pending row: peer id in opponent_peer_id, dial via metadata.
+#[tokio::test]
+async fn test_accept_dials_metadata_address_while_opponent_is_peer_id() {
+    let inviter_identity = Arc::new(Identity::generate().expect("inviter identity"));
+    let inviter_peer_id = inviter_identity.peer_id().to_string();
+    let inviter_db = test_server_database(inviter_identity.peer_id().as_str());
+    let inviter_db_assert = Arc::clone(&inviter_db);
+
+    let inviter_server = Server::bind("127.0.0.1:0", inviter_identity, inviter_db)
+        .await
+        .expect("bind inviter server");
+    let inviter_addr = inviter_server.local_addr().expect("addr").to_string();
+    let server_handle = tokio::spawn(async move { inviter_server.run().await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (invitee_app, _temp_dir) = create_test_app().await.expect("invitee app");
+    let invitee_peer_id = invitee_app.peer_id().to_string();
+    let game_id = generate_game_id();
+
+    // Inviter DB: pending game expecting accept from invitee peer id.
+    inviter_db_assert
+        .create_game_with_id(
+            game_id.clone(),
+            invitee_peer_id.clone(),
+            PlayerColor::White,
+            None,
+        )
+        .expect("seed inviter pending game");
+
+    // Invitee DB: peer id opponent + dial_address pointing at inviter serve.
+    invitee_app
+        .database
+        .create_game_with_id(
+            game_id.clone(),
+            inviter_peer_id.clone(),
+            PlayerColor::Black,
+            Some(serde_json::json!({ "dial_address": inviter_addr })),
+        )
+        .expect("seed invitee pending game");
+
+    assert!(
+        !inviter_peer_id.contains(':')
+            || !mate::cli::validation::InputValidationUtils::has_valid_address_format(
+                &inviter_peer_id
+            ),
+        "fixture opponent_peer_id must not be dialable as host:port"
+    );
+
+    timeout(
+        Duration::from_secs(5),
+        invitee_app.handle_accept(game_id.clone(), Some("black".to_string())),
+    )
+    .await
+    .expect("accept should complete before timeout")
+    .expect("accept should succeed by dialing metadata dial_address");
+
+    let invitee_game = invitee_app
+        .database
+        .get_game(&game_id)
+        .expect("invitee game");
+    assert_eq!(invitee_game.status, GameStatus::Active);
+    assert_eq!(invitee_game.my_color, PlayerColor::Black);
+    assert_eq!(
+        invitee_game.opponent_peer_id, inviter_peer_id,
+        "opponent_peer_id should remain the crypto peer id"
+    );
+
+    let invitee_messages = invitee_app
+        .database
+        .get_messages_for_game(&game_id)
+        .expect("invitee messages");
+    assert!(
+        invitee_messages
+            .iter()
+            .any(|m| m.message_type == "GameAccept"),
+        "accept should persist PascalCase GameAccept"
+    );
+    assert!(
+        !invitee_messages
+            .iter()
+            .any(|m| m.message_type == "game_accept"),
+        "must not write snake_case game_accept"
+    );
+
+    let inviter_game = inviter_db_assert
+        .get_game(&game_id)
+        .expect("inviter game after accept");
+    assert_eq!(inviter_game.status, GameStatus::Active);
+    assert_eq!(
+        inviter_game.my_color,
+        PlayerColor::White,
+        "inviter keeps opposite of accepted black"
+    );
+
+    server_handle.abort();
 }

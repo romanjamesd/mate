@@ -35,7 +35,9 @@ async fn server_game_invite_echoes_and_persists_pending() {
     let mut connection = client.connect(&server_addr).await.unwrap();
 
     let game_id = generate_game_id();
-    let invite = Message::new_game_invite(game_id.clone(), Some(Color::Black));
+    let invite = Message::GameInvite(
+        GameInvite::new(game_id.clone(), Some(Color::Black)).with_reply_to("10.0.0.1:7777"),
+    );
     connection
         .send_message(invite)
         .await
@@ -52,6 +54,7 @@ async fn server_game_invite_echoes_and_persists_pending() {
         Message::GameInvite(echo) => {
             assert_eq!(echo.game_id, game_id);
             assert_eq!(echo.suggested_color, Some(Color::Black));
+            assert_eq!(echo.reply_to.as_deref(), Some("10.0.0.1:7777"));
         }
         other => panic!("expected GameInvite echo, got {}", other.message_type()),
     }
@@ -63,6 +66,11 @@ async fn server_game_invite_echoes_and_persists_pending() {
     assert_eq!(game.opponent_peer_id, client_peer_id);
     assert_eq!(game.my_color, PlayerColor::Black);
     assert_eq!(game.status, GameStatus::Pending);
+    assert_eq!(
+        game.metadata,
+        Some(serde_json::json!({ "dial_address": "10.0.0.1:7777" })),
+        "server should stamp dial_address from reply_to"
+    );
 
     let messages = db_for_assert
         .get_messages_for_game(&game_id)
@@ -76,6 +84,7 @@ async fn server_game_invite_echoes_and_persists_pending() {
         serde_json::from_str(&invite_msg.content).expect("parse stored invite JSON");
     assert_eq!(parsed.game_id, game_id);
     assert_eq!(parsed.suggested_color, Some(Color::Black));
+    assert_eq!(parsed.reply_to.as_deref(), Some("10.0.0.1:7777"));
 
     let _ = connection.close().await;
     server_handle.abort();
