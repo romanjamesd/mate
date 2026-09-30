@@ -1,4 +1,4 @@
-use mate::storage::{Database, GameStatus, PlayerColor, StorageError};
+use mate::storage::{Database, GameStatus, Message, PlayerColor, StorageError};
 use tempfile::TempDir;
 
 /// Per-test database isolation via an explicit path (not process-global env).
@@ -41,6 +41,57 @@ impl Drop for TestEnvironment {
 /// Test helper to create a temporary database
 fn create_test_database() -> (Database, TestEnvironment) {
     TestEnvironment::new()
+}
+
+fn set_created_at(db: &Database, id: i64, ts: i64) {
+    db.with_connection(|conn| {
+        let updated = conn.execute(
+            "UPDATE messages SET created_at = ?1 WHERE id = ?2",
+            [ts, id],
+        )?;
+        assert_eq!(
+            updated, 1,
+            "Timestamp update must affect one stored message"
+        );
+        Ok(())
+    })
+    .expect("Failed to set created_at");
+}
+
+fn ids(messages: &[Message]) -> Vec<i64> {
+    messages.iter().map(|m| m.id.expect("stored id")).collect()
+}
+
+fn assert_messages(actual: &[Message], expected: &[Message]) {
+    assert_eq!(ids(actual), ids(expected));
+    // Compare whole rows to check payloads and preserved timestamp metadata too.
+    assert_eq!(
+        serde_json::to_value(actual).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+}
+
+fn store_order_messages(db: &Database, game_id: &str) -> Vec<Message> {
+    [
+        ("move", "player1"),
+        ("chat", "player2"),
+        ("move", "player2"),
+        ("chat", "player1"),
+        ("move", "player1"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(order, (message_type, sender))| {
+        db.store_message(
+            game_id.to_string(),
+            message_type.to_string(),
+            format!(r#"{{"order": {order}}}"#),
+            "signature".to_string(),
+            sender.to_string(),
+        )
+        .expect("Failed to store ordered message")
+    })
+    .collect()
 }
 
 /// Priority 1: Core Database Tests (4 tests)
@@ -561,7 +612,7 @@ fn test_game_message_operations() {
         .expect("Failed to create game");
 
     // Store multiple messages
-    let _message1 = db
+    let message1 = db
         .store_message(
             game.id.clone(),
             "move".to_string(),
@@ -571,7 +622,7 @@ fn test_game_message_operations() {
         )
         .expect("Failed to store message 1");
 
-    let _message2 = db
+    let message2 = db
         .store_message(
             game.id.clone(),
             "move".to_string(),
@@ -581,7 +632,7 @@ fn test_game_message_operations() {
         )
         .expect("Failed to store message 2");
 
-    let _message3 = db
+    let message3 = db
         .store_message(
             game.id.clone(),
             "chat".to_string(),
@@ -598,8 +649,7 @@ fn test_game_message_operations() {
     assert_eq!(all_messages.len(), 3, "Should find 3 messages for game");
 
     // Verify local insertion order
-    assert!(all_messages[0].id.unwrap() < all_messages[1].id.unwrap());
-    assert!(all_messages[1].id.unwrap() < all_messages[2].id.unwrap());
+    assert_eq!(ids(&all_messages), ids(&[message1, message2, message3]));
 
     // Test get messages by type
     let move_messages = db
@@ -630,203 +680,255 @@ fn test_game_message_operations() {
 }
 
 #[test]
-fn test_message_queries_follow_insertion_order_despite_timestamps() {
-    fn assert_messages(actual: Vec<mate::storage::Message>, expected: &[mate::storage::Message]) {
-        assert_eq!(
-            serde_json::to_value(actual).unwrap(),
-            serde_json::to_value(expected).unwrap()
-        );
-    }
-
+fn messages_with_equal_timestamps_return_in_insertion_order() {
     let (db, _env) = create_test_database();
     let game = db
-        .create_game("opponent_order".to_string(), PlayerColor::White, None)
+        .create_game("opponent_equal".to_string(), PlayerColor::White, None)
         .unwrap();
-    let other_game = db
-        .create_game("other_opponent".to_string(), PlayerColor::Black, None)
-        .unwrap();
-
-    let mut stored = Vec::new();
-    for (game_id, message_type, sender) in [
-        (&game.id, "move", "player1"),
-        (&other_game.id, "move", "player1"),
-        (&game.id, "chat", "player2"),
-        (&game.id, "move", "player2"),
-        (&game.id, "chat", "player1"),
-        (&game.id, "move", "player1"),
-        (&other_game.id, "chat", "player2"),
-    ] {
-        let message = db
-            .store_message(
-                game_id.clone(),
-                message_type.to_string(),
-                format!(r#"{{"order": {}}}"#, stored.len()),
-                "signature".to_string(),
-                sender.to_string(),
-            )
-            .unwrap();
-        stored.push(message);
+    let mut stored = store_order_messages(&db, &game.id);
+    for message in &mut stored {
+        set_created_at(&db, message.id.unwrap(), 100);
+        message.created_at = 100;
     }
 
-    for timestamps in [
-        vec![100; stored.len()],
-        vec![700, 600, 500, 400, 300, 200, 100],
-    ] {
-        for (message, timestamp) in stored.iter_mut().zip(timestamps) {
-            db.with_connection(|conn| {
-                conn.execute(
-                    "UPDATE messages SET created_at = ?1 WHERE id = ?2",
-                    rusqlite::params![timestamp, message.id.unwrap()],
-                )?;
-                Ok(())
-            })
-            .unwrap();
-            message.created_at = timestamp;
-        }
-
+    assert!(ids(&stored).windows(2).all(|pair| pair[0] < pair[1]));
+    assert_messages(&db.get_messages_for_game(&game.id).unwrap(), &stored);
+    for message_type in ["move", "chat"] {
         let expected: Vec<_> = stored
             .iter()
-            .filter(|message| message.game_id == game.id)
+            .filter(|m| m.message_type == message_type)
             .cloned()
             .collect();
-        // Compare whole rows to also check payloads and unchanged timestamp metadata.
-        assert_messages(db.get_messages_for_game(&game.id).unwrap(), &expected);
-        for page_size in [1, 2, 3, 5, 10] {
-            let mut paged = Vec::new();
-            let mut offset = 0;
-            loop {
-                let page = db
-                    .get_messages_for_game_paginated(&game.id, page_size, offset)
-                    .unwrap();
-                if page.is_empty() {
-                    break;
-                }
-                paged.extend(page);
-                offset += page_size;
-            }
-            assert_messages(paged, &expected);
-        }
-        assert!(db
-            .get_messages_for_game_paginated(&game.id, 0, 0)
-            .unwrap()
-            .is_empty());
         assert_messages(
-            db.get_messages_by_type(&game.id, "move").unwrap(),
-            &expected
-                .iter()
-                .filter(|message| message.message_type == "move")
-                .cloned()
-                .collect::<Vec<_>>(),
+            &db.get_messages_by_type(&game.id, message_type).unwrap(),
+            &expected,
         );
-        assert_messages(
-            db.get_messages_from_sender(&game.id, "player1").unwrap(),
-            &expected
-                .iter()
-                .filter(|message| message.sender_peer_id == "player1")
-                .cloned()
-                .collect::<Vec<_>>(),
-        );
-        for limit in [0, 3, 10] {
-            assert_messages(
-                db.get_recent_messages(limit).unwrap(),
-                &stored
-                    .iter()
-                    .rev()
-                    .take(limit as usize)
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            );
-        }
     }
+    for sender in ["player1", "player2"] {
+        let expected: Vec<_> = stored
+            .iter()
+            .filter(|m| m.sender_peer_id == sender)
+            .cloned()
+            .collect();
+        assert_messages(
+            &db.get_messages_from_sender(&game.id, sender).unwrap(),
+            &expected,
+        );
+    }
+}
+
+#[test]
+fn decreasing_timestamps_do_not_change_order() {
+    let (db, _env) = create_test_database();
+    let game = db
+        .create_game("opponent_rollback".to_string(), PlayerColor::White, None)
+        .unwrap();
+    let mut stored = store_order_messages(&db, &game.id);
+    let total = stored.len();
+    for (order, message) in stored.iter_mut().enumerate() {
+        let timestamp = (total - order) as i64;
+        set_created_at(&db, message.id.unwrap(), timestamp);
+        message.created_at = timestamp;
+    }
+
+    assert_messages(&db.get_messages_for_game(&game.id).unwrap(), &stored);
+    for offset in (0..total as u32).step_by(2) {
+        let end = (offset as usize + 2).min(total);
+        assert_messages(
+            &db.get_messages_for_game_paginated(&game.id, 2, offset)
+                .unwrap(),
+            &stored[offset as usize..end],
+        );
+    }
+    for message_type in ["move", "chat"] {
+        let expected: Vec<_> = stored
+            .iter()
+            .filter(|m| m.message_type == message_type)
+            .cloned()
+            .collect();
+        assert_messages(
+            &db.get_messages_by_type(&game.id, message_type).unwrap(),
+            &expected,
+        );
+    }
+    for sender in ["player1", "player2"] {
+        let expected: Vec<_> = stored
+            .iter()
+            .filter(|m| m.sender_peer_id == sender)
+            .cloned()
+            .collect();
+        assert_messages(
+            &db.get_messages_from_sender(&game.id, sender).unwrap(),
+            &expected,
+        );
+    }
+    let expected: Vec<_> = stored.into_iter().rev().collect();
+    assert_messages(&db.get_recent_messages(10).unwrap(), &expected);
+}
+
+#[test]
+fn recent_messages_newest_first_by_id() {
+    let (db, _env) = create_test_database();
+    let game1 = db
+        .create_game("opponent_recent1".to_string(), PlayerColor::White, None)
+        .unwrap();
+    let game2 = db
+        .create_game("opponent_recent2".to_string(), PlayerColor::Black, None)
+        .unwrap();
+    let mut stored = Vec::new();
+    for order in 0..7 {
+        let game_id = if order % 2 == 0 { &game1.id } else { &game2.id };
+        let mut message = db
+            .store_message(
+                game_id.clone(),
+                "move".to_string(),
+                format!(r#"{{"order": {order}}}"#),
+                "signature".to_string(),
+                "sender".to_string(),
+            )
+            .unwrap();
+        let timestamp = 7 - order;
+        set_created_at(&db, message.id.unwrap(), timestamp);
+        message.created_at = timestamp;
+        stored.push(message);
+    }
+    for limit in [0, 3, 10] {
+        let expected: Vec<_> = stored.iter().rev().take(limit as usize).cloned().collect();
+        assert_messages(&db.get_recent_messages(limit).unwrap(), &expected);
+    }
+}
+
+#[test]
+fn recent_messages_order_survives_delete_of_newest() {
+    let (db, _env) = create_test_database();
+    let game = db
+        .create_game(
+            "opponent_delete_newest".to_string(),
+            PlayerColor::White,
+            None,
+        )
+        .unwrap();
+    let store = |content: &str| {
+        db.store_message(
+            game.id.clone(),
+            "chat".to_string(),
+            content.to_string(),
+            "signature".to_string(),
+            "sender".to_string(),
+        )
+        .unwrap()
+    };
+    let a = store("A");
+    let b = store("B");
+    let c = store("C");
+    let deleted_id = c.id.unwrap();
+    db.delete_message(deleted_id).unwrap();
+    let d = store("D");
+
+    assert!(
+        d.id.unwrap() > deleted_id,
+        "Deleted maximum ID must not be reused"
+    );
+    assert_messages(&db.get_recent_messages(10).unwrap(), &[d, b, a]);
 }
 
 #[test]
 fn test_message_pagination() {
     let (db, _env) = create_test_database();
-
     let game = db
         .create_game("opponent_page".to_string(), PlayerColor::White, None)
-        .expect("Failed to create game");
+        .unwrap();
+    let mut stored: Vec<_> = (0..7)
+        .map(|order| {
+            db.store_message(
+                game.id.clone(),
+                "move".to_string(),
+                format!(r#"{{"order": {order}}}"#),
+                format!("sig_{order}"),
+                "sender".to_string(),
+            )
+            .unwrap()
+        })
+        .collect();
 
-    // Store 5 messages
-    for i in 0..5 {
-        db.store_message(
-            game.id.clone(),
-            "move".to_string(),
-            format!(r#"{{"move": {i}}}"#),
-            format!("sig_{i}"),
-            "sender".to_string(),
-        )
-        .unwrap_or_else(|_| panic!("Failed to store message {}", i));
+    for equal_timestamps in [false, true] {
+        if equal_timestamps {
+            for message in &mut stored {
+                set_created_at(&db, message.id.unwrap(), 100);
+                message.created_at = 100;
+            }
+        }
+        let all = db.get_messages_for_game(&game.id).unwrap();
+        assert_messages(&all, &stored);
+        let total = stored.len() as u32;
+        for page_size in [1, 2, 3, 7, 10] {
+            let mut paged = Vec::new();
+            let mut reached_end = false;
+            // Include the first offset beyond the data, with a finite bound.
+            for page_index in 0..=total.div_ceil(page_size) {
+                let offset = page_index * page_size;
+                let page = db
+                    .get_messages_for_game_paginated(&game.id, page_size, offset)
+                    .unwrap();
+                let start = (offset as usize).min(stored.len());
+                let end = (start + page_size as usize).min(stored.len());
+                assert_messages(&page, &stored[start..end]);
+                if page.is_empty() {
+                    reached_end = true;
+                    break;
+                }
+                paged.extend(page);
+            }
+            assert!(reached_end, "Pagination must finish with an empty page");
+            assert_eq!(ids(&paged), ids(&all));
+            assert_messages(&paged, &stored);
+            for offset in [total, total + 1] {
+                assert!(db
+                    .get_messages_for_game_paginated(&game.id, page_size, offset)
+                    .unwrap()
+                    .is_empty());
+            }
+        }
+        for offset in [0, total, total + 1] {
+            assert!(db
+                .get_messages_for_game_paginated(&game.id, 0, offset)
+                .unwrap()
+                .is_empty());
+        }
     }
-
-    // Test pagination
-    let page1 = db
-        .get_messages_for_game_paginated(&game.id, 2, 0)
-        .expect("Failed to get first page");
-    assert_eq!(page1.len(), 2, "First page should have 2 messages");
-
-    let page2 = db
-        .get_messages_for_game_paginated(&game.id, 2, 2)
-        .expect("Failed to get second page");
-    assert_eq!(page2.len(), 2, "Second page should have 2 messages");
-
-    let page3 = db
-        .get_messages_for_game_paginated(&game.id, 2, 4)
-        .expect("Failed to get third page");
-    assert_eq!(page3.len(), 1, "Third page should have 1 message");
-
-    // Verify no overlap
-    assert_ne!(page1[0].id, page2[0].id, "Pages should not overlap");
-    assert_ne!(page2[0].id, page3[0].id, "Pages should not overlap");
 }
 
 #[test]
 fn test_recent_messages_query() {
     let (db, _env) = create_test_database();
-
     let game1 = db
         .create_game("opponent_recent1".to_string(), PlayerColor::White, None)
-        .expect("Failed to create game 1");
+        .unwrap();
     let game2 = db
         .create_game("opponent_recent2".to_string(), PlayerColor::Black, None)
-        .expect("Failed to create game 2");
-
-    // Store messages in both games
-    db.store_message(
-        game1.id,
-        "move".to_string(),
-        "content1".to_string(),
-        "sig1".to_string(),
-        "sender1".to_string(),
-    )
-    .expect("Failed to store message in game 1");
-
-    db.store_message(
-        game2.id,
-        "move".to_string(),
-        "content2".to_string(),
-        "sig2".to_string(),
-        "sender2".to_string(),
-    )
-    .expect("Failed to store message in game 2");
-
-    // Test recent messages query
-    let recent_messages = db
-        .get_recent_messages(10)
-        .expect("Failed to get recent messages");
-    assert!(
-        recent_messages.len() >= 2,
-        "Should find at least 2 recent messages"
-    );
-
-    // Verify newest stored messages come first
-    if recent_messages.len() > 1 {
-        assert!(
-            recent_messages[0].id.unwrap() > recent_messages[1].id.unwrap(),
-            "Recent messages should be in descending insertion order"
-        );
-    }
+        .unwrap();
+    let message1 = db
+        .store_message(
+            game1.id,
+            "move".to_string(),
+            "content1".to_string(),
+            "sig1".to_string(),
+            "sender1".to_string(),
+        )
+        .unwrap();
+    let message2 = db
+        .store_message(
+            game2.id,
+            "move".to_string(),
+            "content2".to_string(),
+            "sig2".to_string(),
+            "sender2".to_string(),
+        )
+        .unwrap();
+    let recent = db.get_recent_messages(10).unwrap();
+    assert_eq!(recent.len(), 2);
+    assert!(recent[0].id.unwrap() > recent[1].id.unwrap());
+    assert_messages(&recent, &[message2, message1]);
 }
 
 #[test]
