@@ -630,6 +630,117 @@ fn test_game_message_operations() {
 }
 
 #[test]
+fn test_message_queries_follow_insertion_order_despite_timestamps() {
+    fn assert_messages(actual: Vec<mate::storage::Message>, expected: &[mate::storage::Message]) {
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+    }
+
+    let (db, _env) = create_test_database();
+    let game = db
+        .create_game("opponent_order".to_string(), PlayerColor::White, None)
+        .unwrap();
+    let other_game = db
+        .create_game("other_opponent".to_string(), PlayerColor::Black, None)
+        .unwrap();
+
+    let mut stored = Vec::new();
+    for (game_id, message_type, sender) in [
+        (&game.id, "move", "player1"),
+        (&other_game.id, "move", "player1"),
+        (&game.id, "chat", "player2"),
+        (&game.id, "move", "player2"),
+        (&game.id, "chat", "player1"),
+        (&game.id, "move", "player1"),
+        (&other_game.id, "chat", "player2"),
+    ] {
+        let message = db
+            .store_message(
+                game_id.clone(),
+                message_type.to_string(),
+                format!(r#"{{"order": {}}}"#, stored.len()),
+                "signature".to_string(),
+                sender.to_string(),
+            )
+            .unwrap();
+        stored.push(message);
+    }
+
+    for timestamps in [
+        vec![100; stored.len()],
+        vec![700, 600, 500, 400, 300, 200, 100],
+    ] {
+        for (message, timestamp) in stored.iter_mut().zip(timestamps) {
+            db.with_connection(|conn| {
+                conn.execute(
+                    "UPDATE messages SET created_at = ?1 WHERE id = ?2",
+                    rusqlite::params![timestamp, message.id.unwrap()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+            message.created_at = timestamp;
+        }
+
+        let expected: Vec<_> = stored
+            .iter()
+            .filter(|message| message.game_id == game.id)
+            .cloned()
+            .collect();
+        // Compare whole rows to also check payloads and unchanged timestamp metadata.
+        assert_messages(db.get_messages_for_game(&game.id).unwrap(), &expected);
+        for page_size in [1, 2, 3, 5, 10] {
+            let mut paged = Vec::new();
+            let mut offset = 0;
+            loop {
+                let page = db
+                    .get_messages_for_game_paginated(&game.id, page_size, offset)
+                    .unwrap();
+                if page.is_empty() {
+                    break;
+                }
+                paged.extend(page);
+                offset += page_size;
+            }
+            assert_messages(paged, &expected);
+        }
+        assert!(db
+            .get_messages_for_game_paginated(&game.id, 0, 0)
+            .unwrap()
+            .is_empty());
+        assert_messages(
+            db.get_messages_by_type(&game.id, "move").unwrap(),
+            &expected
+                .iter()
+                .filter(|message| message.message_type == "move")
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        assert_messages(
+            db.get_messages_from_sender(&game.id, "player1").unwrap(),
+            &expected
+                .iter()
+                .filter(|message| message.sender_peer_id == "player1")
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        for limit in [0, 3, 10] {
+            assert_messages(
+                db.get_recent_messages(limit).unwrap(),
+                &stored
+                    .iter()
+                    .rev()
+                    .take(limit as usize)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
+}
+
+#[test]
 fn test_message_pagination() {
     let (db, _env) = create_test_database();
 
