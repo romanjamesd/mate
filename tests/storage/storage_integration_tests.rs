@@ -147,11 +147,11 @@ fn test_complete_game_lifecycle_with_messages() {
         .expect("Failed to get chat messages");
     assert_eq!(chat_messages.len(), 1, "Should have 1 chat message");
 
-    // Verify chronological order
+    // Verify local insertion order
     for i in 1..all_messages.len() {
         assert!(
-            all_messages[i - 1].created_at <= all_messages[i].created_at,
-            "Messages should be in chronological order"
+            all_messages[i - 1].id.unwrap() < all_messages[i].id.unwrap(),
+            "Messages should be in insertion order"
         );
     }
 }
@@ -643,7 +643,7 @@ fn test_database_indexes_and_performance() {
         .expect("Failed to query messages by type");
     assert_eq!(move_messages.len(), 5, "Should find all move messages");
 
-    // Test recent queries (should use created_at index)
+    // Test recent games by creation time and recent messages by insertion id
     let recent_games = db.get_recent_games(5).expect("Failed to get recent games");
     assert_eq!(recent_games.len(), 5, "Should get 5 most recent games");
 
@@ -724,13 +724,13 @@ fn test_data_integrity_and_consistency() {
     assert_eq!(parsed_content["move"]["from"], "e2");
     assert_eq!(parsed_content["game_state"]["turn"], "black");
 
-    // Test timestamp consistency and ordering
+    // Test timestamp metadata and local insertion order
     let initial_time = game.created_at;
 
-    // Add multiple messages with small delays to test ordering
+    // Add multiple messages and retain their insertion ids and timestamps
     let mut message_times = Vec::new();
+    let mut message_ids = Vec::new();
     for i in 0..3 {
-        std::thread::sleep(std::time::Duration::from_millis(10)); // Small delay
         let msg = db
             .store_message(
                 game.id.clone(),
@@ -742,15 +742,20 @@ fn test_data_integrity_and_consistency() {
             .unwrap_or_else(|_| panic!("Failed to store timing message {}", i));
 
         message_times.push(msg.created_at);
+        message_ids.push(msg.id.unwrap());
     }
 
-    // Verify timestamps are ordered
-    for i in 1..message_times.len() {
-        assert!(
-            message_times[i] >= message_times[i - 1],
-            "Message timestamps should be non-decreasing"
-        );
-    }
+    // Verify retrieved rows follow insertion order independently of timestamps
+    let timing_messages = db
+        .get_messages_by_type(&game.id, "timing_test")
+        .expect("Failed to retrieve timing messages");
+    assert_eq!(
+        timing_messages
+            .iter()
+            .map(|message| message.id.unwrap())
+            .collect::<Vec<_>>(),
+        message_ids
+    );
 
     // Verify all message timestamps are after game creation
     for &msg_time in &message_times {

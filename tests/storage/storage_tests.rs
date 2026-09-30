@@ -597,9 +597,9 @@ fn test_game_message_operations() {
         .expect("Failed to get messages for game");
     assert_eq!(all_messages.len(), 3, "Should find 3 messages for game");
 
-    // Verify chronological order
-    assert!(all_messages[0].created_at <= all_messages[1].created_at);
-    assert!(all_messages[1].created_at <= all_messages[2].created_at);
+    // Verify local insertion order
+    assert!(all_messages[0].id.unwrap() < all_messages[1].id.unwrap());
+    assert!(all_messages[1].id.unwrap() < all_messages[2].id.unwrap());
 
     // Test get messages by type
     let move_messages = db
@@ -820,11 +820,11 @@ fn test_recent_messages_query() {
         "Should find at least 2 recent messages"
     );
 
-    // Verify reverse chronological order (most recent first)
+    // Verify newest stored messages come first
     if recent_messages.len() > 1 {
         assert!(
-            recent_messages[0].created_at >= recent_messages[1].created_at,
-            "Recent messages should be in reverse chronological order"
+            recent_messages[0].id.unwrap() > recent_messages[1].id.unwrap(),
+            "Recent messages should be in descending insertion order"
         );
     }
 }

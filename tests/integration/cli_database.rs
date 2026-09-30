@@ -553,11 +553,11 @@ fn test_database_move_history_reconstruction_accuracy() {
             );
         }
 
-        // Verify timestamps are in chronological order
-        for j in 1..detailed_history.len() {
-            assert!(
-                detailed_history[j - 1].timestamp <= detailed_history[j].timestamp,
-                "Timestamps should be chronological"
+        // Verify detailed history follows the inserted move sequence
+        for (entry, expected_move) in detailed_history.iter().zip(&move_sequence[..=i]) {
+            assert_eq!(
+                entry.notation, *expected_move,
+                "Detailed history should follow insertion order"
             );
         }
     }
@@ -804,14 +804,14 @@ fn test_database_message_storage_all_types() {
         .expect("Failed to count messages");
     assert_eq!(total_count, message_types.len() as u32);
 
-    // Test chronological ordering
+    // Test local insertion ordering
     let all_messages = db
         .get_messages_for_game(&game_id)
         .expect("Failed to get all messages");
     for i in 1..all_messages.len() {
         assert!(
-            all_messages[i - 1].created_at <= all_messages[i].created_at,
-            "Messages should be in chronological order"
+            all_messages[i - 1].id.unwrap() < all_messages[i].id.unwrap(),
+            "Messages should be in insertion order"
         );
     }
 

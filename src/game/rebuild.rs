@@ -1,4 +1,7 @@
-//! Rebuild board state from chronologically ordered stored messages.
+//! Rebuild board state from stored messages in the order supplied.
+//!
+//! Callers pass rows in local insertion order from
+//! [`Database::get_messages_for_game`](crate::storage::Database::get_messages_for_game).
 //!
 //! Applies `"Move"` rows only, without verifying stored board-state hashes
 //! (those may be incorrect until clients send post-move hashes).
@@ -36,6 +39,10 @@ impl From<ChessError> for RebuildError {
 }
 
 /// Rebuild board and move history from stored messages.
+///
+/// Rows are applied in slice order; this function does not sort by `id` or
+/// `created_at`, or validate protocol sequencing. Explicit move sequencing
+/// belongs to Stage 2 (`ply`).
 ///
 /// Skips non-`Move` rows. Parses each move with the board's active color so
 /// castling resolves correctly for both sides. Fails on the first bad row.
