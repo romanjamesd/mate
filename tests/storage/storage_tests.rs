@@ -833,6 +833,111 @@ fn recent_messages_order_survives_delete_of_newest() {
 }
 
 #[test]
+fn same_second_moves_replay_in_insertion_order() {
+    use mate::chess::{Board, Color, Move as ChessMove};
+    use mate::game::{
+        rebuild_board_from_stored_messages, store_game_accept_message, store_game_move_message,
+        GameOps, MoveProcessor, StoredMessageType,
+    };
+    use mate::messages::chess::{GameAccept, Move as MoveMessage};
+
+    let (db, _env) = create_test_database();
+    let game = db
+        .create_game("opponent_replay".to_string(), PlayerColor::White, None)
+        .expect("Failed to create replay game");
+    let moves = ["e2e4", "e7e5", "g1f3", "b8c6"];
+    let mut expected_board = Board::new();
+    for notation in moves {
+        let chess_move = ChessMove::from_str_with_color(notation, expected_board.active_color())
+            .expect("Failed to parse expected move");
+        expected_board
+            .make_move(chess_move)
+            .expect("Failed to apply expected move");
+    }
+
+    // Capture each inserted row independently of the history query's ordering.
+    let last_stored_message = || {
+        let id = db
+            .with_connection(|conn| Ok(conn.last_insert_rowid()))
+            .expect("Failed to get inserted message ID");
+        db.get_message(id).expect("Failed to load inserted message")
+    };
+    let mut stored = Vec::new();
+    let accept = GameAccept::new(game.id.clone(), Color::Black);
+    for (index, notation) in moves.iter().enumerate() {
+        let sender = if index % 2 == 0 { "player1" } else { "player2" };
+        let payload = MoveMessage::new(game.id.clone(), notation.to_string(), "hash".to_string());
+        store_game_move_message(&db, &payload, "signature", sender)
+            .expect("Failed to store move payload");
+        stored.push(last_stored_message());
+
+        if index == 1 {
+            store_game_accept_message(&db, &accept, "signature", "player2")
+                .expect("Failed to store interleaved acceptance");
+            stored.push(last_stored_message());
+        }
+    }
+
+    for timestamps in [vec![100; stored.len()], vec![5, 4, 3, 2, 1]] {
+        for (message, timestamp) in stored.iter_mut().zip(timestamps) {
+            set_created_at(&db, message.id.expect("stored id"), timestamp);
+            message.created_at = timestamp;
+        }
+
+        let messages = db
+            .get_messages_for_game(&game.id)
+            .expect("Failed to load replay history");
+        assert_messages(&messages, &stored);
+        assert_eq!(messages.len(), 5);
+        assert_eq!(
+            messages[2].message_type,
+            StoredMessageType::GameAccept.as_str()
+        );
+        assert_eq!(
+            serde_json::from_str::<GameAccept>(&messages[2].content).unwrap(),
+            accept
+        );
+
+        let (board, history) = rebuild_board_from_stored_messages(&messages)
+            .expect("Failed to replay insertion-ordered moves");
+        assert_eq!(
+            history.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            moves
+        );
+        assert_eq!(board.to_fen(), expected_board.to_fen());
+
+        let state = GameOps::new(&db)
+            .reconstruct_game_state(&game.id)
+            .expect("Failed to reconstruct game state");
+        assert_eq!(state.move_history, moves);
+        assert_eq!(state.board.to_fen(), expected_board.to_fen());
+
+        let analyzed = MoveProcessor::new(&db)
+            .get_move_history_with_analysis(&game.id)
+            .expect("Failed to analyze move history");
+        assert_eq!(
+            analyzed
+                .iter()
+                .map(|entry| entry.notation.as_str())
+                .collect::<Vec<_>>(),
+            moves
+        );
+        let move_timestamps: Vec<_> = messages
+            .iter()
+            .filter(|message| message.message_type == StoredMessageType::Move.as_str())
+            .map(|message| message.created_at)
+            .collect();
+        assert_eq!(
+            analyzed
+                .iter()
+                .map(|entry| entry.timestamp)
+                .collect::<Vec<_>>(),
+            move_timestamps
+        );
+    }
+}
+
+#[test]
 fn test_message_pagination() {
     let (db, _env) = create_test_database();
     let game = db
