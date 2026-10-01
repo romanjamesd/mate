@@ -143,6 +143,33 @@ mod tests {
     }
 
     #[test]
+    fn applies_rows_in_slice_order() {
+        // Both timestamp and id order disagree with the supplied move sequence.
+        let messages: Vec<_> = [("e2e4", 2, 3), ("e7e5", 3, 1), ("g1f3", 1, 2)]
+            .into_iter()
+            .map(|(mv, id, created_at)| {
+                let mut message =
+                    stored_message(StoredMessageType::Move.as_str(), &move_content(mv));
+                message.id = Some(id);
+                message.created_at = created_at;
+                message
+            })
+            .collect();
+
+        let (board, history) =
+            rebuild_board_from_stored_messages(&messages).expect("apply rows in slice order");
+
+        assert_eq!(
+            history.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["e2e4", "e7e5", "g1f3"]
+        );
+        assert_eq!(
+            board.to_fen(),
+            "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
+        );
+    }
+
+    #[test]
     fn black_castling_uses_active_color() {
         // Clear path for Black kingside castling, then castle with O-O.
         let moves = [
