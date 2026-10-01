@@ -1,4 +1,5 @@
-use mate::storage::{Database, GameStatus, PlayerColor};
+use mate::storage::{schema::MIGRATIONS, Database, GameStatus, Message, PlayerColor};
+use rusqlite::{params, Connection};
 use tempfile::TempDir;
 
 /// Per-test database isolation via an explicit path (not process-global env).
@@ -512,15 +513,164 @@ fn test_transaction_consistency() {
     ); // Allow 1 second tolerance
 }
 
-/// Priority 3: Schema and Migration Tests (2 tests)
-/// Test database schema creation and evolution
+// Priority 3: Schema and Migration Tests (5 tests)
+// Test database schema creation and evolution
+
+fn assert_insertion_order_schema(db: &Database) {
+    db.with_connection(|conn| {
+        let version: i32 =
+            conn.query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(version, 2);
+
+        let indexes = conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'messages'",
+            )?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        assert!(indexes.iter().any(|name| name == "idx_messages_game_order"));
+        assert!(!indexes.iter().any(|name| name == "idx_messages_game"));
+
+        let columns = conn
+            .prepare("PRAGMA index_info('idx_messages_game_order')")?
+            .query_map([], |row| row.get::<_, String>(2))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        assert_eq!(columns, ["game_id", "id"]);
+        Ok(())
+    })
+    .expect("Failed to inspect insertion-order schema");
+}
+
+#[test]
+fn fresh_database_has_insertion_order_index() {
+    let (db, _env) = create_test_database();
+    assert_insertion_order_schema(&db);
+}
+
+#[test]
+fn existing_v1_database_upgrades_in_place() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let db_path = temp_dir.path().join("database.sqlite");
+    let game_id = "legacy_game";
+    let metadata = serde_json::json!({"legacy": true, "notes": ["preserve", "data"]});
+    let expected_messages: Vec<Message> = [7, 12, 21]
+        .into_iter()
+        .enumerate()
+        .map(|(i, id)| Message {
+            id: Some(id),
+            game_id: game_id.to_string(),
+            message_type: if i == 1 { "chat" } else { "move" }.to_string(),
+            content: serde_json::json!({"order": i, "text": format!("legacy message {i}")})
+                .to_string(),
+            signature: format!("legacy_signature_{i}"),
+            sender_peer_id: format!("legacy_sender_{}", i % 2),
+            created_at: 300 - i as i64 * 100,
+        })
+        .collect();
+
+    // Build a real v1 file without invoking Database, which would migrate it immediately.
+    {
+        let conn = Connection::open(&db_path).expect("Failed to open legacy database");
+        let migration = &MIGRATIONS[0];
+        assert_eq!(migration.version, 1);
+        conn.execute_batch(migration.sql)
+            .expect("Failed to create version 1 schema");
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at, description) VALUES (?1, ?2, ?3)",
+            params![migration.version, 50, migration.description],
+        )
+        .expect("Failed to record version 1 migration");
+        conn.execute(
+            "INSERT INTO games
+             (id, opponent_peer_id, my_color, status, created_at, updated_at, completed_at, result, metadata)
+             VALUES (?1, 'legacy_opponent', 'black', 'completed', 50, 90, 90, 'draw', ?2)",
+            params![game_id, metadata.to_string()],
+        )
+        .expect("Failed to insert legacy game");
+        for message in &expected_messages {
+            conn.execute(
+                "INSERT INTO messages
+                 (id, game_id, message_type, content, signature, sender_peer_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    message.id,
+                    message.game_id,
+                    message.message_type,
+                    message.content,
+                    message.signature,
+                    message.sender_peer_id,
+                    message.created_at,
+                ],
+            )
+            .expect("Failed to insert legacy message");
+        }
+    }
+
+    let db = Database::new_with_path("test_peer_integration", &db_path)
+        .expect("Failed to open and migrate legacy database");
+    assert_insertion_order_schema(&db);
+    assert_eq!(db.count_messages_for_game(game_id).unwrap(), 3);
+    let messages = db.get_messages_for_game(game_id).unwrap();
+    // Compare every persisted field, including ids, content, and rollback timestamps.
+    assert_eq!(
+        serde_json::to_value(&messages).unwrap(),
+        serde_json::to_value(&expected_messages).unwrap()
+    );
+    let game = db.get_game(game_id).unwrap();
+    assert_eq!(game.id, game_id);
+    assert_eq!(game.opponent_peer_id, "legacy_opponent");
+    assert_eq!(game.my_color, PlayerColor::Black);
+    assert_eq!(game.status, GameStatus::Completed);
+    assert_eq!(game.created_at, 50);
+    assert_eq!(game.updated_at, 90);
+    assert_eq!(game.completed_at, Some(90));
+    assert_eq!(game.result, Some(mate::storage::models::GameResult::Draw));
+    assert_eq!(game.metadata, Some(metadata));
+}
+
+#[test]
+fn per_game_query_uses_order_index_without_sort() {
+    let (db, _env) = create_test_database();
+    db.with_connection(|conn| {
+        // Check both the compact plan probe and the projections used by public reads.
+        for sql in [
+            "EXPLAIN QUERY PLAN SELECT id FROM messages WHERE game_id = ?1 ORDER BY id ASC",
+            "EXPLAIN QUERY PLAN
+             SELECT id, game_id, message_type, content, signature, sender_peer_id, created_at
+             FROM messages WHERE game_id = ?1 ORDER BY id ASC",
+            "EXPLAIN QUERY PLAN
+             SELECT id, game_id, message_type, content, signature, sender_peer_id, created_at
+             FROM messages WHERE game_id = ?1 ORDER BY id ASC LIMIT 10 OFFSET 5",
+        ] {
+            let details = conn
+                .prepare(sql)?
+                .query_map(["plan_test_game"], |row| row.get::<_, String>(3))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            assert!(
+                details
+                    .iter()
+                    .any(|detail| detail.contains("idx_messages_game_order")),
+                "Expected insertion-order index for {sql}: {details:?}"
+            );
+            assert!(
+                details
+                    .iter()
+                    .all(|detail| !detail.to_uppercase().contains("TEMP B-TREE")),
+                "Unexpected temporary sort for {sql}: {details:?}"
+            );
+        }
+        Ok(())
+    })
+    .expect("Failed to inspect per-game query plans");
+}
 
 #[test]
 fn test_database_schema_creation() {
     let (db, _env) = create_test_database();
 
-    // Verify that we can perform all expected operations
-    // This implicitly tests that the schema was created correctly
+    // Smoke-test table operations, foreign keys, and cascade deletion.
 
     // Test games table
     let game = db
@@ -629,7 +779,7 @@ fn test_database_indexes_and_performance() {
         .expect("Failed to query games by status");
     assert_eq!(pending_games.len(), 10, "All games should be pending");
 
-    // Query messages by game_id (should use game_id index)
+    // Query messages by game_id (should use the game_id, id insertion-order index)
     for game_id in &game_ids {
         let messages = db
             .get_messages_for_game(game_id)
