@@ -44,6 +44,24 @@ fn create_test_database() -> (Database, TestEnvironment) {
     TestEnvironment::new()
 }
 
+fn ids(messages: &[Message]) -> Vec<i64> {
+    messages
+        .iter()
+        .map(|message| message.id.expect("stored id"))
+        .collect()
+}
+
+fn set_created_at(db: &Database, id: i64, timestamp: i64) {
+    db.with_connection(|conn| {
+        conn.execute(
+            "UPDATE messages SET created_at = ?1 WHERE id = ?2",
+            [timestamp, id],
+        )?;
+        Ok(())
+    })
+    .expect("Failed to set message timestamp");
+}
+
 /// Priority 1: Complete Game Lifecycle Tests (3 tests)
 /// Test full game workflows from creation to completion
 
@@ -66,7 +84,7 @@ fn test_complete_game_lifecycle_with_messages() {
     assert_eq!(game.status, GameStatus::Pending);
 
     // Phase 2: Game Initialization Messages
-    let _game_request_msg = db.store_message(
+    let game_request_msg = db.store_message(
         game.id.clone(),
         "game_request".to_string(),
         serde_json::json!({"color": "white", "time_control": {"initial": 600, "increment": 10}}).to_string(),
@@ -74,7 +92,7 @@ fn test_complete_game_lifecycle_with_messages() {
         "test_peer_integration".to_string(),
     ).expect("Failed to store game request message");
 
-    let _game_accept_msg = db
+    let game_accept_msg = db
         .store_message(
             game.id.clone(),
             "game_accept".to_string(),
@@ -99,26 +117,31 @@ fn test_complete_game_lifecycle_with_messages() {
         ("Nc6", "opponent_lifecycle"),
     ];
 
+    let mut stored_ids = ids(&[game_request_msg, game_accept_msg]);
     for (move_notation, sender) in moves {
-        db.store_message(
-            game.id.clone(),
-            "move".to_string(),
-            serde_json::json!({"move": move_notation, "fen": "updated_position"}).to_string(),
-            format!("move_sig_{move_notation}"),
-            sender.to_string(),
-        )
-        .unwrap_or_else(|_| panic!("Failed to store move: {}", move_notation));
+        let message = db
+            .store_message(
+                game.id.clone(),
+                "move".to_string(),
+                serde_json::json!({"move": move_notation, "fen": "updated_position"}).to_string(),
+                format!("move_sig_{move_notation}"),
+                sender.to_string(),
+            )
+            .unwrap_or_else(|_| panic!("Failed to store move: {}", move_notation));
+        stored_ids.push(message.id.expect("stored id"));
     }
 
     // Phase 5: Chat Messages
-    db.store_message(
-        game.id.clone(),
-        "chat".to_string(),
-        serde_json::json!({"message": format!("Good move #{}", 1)}).to_string(),
-        "chat_sig_1".to_string(),
-        "opponent_lifecycle".to_string(),
-    )
-    .expect("Failed to store chat message");
+    let chat_message = db
+        .store_message(
+            game.id.clone(),
+            "chat".to_string(),
+            serde_json::json!({"message": format!("Good move #{}", 1)}).to_string(),
+            "chat_sig_1".to_string(),
+            "opponent_lifecycle".to_string(),
+        )
+        .expect("Failed to store chat message");
+    stored_ids.push(chat_message.id.expect("stored id"));
 
     // Phase 6: Game Completion
     db.update_game_result(&game.id, mate::storage::models::GameResult::Win)
@@ -130,6 +153,10 @@ fn test_complete_game_lifecycle_with_messages() {
     assert!(completed_game.completed_at.is_some());
 
     // Phase 7: Verification of Complete History
+    // Simulate clock rollback so timestamp order disagrees with lifecycle order.
+    for (order, &id) in stored_ids.iter().enumerate() {
+        set_created_at(&db, id, (stored_ids.len() - order) as i64);
+    }
     let all_messages = db
         .get_messages_for_game(&game.id)
         .expect("Failed to get all game messages");
@@ -149,12 +176,8 @@ fn test_complete_game_lifecycle_with_messages() {
     assert_eq!(chat_messages.len(), 1, "Should have 1 chat message");
 
     // Verify local insertion order
-    for i in 1..all_messages.len() {
-        assert!(
-            all_messages[i - 1].id.unwrap() < all_messages[i].id.unwrap(),
-            "Messages should be in insertion order"
-        );
-    }
+    assert_eq!(ids(&all_messages), stored_ids);
+    assert!(stored_ids.windows(2).all(|pair| pair[0] < pair[1]));
 }
 
 #[test]
@@ -343,20 +366,49 @@ fn test_game_with_extensive_message_history() {
         "Should have all messages stored"
     );
 
-    // Test pagination on large message set
-    let page1 = db
-        .get_messages_for_game_paginated(&game.id, 10, 0)
-        .expect("Failed to get first page");
-    assert_eq!(page1.len(), 10, "First page should have 10 messages");
-
-    let last_page_offset = (expected_total / 10) * 10;
-    let last_page = db
-        .get_messages_for_game_paginated(&game.id, 10, last_page_offset as u32)
-        .expect("Failed to get last page");
-    assert!(
-        last_page.len() <= 10,
-        "Last page should have <= 10 messages"
-    );
+    // Every page must match its slice of the complete insertion-ordered history.
+    let expected_ids = ids(&all_messages);
+    assert!(expected_ids.windows(2).all(|pair| pair[0] < pair[1]));
+    let total = expected_total as u32;
+    for decreasing_timestamps in [false, true] {
+        for (order, &id) in expected_ids.iter().enumerate() {
+            let timestamp = if decreasing_timestamps {
+                (expected_total - order) as i64
+            } else {
+                100
+            };
+            set_created_at(&db, id, timestamp);
+        }
+        assert_eq!(
+            ids(&db.get_messages_for_game(&game.id).unwrap()),
+            expected_ids
+        );
+        for page_size in [1, 2, 3, 10, total, total + 1] {
+            let mut paged_ids = Vec::new();
+            // A finite bound includes the first empty page beyond the history.
+            for page_index in 0..=total.div_ceil(page_size) {
+                let offset = page_index * page_size;
+                let page = db
+                    .get_messages_for_game_paginated(&game.id, page_size, offset)
+                    .expect("Failed to get message page");
+                let start = (offset as usize).min(expected_total);
+                let end = (start + page_size as usize).min(expected_total);
+                assert_eq!(ids(&page), expected_ids[start..end]);
+                paged_ids.extend(ids(&page));
+            }
+            assert_eq!(paged_ids, expected_ids);
+            for offset in [total, total + 1] {
+                assert!(db
+                    .get_messages_for_game_paginated(&game.id, page_size, offset)
+                    .unwrap()
+                    .is_empty());
+            }
+        }
+        assert!(db
+            .get_messages_for_game_paginated(&game.id, 0, 0)
+            .unwrap()
+            .is_empty());
+    }
 
     // Verify message type distribution
     let move_messages = db
@@ -899,16 +951,19 @@ fn test_data_integrity_and_consistency() {
     let timing_messages = db
         .get_messages_by_type(&game.id, "timing_test")
         .expect("Failed to retrieve timing messages");
+    assert_eq!(ids(&timing_messages), message_ids);
+    assert!(message_ids.windows(2).all(|pair| pair[0] < pair[1]));
     assert_eq!(
         timing_messages
             .iter()
-            .map(|message| message.id.unwrap())
+            .map(|message| message.created_at)
             .collect::<Vec<_>>(),
-        message_ids
+        message_times
     );
 
     // Verify all message timestamps are after game creation
     for &msg_time in &message_times {
+        assert!(msg_time > 0, "Message timestamp should be set");
         assert!(
             msg_time >= initial_time,
             "Message timestamps should be after game creation"

@@ -7,10 +7,17 @@
 use mate::chess::Board;
 use mate::game::{GameOps, GameOpsError, MoveProcessor};
 use mate::storage::models::{GameResult, GameStatus, PlayerColor};
-use mate::storage::Database;
+use mate::storage::{Database, Message};
 use serde_json::json;
 use std::sync::Arc;
 use tempfile::TempDir;
+
+fn ids(messages: &[Message]) -> Vec<i64> {
+    messages
+        .iter()
+        .map(|message| message.id.expect("stored id"))
+        .collect()
+}
 
 /// Per-test database isolation via an explicit path (not process-global env).
 struct TestEnvironment {
@@ -753,6 +760,7 @@ fn test_database_message_storage_all_types() {
         ("DrawAccept", json!({"accepted": true})),
     ];
 
+    let mut stored_ids = Vec::new();
     for (i, (msg_type, content)) in message_types.iter().enumerate() {
         let message = db
             .store_message(
@@ -772,6 +780,17 @@ fn test_database_message_storage_all_types() {
         assert!(message.id.is_some(), "Message should have assigned ID");
         assert_eq!(message.message_type, *msg_type);
         assert_eq!(message.game_id, game_id);
+        let id = message.id.expect("stored id");
+        stored_ids.push(id);
+        // Simulate clock rollback to distinguish insertion order from time order.
+        db.with_connection(|conn| {
+            conn.execute(
+                "UPDATE messages SET created_at = ?1 WHERE id = ?2",
+                [(message_types.len() - i) as i64, id],
+            )?;
+            Ok(())
+        })
+        .expect("Failed to set message timestamp");
     }
 
     // Test retrieval by message type
@@ -808,12 +827,8 @@ fn test_database_message_storage_all_types() {
     let all_messages = db
         .get_messages_for_game(&game_id)
         .expect("Failed to get all messages");
-    for i in 1..all_messages.len() {
-        assert!(
-            all_messages[i - 1].id.unwrap() < all_messages[i].id.unwrap(),
-            "Messages should be in insertion order"
-        );
-    }
+    assert_eq!(ids(&all_messages), stored_ids);
+    assert!(stored_ids.windows(2).all(|pair| pair[0] < pair[1]));
 
     // Test pagination
     let paginated = db
@@ -825,6 +840,11 @@ fn test_database_message_storage_all_types() {
         .get_messages_for_game_paginated(&game_id, 4, 3)
         .expect("Failed to get next page");
     assert_eq!(next_page.len(), 4, "Should return remaining 4 messages");
+    assert_eq!(ids(&paginated), stored_ids[..3]);
+    assert_eq!(ids(&next_page), stored_ids[3..]);
+    let mut paged_ids = ids(&paginated);
+    paged_ids.extend(ids(&next_page));
+    assert_eq!(paged_ids, ids(&all_messages));
 }
 
 #[test]
