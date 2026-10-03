@@ -21,7 +21,7 @@ use mate::messages::chess::{
         ChessRateLimiter, SecurityViolation, MAX_FEN_LENGTH, MAX_MOVE_HISTORY_SIZE,
         MAX_REASON_LENGTH,
     },
-    GameAccept, GameDecline, GameInvite, Move, MoveAck, SyncRequest, SyncResponse,
+    GameAccept, GameDecline, GameInvite, Move, SyncRequest, SyncResponse,
 };
 use mate::messages::types::Message;
 
@@ -818,13 +818,11 @@ mod comprehensive_security_integration_tests {
             )),
             Message::Move(Move::new(
                 valid_game_id.clone(),
+                1,
                 "e2e4".to_string(),
                 valid_hash.clone(),
             )),
-            Message::MoveAck(MoveAck::new_with_move_id(
-                valid_game_id.clone(),
-                "move_123".to_string(),
-            )),
+            Message::MoveAck(crate::common::test_data::move_ack(valid_game_id.clone(), 1)),
             Message::SyncRequest(SyncRequest::new(valid_game_id.clone())),
             Message::SyncResponse(SyncResponse::new(
                 valid_game_id.clone(),

@@ -186,7 +186,12 @@ mod tests {
         let game_id = generate_game_id();
         seed_game(&database, &game_id);
 
-        let mv = Move::new(game_id.clone(), "e2e4".to_string(), "hash-e2e4".to_string());
+        let mv = Move::new(
+            game_id.clone(),
+            1,
+            "e2e4".to_string(),
+            "hash-e2e4".to_string(),
+        );
         store_game_move_message(&database, &mv, "remote", "peer-3").expect("store move");
 
         let messages = database

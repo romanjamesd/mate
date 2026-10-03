@@ -477,7 +477,12 @@ mod validation_performance_tests {
             ),
             (
                 "move_with_hash",
-                Message::Move(Move::new(game_id.clone(), "e2e4".to_string(), board_hash)),
+                Message::Move(Move::new(
+                    game_id.clone(),
+                    1,
+                    "e2e4".to_string(),
+                    board_hash,
+                )),
             ),
         ];
 
@@ -862,7 +867,7 @@ mod memory_usage_tests {
                 let board = Board::new();
                 let hash = hash_board_state(&board);
 
-                let message = Message::new_move(game_id, "e2e4".to_string(), hash);
+                let message = Message::new_move(game_id, 1, "e2e4".to_string(), hash);
                 let _ = message.validate();
                 let _ = message.serialize();
                 messages.push(message);
@@ -938,11 +943,11 @@ fn create_test_message_suite() -> Vec<(String, Message)> {
         ),
         (
             "Move".to_string(),
-            Message::new_move(game_id.clone(), "e2e4".to_string(), board_hash.clone()),
+            Message::new_move(game_id.clone(), 1, "e2e4".to_string(), board_hash.clone()),
         ),
         (
             "MoveAck".to_string(),
-            Message::new_move_ack(game_id.clone(), Some("move-123".to_string())),
+            Message::MoveAck(crate::common::test_data::move_ack(game_id.clone(), 1)),
         ),
         (
             "SyncRequest".to_string(),

@@ -66,7 +66,7 @@ mod tests {
         let game_id = generate_game_id();
         let board = Board::new();
         let board_hash = hash_board_state(&board);
-        let msg = Message::new_move(game_id.clone(), "e2e4".to_string(), board_hash.clone());
+        let msg = Message::new_move(game_id.clone(), 1, "e2e4".to_string(), board_hash.clone());
 
         assert!(msg.is_chess_message());
         assert_eq!(msg.get_game_id(), Some(game_id.as_str()));
@@ -83,15 +83,16 @@ mod tests {
     #[test]
     fn test_enhanced_move_ack_constructor() {
         let game_id = generate_game_id();
-        let move_id = "move-123".to_string();
-        let msg = Message::new_move_ack(game_id.clone(), Some(move_id.clone()));
+        let mv =
+            mate::messages::chess::Move::new(game_id.clone(), 1, "e2e4".into(), "0".repeat(64));
+        let msg = Message::new_move_ack(&mv);
 
         assert!(msg.is_chess_message());
         assert_eq!(msg.get_game_id(), Some(game_id.as_str()));
         assert_eq!(msg.message_type(), "MoveAck");
 
         if let Message::MoveAck(ack) = msg {
-            assert_eq!(ack.move_id, Some(move_id));
+            assert_eq!(ack, mate::messages::chess::MoveAck::for_move(&mv));
         } else {
             panic!("Expected MoveAck message");
         }
@@ -144,8 +145,8 @@ mod tests {
             Message::new_game_invite(game_id.clone(), None),
             Message::new_game_accept(game_id.clone(), Color::White),
             Message::new_game_decline(game_id.clone(), None),
-            Message::new_move(game_id.clone(), "e2e4".to_string(), "hash".to_string()),
-            Message::new_move_ack(game_id.clone(), None),
+            Message::new_move(game_id.clone(), 1, "e2e4".to_string(), "hash".to_string()),
+            Message::MoveAck(crate::common::test_data::move_ack(game_id.clone(), 1)),
             Message::new_sync_request(game_id.clone()),
             Message::new_sync_response(
                 game_id.clone(),
@@ -192,8 +193,8 @@ mod tests {
             Message::new_game_invite(game_id.clone(), Some(Color::White)),
             Message::new_game_accept(game_id.clone(), Color::Black),
             Message::new_game_decline(game_id.clone(), Some("busy".to_string())),
-            Message::new_move(game_id.clone(), "e2e4".to_string(), board_hash.clone()),
-            Message::new_move_ack(game_id.clone(), Some("move-1".to_string())),
+            Message::new_move(game_id.clone(), 1, "e2e4".to_string(), board_hash.clone()),
+            Message::MoveAck(crate::common::test_data::move_ack(game_id.clone(), 1)),
             Message::new_sync_request(game_id.clone()),
             Message::new_sync_response(
                 game_id.clone(),
@@ -263,7 +264,12 @@ mod tests {
     #[test]
     fn test_logging_capabilities() {
         let game_id = generate_game_id();
-        let msg = Message::new_move(game_id.clone(), "e2e4".to_string(), "hash123".to_string());
+        let msg = Message::new_move(
+            game_id.clone(),
+            1,
+            "e2e4".to_string(),
+            "hash123".to_string(),
+        );
 
         let log_summary = msg.log_summary();
 
@@ -307,8 +313,8 @@ mod tests {
             Message::new_game_invite(game_id.clone(), None),
             Message::new_game_accept(game_id.clone(), Color::White),
             Message::new_game_decline(game_id.clone(), None),
-            Message::new_move(game_id.clone(), "e2e4".to_string(), "hash".to_string()),
-            Message::new_move_ack(game_id.clone(), None),
+            Message::new_move(game_id.clone(), 1, "e2e4".to_string(), "hash".to_string()),
+            Message::MoveAck(crate::common::test_data::move_ack(game_id.clone(), 1)),
             Message::new_sync_request(game_id.clone()),
             Message::new_sync_response(game_id, "fen".to_string(), vec![], "hash".to_string()),
         ];
@@ -343,7 +349,7 @@ mod tests {
         let messages_with_game_id = vec![
             Message::new_game_invite(game_id.clone(), None),
             Message::new_game_accept(game_id.clone(), Color::White),
-            Message::new_move(game_id.clone(), "e2e4".to_string(), "hash".to_string()),
+            Message::new_move(game_id.clone(), 1, "e2e4".to_string(), "hash".to_string()),
         ];
 
         let messages_without_game_id = vec![
@@ -381,9 +387,12 @@ mod tests {
             ),
             (
                 "Move",
-                Message::new_move(game_id.clone(), "e2e4".to_string(), "hash".to_string()),
+                Message::new_move(game_id.clone(), 1, "e2e4".to_string(), "hash".to_string()),
             ),
-            ("MoveAck", Message::new_move_ack(game_id.clone(), None)),
+            (
+                "MoveAck",
+                Message::MoveAck(crate::common::test_data::move_ack(game_id.clone(), 1)),
+            ),
             ("SyncRequest", Message::new_sync_request(game_id.clone())),
             (
                 "SyncResponse",
@@ -433,8 +442,8 @@ mod tests {
             Message::new_game_invite(game_id.clone(), Some(Color::White)),
             Message::new_game_accept(game_id.clone(), Color::Black),
             Message::new_game_decline(game_id.clone(), Some("reason".to_string())),
-            Message::new_move(game_id.clone(), "e2e4".to_string(), valid_hash.clone()),
-            Message::new_move_ack(game_id.clone(), Some("move-1".to_string())),
+            Message::new_move(game_id.clone(), 1, "e2e4".to_string(), valid_hash.clone()),
+            Message::MoveAck(crate::common::test_data::move_ack(game_id.clone(), 1)),
             Message::new_sync_request(game_id.clone()),
             Message::new_sync_response(
                 game_id.clone(),
@@ -468,7 +477,7 @@ mod tests {
     #[test]
     fn test_validation_pipeline_invalid_move_format() {
         let game_id = generate_game_id();
-        let msg = Message::new_move(game_id, "invalid-move".to_string(), "hash".to_string());
+        let msg = Message::new_move(game_id, 1, "invalid-move".to_string(), "hash".to_string());
 
         let result = msg.validate();
         assert!(
@@ -551,7 +560,7 @@ mod tests {
     #[test]
     fn test_cross_format_size_consistency() {
         let game_id = generate_game_id();
-        let msg = Message::new_move(game_id, "e2e4".to_string(), "hash123".to_string());
+        let msg = Message::new_move(game_id, 1, "e2e4".to_string(), "hash123".to_string());
 
         let json_size = msg.to_json().expect("Failed to serialize to JSON").len();
         let binary_size = msg
@@ -635,10 +644,11 @@ mod tests {
             Message::new_game_decline(game_id.clone(), Some("busy".to_string())),
             Message::new_move(
                 game_id.clone(),
+                1,
                 "e2e4".to_string(),
                 hash_board_state(&board),
             ),
-            Message::new_move_ack(game_id.clone(), Some("move-1".to_string())),
+            Message::MoveAck(crate::common::test_data::move_ack(game_id.clone(), 1)),
             Message::new_sync_request(game_id.clone()),
             Message::new_sync_response(
                 game_id.clone(),

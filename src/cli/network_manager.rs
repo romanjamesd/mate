@@ -306,11 +306,7 @@ impl NetworkManager {
         game_id: String,
         chess_move: ChessMove,
     ) -> Result<SendOutcome> {
-        let message = Message::new_move(
-            game_id.clone(),
-            chess_move.chess_move.clone(),
-            chess_move.board_state_hash.clone(),
-        );
+        let message = Message::Move(chess_move);
 
         match self
             .send_message_with_retry(peer_address, message.clone(), &game_id)

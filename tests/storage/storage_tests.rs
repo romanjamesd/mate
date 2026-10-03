@@ -866,7 +866,12 @@ fn same_second_moves_replay_in_insertion_order() {
     let accept = GameAccept::new(game.id.clone(), Color::Black);
     for (index, notation) in moves.iter().enumerate() {
         let sender = if index % 2 == 0 { "player1" } else { "player2" };
-        let payload = MoveMessage::new(game.id.clone(), notation.to_string(), "hash".to_string());
+        let payload = MoveMessage::new(
+            game.id.clone(),
+            index as u32 + 1,
+            notation.to_string(),
+            "hash".to_string(),
+        );
         store_game_move_message(&db, &payload, "signature", sender)
             .expect("Failed to store move payload");
         stored.push(last_stored_message());

@@ -158,6 +158,7 @@ fn test_database_game_state_reconstruction() {
             "Move".to_string(),
             json!({
                 "game_id": game_id,
+                "ply": (i + 1) as u32,
                 "chess_move": move_notation,
                 "board_state_hash": format!("hash_{i}")
             })

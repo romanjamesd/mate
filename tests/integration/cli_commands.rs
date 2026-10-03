@@ -174,6 +174,7 @@ async fn test_board_and_history_reconstruct_pascal_case_move() {
             StoredMessageType::Move.as_str().to_string(),
             json!({
                 "game_id": game_id,
+                "ply": 1,
                 "chess_move": "e2e4",
                 "board_state_hash": "test_hash"
             })

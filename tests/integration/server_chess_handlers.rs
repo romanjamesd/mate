@@ -327,6 +327,7 @@ async fn server_move_acks_and_persists() {
     connection
         .send_message(Message::new_move(
             game_id.clone(),
+            1,
             "e2e4".to_string(),
             board_hash.clone(),
         ))
@@ -343,7 +344,15 @@ async fn server_move_acks_and_persists() {
     match move_response {
         Message::MoveAck(ack) => {
             assert_eq!(ack.game_id, game_id);
-            assert!(ack.move_id.is_none());
+            assert_eq!(
+                ack,
+                mate::messages::chess::MoveAck::for_move(&Move::new(
+                    game_id.clone(),
+                    1,
+                    "e2e4".into(),
+                    board_hash.clone()
+                ))
+            );
         }
         other => panic!("expected MoveAck, got {}", other.message_type()),
     }
@@ -430,6 +439,7 @@ async fn server_sync_request_returns_sync_response() {
     connection
         .send_message(Message::new_move(
             game_id.clone(),
+            1,
             "e2e4".to_string(),
             board_hash,
         ))
@@ -543,6 +553,7 @@ async fn server_wrong_peer_move_soft_declines() {
     connection_b
         .send_message(Message::new_move(
             game_id.clone(),
+            1,
             "e2e4".to_string(),
             board_hash,
         ))
@@ -604,6 +615,7 @@ async fn server_invalid_move_soft_declines() {
     connection
         .send_message(Message::new_move(
             "not-a-uuid".to_string(),
+            1,
             "e2e4".to_string(),
             hash_board_state(&Board::new()),
         ))

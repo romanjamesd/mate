@@ -98,6 +98,8 @@ impl GameDecline {
 pub struct Move {
     /// Unique identifier for the game
     pub game_id: String,
+    /// One-based half-move sequence: White starts at 1, Black at 2.
+    pub ply: u32,
     /// Chess move in algebraic notation (e.g., "e2e4", "O-O")
     pub chess_move: String,
     /// SHA-256 hash of the board state after the move for verification
@@ -106,9 +108,10 @@ pub struct Move {
 
 impl Move {
     /// Create a new chess move message
-    pub fn new(game_id: String, chess_move: String, board_state_hash: String) -> Self {
+    pub fn new(game_id: String, ply: u32, chess_move: String, board_state_hash: String) -> Self {
         Self {
             game_id,
+            ply,
             chess_move,
             board_state_hash,
         }
@@ -121,25 +124,40 @@ impl Move {
 pub struct MoveAck {
     /// Unique identifier for the game
     pub game_id: String,
-    /// Optional move identifier for tracking specific moves
-    pub move_id: Option<String>,
+    /// One-based half-move sequence being acknowledged.
+    pub ply: u32,
+    /// Lowercase hex SHA-256 digest of the exact move payload.
+    pub move_digest: String,
 }
 
 impl MoveAck {
-    /// Create a new move acknowledgment
-    pub fn new(game_id: String, move_id: Option<String>) -> Self {
-        Self { game_id, move_id }
+    /// Acknowledge the exact move payload received.
+    pub fn for_move(mv: &Move) -> Self {
+        Self {
+            game_id: mv.game_id.clone(),
+            ply: mv.ply,
+            move_digest: move_digest(mv),
+        }
+    }
+}
+
+/// Hash the exact UTF-8 payload bytes using the versioned move digest encoding.
+/// Each string is prefixed with its byte length as a big-endian u32; ply is
+/// also big-endian. No normalization or serialization format is involved.
+pub fn move_digest(mv: &Move) -> String {
+    fn append_string(hasher: &mut Sha256, value: &str) {
+        let length = u32::try_from(value.len()).expect("move digest field exceeds u32 byte length");
+        hasher.update(length.to_be_bytes());
+        hasher.update(value.as_bytes());
     }
 
-    /// Create a move acknowledgment without a move ID
-    pub fn new_no_move_id(game_id: String) -> Self {
-        Self::new(game_id, None)
-    }
-
-    /// Create a move acknowledgment with a specific move ID
-    pub fn new_with_move_id(game_id: String, move_id: String) -> Self {
-        Self::new(game_id, Some(move_id))
-    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"mate/move-digest/v1\0");
+    append_string(&mut hasher, &mv.game_id);
+    hasher.update(mv.ply.to_be_bytes());
+    append_string(&mut hasher, &mv.chess_move);
+    append_string(&mut hasher, &mv.board_state_hash);
+    hex::encode(hasher.finalize())
 }
 
 /// Chess game synchronization request message
@@ -491,6 +509,7 @@ fn validate_reply_to_address(address: &str) -> bool {
 /// let board = Board::new();
 /// let valid_move = Move::new(
 ///     generate_game_id(),
+///     1,
 ///     "e2e4".to_string(),
 ///     hash_board_state(&board)
 /// );
@@ -503,6 +522,12 @@ pub fn validate_move_message(msg: &Move) -> Result<(), ValidationError> {
         return Err(ValidationError::InvalidGameId(format!(
             "Game ID '{game_id}' is not a valid UUID format"
         )));
+    }
+
+    if msg.ply == 0 {
+        return Err(ValidationError::InvalidMessageFormat(
+            "Move ply must be at least 1".to_string(),
+        ));
     }
 
     // Validate chess move format
@@ -865,7 +890,7 @@ pub fn validate_sync_response(response: &SyncResponse) -> Result<(), ValidationE
 /// Validate a move acknowledgment message
 ///
 /// Validates that a MoveAck message has a properly formatted game ID.
-/// The optional move_id field is checked for reasonable length if provided.
+/// The ply must be positive and the digest must be canonical lowercase SHA-256 hex.
 ///
 /// # Arguments
 ///
@@ -884,31 +909,20 @@ pub fn validate_move_ack(ack: &MoveAck) -> Result<(), ValidationError> {
         )));
     }
 
-    // Validate move ID format if present
-    if let Some(move_id) = &ack.move_id {
-        if move_id.is_empty() {
-            return Err(ValidationError::InvalidMessageFormat(
-                "Move ID cannot be empty when present".to_string(),
-            ));
-        }
-
-        // Basic format validation for move ID
-        if move_id.len() > 64 {
-            return Err(ValidationError::InvalidMessageFormat(
-                "Move ID is too long (max 64 characters)".to_string(),
-            ));
-        }
-
-        // Check for valid characters (alphanumeric, hyphens, underscores)
-        if !move_id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        {
-            return Err(ValidationError::InvalidMessageFormat(
-                "Move ID can only contain alphanumeric characters, hyphens, and underscores"
-                    .to_string(),
-            ));
-        }
+    if ack.ply == 0 {
+        return Err(ValidationError::InvalidMessageFormat(
+            "Move acknowledgment ply must be at least 1".to_string(),
+        ));
+    }
+    if ack.move_digest.len() != 64
+        || !ack
+            .move_digest
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(ValidationError::InvalidMessageFormat(
+            "Move digest must be exactly 64 lowercase hexadecimal characters".to_string(),
+        ));
     }
 
     Ok(())
@@ -926,6 +940,7 @@ pub fn validate_move_ack(ack: &MoveAck) -> Result<(), ValidationError> {
 /// # Arguments
 ///
 /// * `game_id` - Unique identifier for the chess game
+/// * `ply` - One-based half-move sequence number
 /// * `chess_move` - The chess move from the chess module
 /// * `board` - Current board state after the move for hash generation
 ///
@@ -947,17 +962,18 @@ pub fn validate_move_ack(ack: &MoveAck) -> Result<(), ValidationError> {
 /// ).unwrap();
 ///
 /// let game_id = generate_game_id();
-/// let message = create_move_message(&game_id, &chess_move, &board);
+/// let message = create_move_message(&game_id, 1, &chess_move, &board);
 /// ```
 pub fn create_move_message(
     game_id: &str,
+    ply: u32,
     chess_move: &crate::chess::Move,
     board: &Board,
 ) -> crate::messages::types::Message {
     let move_string = chess_move.to_string();
     let board_hash = hash_board_state(board);
 
-    crate::messages::types::Message::new_move(game_id.to_string(), move_string, board_hash)
+    crate::messages::types::Message::new_move(game_id.to_string(), ply, move_string, board_hash)
 }
 
 /// Create a synchronization response message from game state
@@ -1041,6 +1057,7 @@ pub fn create_sync_response(
 /// let mut board = Board::new();
 /// let move_msg = Move::new(
 ///     "game-123".to_string(),
+///     1,
 ///     "e2e4".to_string(),
 ///     "expected_hash".to_string(),
 /// );
@@ -2477,9 +2494,7 @@ pub mod security {
             }
             crate::messages::types::Message::MoveAck(ack) => {
                 validate_secure_game_id(&ack.game_id)?;
-                if let Some(move_id) = &ack.move_id {
-                    validate_safe_text_input(move_id, "move_id", 100)?;
-                }
+                validate_safe_text_input(&ack.move_digest, "move_digest", 64)?;
             }
             crate::messages::types::Message::SyncRequest(request) => {
                 validate_secure_game_id(&request.game_id)?;

@@ -153,7 +153,7 @@ async fn test_chess_realtime_configuration() {
 
     // Test with move message for real-time responsiveness
     let game_id = generate_game_id();
-    let chess_move = Move::new(game_id, "e2e4".to_string(), "sample_hash".to_string());
+    let chess_move = Move::new(game_id, 1, "e2e4".to_string(), "sample_hash".to_string());
     let message = Message::Move(chess_move);
     let (envelope, _) = create_test_envelope_with_message(&message);
 
@@ -411,7 +411,7 @@ async fn test_chess_configuration_performance_characteristics() {
 
     // Create test message for performance comparison
     let game_id = generate_game_id();
-    let move_msg = Move::new(game_id, "e2e4".to_string(), "hash".to_string());
+    let move_msg = Move::new(game_id, 1, "e2e4".to_string(), "hash".to_string());
     let message = Message::Move(move_msg);
     let (envelope, _) = create_test_envelope_with_message(&message);
 
@@ -461,7 +461,7 @@ async fn test_chess_wire_efficiency_with_chess_messages() {
         (
             "move",
             Message::Move(Move::new(
-                game_id.clone(),
+                game_id.clone(), 1,
                 "e2e4".to_string(),
                 "hash".to_string(),
             )),

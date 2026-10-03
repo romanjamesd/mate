@@ -143,7 +143,12 @@ async fn test_complete_game_flow_integration() -> Result<()> {
         let board_hash = game_state.get_board_hash();
 
         // Create and send move message
-        let move_msg = Message::new_move(game_id.clone(), chess_move.to_string(), board_hash);
+        let move_msg = Message::new_move(
+            game_id.clone(),
+            move_index as u32 + 1,
+            chess_move.to_string(),
+            board_hash,
+        );
         let move_envelope = SignedEnvelope::create(&move_msg, current_player_identity, None)?;
 
         if move_index % 2 == 0 {
@@ -163,7 +168,10 @@ async fn test_complete_game_flow_integration() -> Result<()> {
             }
 
             // Send acknowledgment
-            let ack_msg = Message::new_move_ack(game_id.clone(), None);
+            let ack_msg = Message::new_move_ack(match &move_msg {
+                Message::Move(mv) => mv,
+                _ => unreachable!(),
+            });
             let ack_envelope = SignedEnvelope::create(&ack_msg, &player2_identity, None)?;
             framed_message
                 .write_message(&mut p2_write, &ack_envelope)
@@ -186,7 +194,10 @@ async fn test_complete_game_flow_integration() -> Result<()> {
             assert!(matches!(received_message, Message::Move(_)));
 
             // Send acknowledgment
-            let ack_msg = Message::new_move_ack(game_id.clone(), None);
+            let ack_msg = Message::new_move_ack(match &move_msg {
+                Message::Move(mv) => mv,
+                _ => unreachable!(),
+            });
             let ack_envelope = SignedEnvelope::create(&ack_msg, &player1_identity, None)?;
             framed_message
                 .write_message(&mut p1_write, &ack_envelope)
@@ -234,10 +245,11 @@ async fn test_wire_protocol_integration_with_chess_messages() -> Result<()> {
             Message::new_game_accept(game_id.clone(), Color::Black),
             Message::new_move(
                 game_id.clone(),
+                1,
                 "e2e4".to_string(),
                 hash_board_state(&Board::new()),
             ),
-            Message::new_move_ack(game_id.clone(), Some("move-123".to_string())),
+            Message::MoveAck(crate::common::test_data::move_ack(game_id.clone(), 1)),
             Message::new_sync_request(game_id.clone()),
             Message::new_sync_response(
                 game_id.clone(),
@@ -341,6 +353,7 @@ async fn test_error_handling_integration() -> Result<()> {
 
     let move_with_bad_hash = Message::new_move(
         game_id.clone(),
+        1,
         "e2e4".to_string(),
         incorrect_hash.to_string(),
     );
@@ -398,6 +411,7 @@ async fn test_backward_compatibility_with_existing_protocol() -> Result<()> {
         Message::new_ping(2, "Still alive".to_string()),
         Message::new_move(
             game_id.clone(),
+            1,
             "e2e4".to_string(),
             hash_board_state(&Board::new()),
         ),
@@ -478,7 +492,7 @@ async fn test_backward_compatibility_with_existing_protocol() -> Result<()> {
             false,
         ),
         (
-            Message::new_move(game_id.clone(), "e2e4".to_string(), "hash".to_string()),
+            Message::new_move(game_id.clone(), 1, "e2e4".to_string(), "hash".to_string()),
             true,
             false,
             false,
@@ -529,7 +543,7 @@ async fn test_realistic_usage_performance() -> Result<()> {
             let chess_move = format!("move_{i}");
             let board_hash = hash_board_state(&Board::new());
 
-            let move_msg = Message::new_move(game_id.clone(), chess_move, board_hash);
+            let move_msg = Message::new_move(game_id.clone(), i as u32 + 1, chess_move, board_hash);
             let envelope = SignedEnvelope::create(&move_msg, identity, None).unwrap();
 
             if i % 2 == 0 {

@@ -457,7 +457,7 @@ pub(crate) fn handle_move(
                 game_id = %mv.game_id,
                 "persisted Move; acknowledging"
             );
-            Ok(Some(Message::new_move_ack(mv.game_id, None)))
+            Ok(Some(Message::new_move_ack(&mv)))
         }
         other => {
             warn!(

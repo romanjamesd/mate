@@ -40,7 +40,7 @@ async fn test_end_to_end_move_processing_basic() {
     target_board.make_move(chess_move).unwrap();
 
     // Create message from chess move
-    let message = create_move_message(&game_id, &chess_move, &target_board);
+    let message = create_move_message(&game_id, 1, &chess_move, &target_board);
 
     // Extract the move message from the wrapper
     let move_msg = match message {
@@ -93,7 +93,7 @@ async fn test_end_to_end_move_processing_complex_sequence() {
         target_board.make_move(chess_move).unwrap();
 
         // Create and process message
-        let message = create_move_message(&game_id, &chess_move, &target_board);
+        let message = create_move_message(&game_id, i as u32 + 1, &chess_move, &target_board);
         let move_msg = match message {
             Message::Move(msg) => msg,
             _ => panic!("Expected Move message"),
@@ -132,7 +132,7 @@ async fn test_end_to_end_castling_moves() {
     let mut target_board = board.clone();
     target_board.make_move(kingside_castle).unwrap();
 
-    let message = create_move_message(&game_id, &kingside_castle, &target_board);
+    let message = create_move_message(&game_id, 1, &kingside_castle, &target_board);
     let move_msg = match message {
         Message::Move(msg) => msg,
         _ => panic!("Expected Move message"),
@@ -171,7 +171,7 @@ async fn test_end_to_end_promotion_moves() {
     let mut target_board = board.clone();
     target_board.make_move(promotion_move).unwrap();
 
-    let message = create_move_message(&game_id, &promotion_move, &target_board);
+    let message = create_move_message(&game_id, 1, &promotion_move, &target_board);
     let move_msg = match message {
         Message::Move(msg) => msg,
         _ => panic!("Expected Move message"),
@@ -440,6 +440,7 @@ async fn test_invalid_move_error_propagation() {
     // Create an invalid move message (moving to same square)
     let invalid_move_msg = Move::new(
         game_id.clone(),
+        1,
         "e2e2".to_string(),
         "dummy_hash".to_string(),
     );
@@ -466,7 +467,12 @@ async fn test_board_hash_mismatch_error_propagation() {
     let mut board = Board::new();
 
     // Create a valid move but with wrong hash
-    let move_msg = Move::new(game_id, "e2e4".to_string(), "wrong_hash_value".to_string());
+    let move_msg = Move::new(
+        game_id,
+        1,
+        "e2e4".to_string(),
+        "wrong_hash_value".to_string(),
+    );
 
     let result = apply_move_from_message(&mut board, &move_msg);
     assert!(
@@ -491,6 +497,7 @@ async fn test_validation_error_propagation() {
     // Test invalid game ID
     let invalid_move_msg = Move::new(
         "not-a-uuid".to_string(),
+        1,
         "e2e4".to_string(),
         "hash".to_string(),
     );
@@ -511,6 +518,7 @@ async fn test_validation_error_propagation() {
     // Test invalid move format
     let invalid_format_msg = Move::new(
         generate_game_id(),
+        1,
         "invalid_move_format".to_string(),
         "hash".to_string(),
     );
@@ -576,7 +584,7 @@ async fn test_complete_move_roundtrip() {
     source_board.make_move(chess_move).unwrap();
 
     // Create message from source board
-    let message = create_move_message(&game_id, &chess_move, &source_board);
+    let message = create_move_message(&game_id, 1, &chess_move, &source_board);
     let move_msg = match message {
         Message::Move(msg) => msg,
         _ => panic!("Expected Move message"),
@@ -701,7 +709,7 @@ async fn test_message_validation_in_integration_flow() {
     let mut target_board = board.clone();
     target_board.make_move(chess_move).unwrap();
 
-    let message = create_move_message(&game_id, &chess_move, &target_board);
+    let message = create_move_message(&game_id, 1, &chess_move, &target_board);
     let move_msg = match message {
         Message::Move(msg) => msg,
         _ => panic!("Expected Move message"),
@@ -713,6 +721,7 @@ async fn test_message_validation_in_integration_flow() {
     // Test integration with invalid data
     let invalid_msg = Move::new(
         "invalid-id".to_string(),
+        1,
         "invalid-move".to_string(),
         "invalid-hash".to_string(),
     );
@@ -764,7 +773,8 @@ async fn test_performance_large_game_processing() {
         let mut white_target = board.clone();
         white_target.make_move(white_chess_move).unwrap();
 
-        let white_message = create_move_message(&game_id, &white_chess_move, &white_target);
+        let white_message =
+            create_move_message(&game_id, move_num * 2 - 1, &white_chess_move, &white_target);
         let white_move_msg = match white_message {
             Message::Move(msg) => msg,
             _ => panic!("Expected Move message"),
@@ -778,7 +788,8 @@ async fn test_performance_large_game_processing() {
         let mut black_target = board.clone();
         black_target.make_move(black_chess_move).unwrap();
 
-        let black_message = create_move_message(&game_id, &black_chess_move, &black_target);
+        let black_message =
+            create_move_message(&game_id, move_num * 2, &black_chess_move, &black_target);
         let black_move_msg = match black_message {
             Message::Move(msg) => msg,
             _ => panic!("Expected Move message"),
@@ -856,7 +867,8 @@ async fn test_concurrent_game_message_processing() {
                 let mut target_board = board.clone();
                 target_board.make_move(chess_move).unwrap();
 
-                let message = create_move_message(&game_id, &chess_move, &target_board);
+                let message =
+                    create_move_message(&game_id, move_idx as u32 + 1, &chess_move, &target_board);
                 let move_msg = match message {
                     Message::Move(msg) => msg,
                     _ => panic!("Expected Move message"),

@@ -116,8 +116,12 @@ impl<'a> MoveProcessor<'a> {
         updated_board.make_move(chess_move)?;
 
         let board_hash = crate::messages::chess::hash_board_state(&updated_board);
-        let move_message =
-            MoveMessage::new(game_id.to_string(), move_notation.to_string(), board_hash);
+        let move_message = MoveMessage::new(
+            game_id.to_string(),
+            game_state.move_history.len() as u32 + 1,
+            move_notation.to_string(),
+            board_hash,
+        );
 
         let move_info = self.analyze_move(&game_state.board, &updated_board, chess_move)?;
 

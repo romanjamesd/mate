@@ -40,7 +40,7 @@ fn seed_active_game(db: &Database, peer_id: &str) -> String {
 
 fn sample_move(game_id: String) -> Message {
     let board_hash = hash_board_state(&Board::new());
-    Message::new_move(game_id, "e2e4".to_string(), board_hash)
+    Message::new_move(game_id, 1, "e2e4".to_string(), board_hash)
 }
 
 #[test]
@@ -616,7 +616,7 @@ fn dispatch_move_ack_and_sync_response_return_no_reply() {
     let board_hash = hash_board_state(&board);
 
     let no_reply = [
-        Message::new_move_ack(game_id.clone(), None),
+        Message::MoveAck(crate::common::test_data::move_ack(game_id.clone(), 1)),
         Message::new_sync_response(game_id, board.to_fen(), Vec::new(), board_hash),
     ];
 
@@ -759,13 +759,16 @@ fn dispatch_move_acks_and_persists() {
     let game_id = seed_active_game(db.as_ref(), "peer-a");
     let mv = sample_move(game_id.clone());
 
-    let result = dispatch(db.as_ref(), "peer-a", mv).expect("move dispatch");
+    let result = dispatch(db.as_ref(), "peer-a", mv.clone()).expect("move dispatch");
     let response = result.expect("Move should produce a reply");
 
     match response {
         Message::MoveAck(ack) => {
             assert_eq!(ack.game_id, game_id);
-            assert!(ack.move_id.is_none());
+            let Message::Move(ref payload) = mv else {
+                panic!("expected Move");
+            };
+            assert_eq!(ack, mate::messages::chess::MoveAck::for_move(payload));
         }
         other => panic!("expected MoveAck, got {other:?}"),
     }
@@ -794,6 +797,11 @@ fn dispatch_move_idempotent_for_identical_payload() {
     assert!(
         matches!(second, Some(Message::MoveAck(_))),
         "identical Move retry should MoveAck"
+    );
+
+    assert_eq!(
+        serde_json::to_string(&first.unwrap()).unwrap(),
+        serde_json::to_string(&second.unwrap()).unwrap()
     );
 
     let messages = db.get_messages_for_game(&game_id).expect("messages");
@@ -881,6 +889,7 @@ fn dispatch_invalid_move_soft_rejects_with_decline() {
     let db = test_db();
     let mv = Message::new_move(
         "not-a-uuid".to_string(),
+        1,
         "e2e4".to_string(),
         hash_board_state(&Board::new()),
     );

@@ -89,9 +89,10 @@ mod tests {
         }
     }
 
-    fn move_content(chess_move: &str) -> String {
+    fn move_content(ply: u32, chess_move: &str) -> String {
         serde_json::json!({
             "game_id": "00000000-0000-0000-0000-000000000001",
+            "ply": ply,
             "chess_move": chess_move,
             "board_state_hash": "hash",
         })
@@ -117,7 +118,7 @@ mod tests {
                 StoredMessageType::GameAccept.as_str(),
                 r#"{"game_id":"00000000-0000-0000-0000-000000000001","accepted_color":"White"}"#,
             ),
-            stored_message("move", &move_content("e2e4")), // snake_case ignored
+            stored_message("move", &move_content(1, "e2e4")), // snake_case ignored
         ];
 
         let (board, history) =
@@ -130,7 +131,13 @@ mod tests {
     fn applies_coordinate_sequence() {
         let messages: Vec<_> = ["e2e4", "e7e5", "g1f3"]
             .iter()
-            .map(|mv| stored_message(StoredMessageType::Move.as_str(), &move_content(mv)))
+            .enumerate()
+            .map(|(i, mv)| {
+                stored_message(
+                    StoredMessageType::Move.as_str(),
+                    &move_content(i as u32 + 1, mv),
+                )
+            })
             .collect();
 
         let (board, history) =
@@ -147,9 +154,12 @@ mod tests {
         // Both timestamp and id order disagree with the supplied move sequence.
         let messages: Vec<_> = [("e2e4", 2, 3), ("e7e5", 3, 1), ("g1f3", 1, 2)]
             .into_iter()
-            .map(|(mv, id, created_at)| {
-                let mut message =
-                    stored_message(StoredMessageType::Move.as_str(), &move_content(mv));
+            .enumerate()
+            .map(|(i, (mv, id, created_at))| {
+                let mut message = stored_message(
+                    StoredMessageType::Move.as_str(),
+                    &move_content(i as u32 + 1, mv),
+                );
                 message.id = Some(id);
                 message.created_at = created_at;
                 message
@@ -177,7 +187,13 @@ mod tests {
         ];
         let messages: Vec<_> = moves
             .iter()
-            .map(|mv| stored_message(StoredMessageType::Move.as_str(), &move_content(mv)))
+            .enumerate()
+            .map(|(i, mv)| {
+                stored_message(
+                    StoredMessageType::Move.as_str(),
+                    &move_content(i as u32 + 1, mv),
+                )
+            })
             .collect();
 
         let (board, history) = rebuild_board_from_stored_messages(&messages).expect("black castle");
@@ -200,7 +216,7 @@ mod tests {
     fn bad_notation_fails() {
         let messages = vec![stored_message(
             StoredMessageType::Move.as_str(),
-            &move_content("not-a-move"),
+            &move_content(1, "not-a-move"),
         )];
         let err = rebuild_board_from_stored_messages(&messages).expect_err("bad notation");
         assert!(matches!(err, RebuildError::Chess(_)));

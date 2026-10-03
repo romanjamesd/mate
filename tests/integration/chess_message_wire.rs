@@ -69,10 +69,16 @@ fn all_chess_test_variants(game_id: &str) -> Vec<Message> {
         Message::new_game_decline(game_id.to_string(), Some("busy".to_string())),
         Message::new_move(
             game_id.to_string(),
+            1,
             "e2e4".to_string(),
             hash_board_state(&board),
         ),
-        Message::new_move_ack(game_id.to_string(), Some("move-1".to_string())),
+        Message::new_move_ack(&mate::messages::chess::Move::new(
+            game_id.to_string(),
+            1,
+            "e2e4".into(),
+            hash_board_state(&board),
+        )),
         Message::new_sync_request(game_id.to_string()),
         Message::new_sync_response(
             game_id.to_string(),
