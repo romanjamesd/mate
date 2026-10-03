@@ -67,22 +67,19 @@ pub fn store_game_accept_message(
     )
 }
 
-/// Serialize and store a `Move` row.
+/// Store a typed `Move` without enforcing chronology, turn, or board hash.
+///
+/// This transitional helper supports existing callers and fixtures. Production
+/// callers will move to the authoritative commit operation in chronology Step 5.
 pub fn store_game_move_message(
     database: &Database,
     mv: &Move,
     signature: &str,
     sender_peer_id: &str,
 ) -> Result<(), StorageError> {
-    store_typed_message(
-        database,
-        mv.game_id.clone(),
-        StoredMessageType::Move,
-        mv,
-        signature,
-        sender_peer_id,
-        "Move message content",
-    )
+    database.with_connection(|conn| {
+        Database::insert_move_on(conn, mv, signature, sender_peer_id).map(|_| ())
+    })
 }
 
 /// Serialize and store a `GameDecline` row.

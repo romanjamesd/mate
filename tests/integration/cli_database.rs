@@ -153,20 +153,14 @@ fn test_database_game_state_reconstruction() {
     ];
 
     for (i, (move_notation, sender)) in moves.iter().enumerate() {
-        db.store_message(
+        let mv = mate::messages::chess::Move::new(
             game_id.clone(),
-            "Move".to_string(),
-            json!({
-                "game_id": game_id,
-                "ply": (i + 1) as u32,
-                "chess_move": move_notation,
-                "board_state_hash": format!("hash_{i}")
-            })
-            .to_string(),
-            format!("sig_{i}"),
-            sender.to_string(),
-        )
-        .expect("Failed to store test move");
+            (i + 1) as u32,
+            move_notation.to_string(),
+            format!("hash_{i}"),
+        );
+        mate::game::store_game_move_message(&db, &mv, &format!("sig_{i}"), sender)
+            .expect("Failed to store test move");
 
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
@@ -617,25 +611,20 @@ fn test_database_malformed_messages_handling() {
     ];
 
     for (i, (msg_type, content)) in malformed_messages.iter().enumerate() {
-        db.store_message(
-            game_id.clone(),
-            msg_type.to_string(),
-            content.to_string(),
-            format!("sig_{i}"),
-            "malformed_opponent".to_string(),
-        )
-        .expect("Failed to store malformed message");
+        // Deliberately bypass typed storage to exercise corrupt-payload handling.
+        db.with_connection(|conn| {
+            conn.execute(
+                "INSERT INTO messages (game_id, message_type, ply, content, signature, sender_peer_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'malformed_opponent', 1)",
+                rusqlite::params![game_id, msg_type, (i + 1) as u32, content, format!("sig_{i}")],
+            )?;
+            Ok(())
+        }).expect("Failed to store malformed fixture");
     }
 
-    // Store one valid move message
-    db.store_message(
-        game_id.clone(),
-        "Move".to_string(),
-        json!({"chess_move": "e2e4"}).to_string(),
-        "valid_sig".to_string(),
-        "test_peer_cli".to_string(),
-    )
-    .expect("Failed to store valid message");
+    let valid = mate::messages::chess::Move::new(game_id.clone(), 6, "e2e4".into(), "hash".into());
+    mate::game::store_game_move_message(&db, &valid, "valid_sig", "test_peer_cli")
+        .expect("Failed to store valid message");
 
     // Test game state reconstruction with malformed messages
     let result = game_ops.reconstruct_game_state(&game_id);
@@ -763,20 +752,30 @@ fn test_database_message_storage_all_types() {
 
     let mut stored_ids = Vec::new();
     for (i, (msg_type, content)) in message_types.iter().enumerate() {
-        let message = db
-            .store_message(
+        let sender = if i % 2 == 0 {
+            "test_peer_cli"
+        } else {
+            "message_opponent"
+        };
+        let message = if *msg_type == "Move" {
+            let mv =
+                mate::messages::chess::Move::new(game_id.clone(), 1, "e2e4".into(), "hash".into());
+            mate::game::store_game_move_message(&db, &mv, &format!("sig_{i}"), sender)
+                .expect("Failed to store typed Move fixture");
+            let id = db
+                .with_connection(|conn| Ok(conn.last_insert_rowid()))
+                .unwrap();
+            db.get_message(id).unwrap()
+        } else {
+            db.store_message(
                 game_id.clone(),
                 msg_type.to_string(),
                 content.to_string(),
                 format!("sig_{i}"),
-                if i % 2 == 0 {
-                    "test_peer_cli"
-                } else {
-                    "message_opponent"
-                }
-                .to_string(),
+                sender.to_string(),
             )
-            .expect("Failed to store message");
+            .expect("Failed to store message")
+        };
 
         assert!(message.id.is_some(), "Message should have assigned ID");
         assert_eq!(message.message_type, *msg_type);

@@ -171,6 +171,16 @@ Mate stores configuration and game data in:
 - **macOS**: `~/Library/Application Support/mate/`
 - **Windows**: `%APPDATA%\mate\`
 
+### Upgrading a development database
+
+Schema version 3 requires an explicit `ply` for every chess Move. A database
+with older Move rows cannot be upgraded; opening it reports the row count and
+actual file path. Recreate that development database at the reported path to
+continue. This discards its game history, so keep a copy if you need it.
+Migration failure leaves all existing data unchanged. Databases containing
+only invites, accepts, or other non-Move messages upgrade in place.
+`MATE_DATA_DIR` overrides the default database directory.
+
 ## Contributing
 
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

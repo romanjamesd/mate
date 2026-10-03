@@ -574,7 +574,7 @@ fn assert_insertion_order_schema(db: &Database) {
             conn.query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
                 row.get(0)
             })?;
-        assert_eq!(version, 2);
+        assert_eq!(version, mate::storage::schema::CURRENT_SCHEMA_VERSION);
 
         let indexes = conn
             .prepare(
@@ -989,4 +989,76 @@ fn test_data_integrity_and_consistency() {
         updated_game.created_at, initial_time,
         "Created timestamp should never change"
     );
+}
+
+#[test]
+fn version_two_file_upgrade_refuses_moves_and_preserves_move_free_history() {
+    for has_moves in [false, true] {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("legacy.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            for migration in &MIGRATIONS[..2] {
+                conn.execute_batch(migration.sql).unwrap();
+                conn.execute(
+                    "INSERT INTO schema_migrations VALUES (?1, 1, ?2)",
+                    params![migration.version, migration.description],
+                )
+                .unwrap();
+            }
+            conn.execute_batch("INSERT INTO games VALUES ('legacy', 'peer', 'white', 'pending', 1, 1, NULL, NULL, NULL);
+                INSERT INTO messages VALUES (8, 'legacy', 'GameInvite', 'invite', 'sig', 'peer', 2);").unwrap();
+            if has_moves {
+                conn.execute_batch("INSERT INTO messages VALUES (9, 'legacy', 'Move', 'legacy', 'sig2', 'self', 3);").unwrap();
+            }
+        }
+        let opened = Database::new_with_path("self", &path);
+        if has_moves {
+            let error = match opened {
+                Err(error) => error,
+                Ok(_) => panic!("legacy moves must fail migration"),
+            };
+            assert!(matches!(
+                error,
+                mate::StorageError::MigrationFailed { version: 3, .. }
+            ));
+            assert!(error.to_string().contains(path.to_str().unwrap()));
+            assert!(error.to_string().contains("Recreate the database"));
+            let conn = Connection::open(&path).unwrap();
+            let version: i32 = conn
+                .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(version, 2);
+            assert!(!conn
+                .prepare("SELECT 1 FROM pragma_table_info('messages') WHERE name = 'ply'")
+                .unwrap()
+                .exists([])
+                .unwrap());
+            let content: String = conn
+                .query_row("SELECT content FROM messages WHERE id = 9", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(content, "legacy");
+        } else {
+            let db = opened.unwrap();
+            assert_insertion_order_schema(&db);
+            let messages = db.get_messages_for_game("legacy").unwrap();
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0].id, Some(8));
+            assert_eq!(messages[0].content, "invite");
+            let next = db
+                .store_message(
+                    "legacy".into(),
+                    "Chat".into(),
+                    "chat".into(),
+                    "sig".into(),
+                    "self".into(),
+                )
+                .unwrap();
+            assert_eq!(next.id, Some(9));
+        }
+    }
 }

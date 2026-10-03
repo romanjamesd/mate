@@ -1,7 +1,7 @@
 use crate::storage::errors::{Result, StorageError};
 use crate::storage::schema;
 use directories::ProjectDirs;
-use rusqlite::{Connection, Statement};
+use rusqlite::{Connection, Statement, Transaction, TransactionBehavior};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -369,6 +369,54 @@ impl Database {
         }
     }
 
+    /// Execute one write transaction, acquiring the write lock before reading.
+    ///
+    /// Use only `tx` and `_on` helpers in the closure: calling methods on this
+    /// Database while its mutex is held deadlocks. Retrying the whole operation
+    /// belongs to the caller, never to this helper.
+    pub fn with_immediate_transaction<T, F>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&Transaction<'_>) -> Result<T>,
+    {
+        let start = Instant::now();
+        let mut managed = self.managed_conn.lock().unwrap();
+        let result = (|| {
+            if !managed.is_healthy() {
+                return Err(StorageError::ConnectionFailed(
+                    rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
+                        Some("Connection is not healthy".to_string()),
+                    ),
+                ));
+            }
+            let timeout_ms = managed
+                .conn
+                .pragma_query_value(None, "busy_timeout", |row| row.get(0))?;
+            let tx = managed
+                .conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|e| map_lock_error(e, "begin immediate transaction", timeout_ms))?;
+            // Dropping tx rolls back on a closure or commit failure.
+            let value = f(&tx).map_err(|e| match e {
+                StorageError::ConnectionFailed(error) => {
+                    map_lock_error(error, "immediate transaction", timeout_ms)
+                }
+                other => other,
+            })?;
+            tx.commit()
+                .map_err(|e| map_lock_error(e, "commit immediate transaction", timeout_ms))?;
+            Ok(value)
+        })();
+        match &result {
+            Ok(_) => {
+                self.stats.record_operation(start.elapsed());
+                self.stats.record_transaction();
+            }
+            Err(_) => self.stats.record_error(),
+        }
+        result
+    }
+
     /// Perform database maintenance (VACUUM, ANALYZE, etc.)
     pub fn perform_maintenance(&self) -> Result<()> {
         self.with_connection(|conn| {
@@ -559,5 +607,201 @@ mod tests {
         assert_eq!(txns, 1);
         assert_eq!(errors, 1);
         assert!(time >= 100);
+    }
+}
+
+/// Normalize primary and extended BUSY/LOCKED results, retaining other causes.
+fn map_lock_error(error: rusqlite::Error, operation: &str, timeout_ms: u64) -> StorageError {
+    match error {
+        rusqlite::Error::SqliteFailure(ref code, _)
+            if matches!(
+                code.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            ) =>
+        {
+            StorageError::database_locked(operation, timeout_ms)
+        }
+        other => StorageError::ConnectionFailed(other),
+    }
+}
+
+#[cfg(test)]
+mod immediate_transaction_tests {
+    use super::*;
+    use crate::messages::chess::Move;
+    use crate::storage::PlayerColor;
+    use tempfile::TempDir;
+
+    #[test]
+    fn immediate_commit_and_rollback_include_move_and_game_activity() {
+        let dir = TempDir::new().unwrap();
+        let db = Database::new_with_path("self", &dir.path().join("db.sqlite")).unwrap();
+        let game = db
+            .create_game("peer".into(), PlayerColor::White, None)
+            .unwrap();
+        db.with_connection(|conn| {
+            conn.execute("UPDATE games SET updated_at = 1", [])?;
+            Ok(())
+        })
+        .unwrap();
+        let mv = Move::new(game.id.clone(), 1, "e2e4".into(), "hash".into());
+        let before = db.get_connection_stats();
+        let failed: Result<()> = db.with_immediate_transaction(|tx| {
+            Database::insert_move_on(tx, &mv, "sig", "self")?;
+            Database::touch_game_on(tx, &game.id)?;
+            Err(StorageError::invalid_data("test", "rollback"))
+        });
+        assert!(matches!(failed, Err(StorageError::InvalidData { .. })));
+        assert_eq!(db.get_connection_stats().2, before.2 + 1);
+        assert!(db.get_moves_for_game(&game.id).unwrap().is_empty());
+        assert_eq!(db.get_game(&game.id).unwrap().updated_at, 1);
+        db.with_connection(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER reject_touch BEFORE UPDATE ON games
+                BEGIN SELECT RAISE(ABORT, 'test update failure'); END;",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        assert!(db
+            .with_immediate_transaction(|tx| {
+                Database::insert_move_on(tx, &mv, "sig", "self")?;
+                Database::touch_game_on(tx, &game.id)
+            })
+            .is_err());
+        assert!(db.get_moves_for_game(&game.id).unwrap().is_empty());
+        db.with_connection(|conn| {
+            conn.execute_batch("DROP TRIGGER reject_touch")?;
+            Ok(())
+        })
+        .unwrap();
+        let before = db.get_connection_stats();
+        db.with_immediate_transaction(|tx| {
+            Database::insert_move_on(tx, &mv, "sig", "self")?;
+            Database::touch_game_on(tx, &game.id)
+        })
+        .unwrap();
+        let after = db.get_connection_stats();
+        assert_eq!(after.0, before.0 + 1);
+        assert_eq!(after.1, before.1 + 1);
+        let saved = db.get_game(&game.id).unwrap();
+        assert!(saved.updated_at > 1);
+        assert_eq!(saved.status, game.status);
+        assert_eq!(saved.completed_at, game.completed_at);
+        assert_eq!(saved.result, game.result);
+        assert_eq!(db.get_moves_for_game(&game.id).unwrap().len(), 1);
+        assert!(matches!(
+            db.with_immediate_transaction(|tx| Database::touch_game_on(tx, "missing")),
+            Err(StorageError::GameNotFound { .. })
+        ));
+        assert!(matches!(
+            db.store_message(
+                game.id,
+                "Move".into(),
+                "{}".into(),
+                "sig".into(),
+                "peer".into()
+            ),
+            Err(StorageError::InvalidData { .. })
+        ));
+    }
+
+    #[test]
+    fn independent_connection_contention_is_mapped_and_retryable() {
+        for journal in ["DELETE", "WAL"] {
+            let dir = TempDir::new().unwrap();
+            let path = dir.path().join("db.sqlite");
+            let first = Database::new_with_path("self", &path).unwrap();
+            let second = Database::new_with_path("self", &path).unwrap();
+            for db in [&first, &second] {
+                db.with_connection(|conn| {
+                    conn.pragma_update(None, "journal_mode", journal)?;
+                    Ok(())
+                })
+                .unwrap();
+            }
+            second
+                .with_connection(|conn| {
+                    conn.busy_timeout(Duration::from_millis(10))?;
+                    Ok(())
+                })
+                .unwrap();
+            first
+                .with_immediate_transaction(|_| {
+                    let before = second.get_connection_stats();
+                    let error = second
+                        .with_immediate_transaction(|_| -> Result<()> {
+                            panic!("closure must not execute without the write lock")
+                        })
+                        .unwrap_err();
+                    assert!(matches!(
+                        error,
+                        StorageError::DatabaseLocked { timeout_ms: 10, .. }
+                    ));
+                    assert!(error.is_recoverable());
+                    assert_eq!(second.get_connection_stats().2, before.2 + 1);
+                    Ok(())
+                })
+                .unwrap();
+            second.with_immediate_transaction(|_| Ok(())).unwrap();
+        }
+    }
+
+    #[test]
+    fn commit_contention_rolls_back_and_releases_write_lock() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("db.sqlite");
+        let db = Database::new_with_path("self", &path).unwrap();
+        db.with_connection(|conn| {
+            conn.busy_timeout(Duration::from_millis(10))?;
+            Ok(())
+        })
+        .unwrap();
+        // DELETE journal allows a reader to coexist with BEGIN IMMEDIATE,
+        // but prevents the writer from obtaining the exclusive lock at COMMIT.
+        let mut reader = Connection::open(&path).unwrap();
+        let read_tx = reader.transaction().unwrap();
+        read_tx
+            .query_row("SELECT COUNT(*) FROM games", [], |row| row.get::<_, i64>(0))
+            .unwrap();
+        let error = db
+            .with_immediate_transaction(|tx| {
+                Database::create_game_on(
+                    tx,
+                    "rolled-back".into(),
+                    "peer".into(),
+                    PlayerColor::White,
+                    None,
+                )
+            })
+            .unwrap_err();
+        assert!(
+            matches!(error, StorageError::DatabaseLocked { ref operation, timeout_ms: 10 }
+            if operation == "commit immediate transaction")
+        );
+        read_tx.commit().unwrap();
+        assert!(matches!(
+            db.get_game("rolled-back"),
+            Err(StorageError::GameNotFound { .. })
+        ));
+        db.with_immediate_transaction(|_| Ok(())).unwrap();
+    }
+
+    #[test]
+    fn lock_mapping_keeps_extended_codes_retryable() {
+        for code in [
+            rusqlite::ffi::SQLITE_BUSY_SNAPSHOT,
+            rusqlite::ffi::SQLITE_LOCKED_SHAREDCACHE,
+        ] {
+            let error = rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None);
+            assert!(matches!(
+                map_lock_error(error, "test", 15),
+                StorageError::DatabaseLocked { timeout_ms: 15, .. }
+            ));
+        }
+        assert!(matches!(
+            map_lock_error(rusqlite::Error::QueryReturnedNoRows, "test", 15),
+            StorageError::ConnectionFailed(rusqlite::Error::QueryReturnedNoRows)
+        ));
     }
 }
