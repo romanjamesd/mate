@@ -69,8 +69,8 @@ pub fn store_game_accept_message(
 
 /// Store a typed `Move` without enforcing chronology, turn, or board hash.
 ///
-/// This transitional helper supports existing callers and fixtures. Production
-/// callers will move to the authoritative commit operation in chronology Step 5.
+/// This helper supports storage fixtures. Production move paths use the
+/// authoritative commit operation in `chronology`.
 pub fn store_game_move_message(
     database: &Database,
     mv: &Move,

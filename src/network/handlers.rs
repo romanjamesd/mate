@@ -4,15 +4,16 @@
 //! `GameInvite` persists a pending game and echoes the invite.
 //! `GameAccept` / `GameDecline` transition pending games to Active or
 //! Abandoned and echo so send-and-wait clients never hang.
-//! `Move` persists against an Active game and replies with `MoveAck`.
+//! `Move` validates and commits atomically before replying with a correlated
+//! `MoveAck`. Exact authenticated retries are acknowledged without state changes.
 //! `SyncRequest` validates ply sequencing and post-move hashes in one read
 //! snapshot before replying with `SyncResponse`. Invalid history is declined.
 //! Inbound `SyncResponse` is ignored (no reply).
 
 use crate::chess::Color;
 use crate::game::{
-    load_chronology, store_game_accept_message, store_game_decline_message,
-    store_game_move_message, GameOpsError, StoredMessageType,
+    chronology, load_chronology, store_game_accept_message, store_game_decline_message,
+    GameOpsError, MoveActor, StoredMessageType,
 };
 use crate::messages::chess::{
     create_sync_response, GameAccept, GameDecline, GameInvite, Move, MoveAck, SyncRequest,
@@ -141,24 +142,6 @@ fn ensure_decline_message_stored(
         .any(|m| m.message_type == StoredMessageType::GameDecline.as_str());
     if !already_stored {
         store_game_decline_message(database, decline, "remote", peer_id)?;
-    }
-    Ok(())
-}
-
-/// Skip insert when an identical Move payload is already stored for this game.
-fn ensure_move_message_stored(
-    database: &Database,
-    peer_id: &str,
-    mv: &Move,
-) -> Result<(), StorageError> {
-    let content = serde_json::to_string(mv)
-        .map_err(|e| StorageError::serialization_error("Move message content", e))?;
-    let messages = database.get_messages_for_game(&mv.game_id)?;
-    let already_stored = messages
-        .iter()
-        .any(|m| m.message_type == StoredMessageType::Move.as_str() && m.content == content);
-    if !already_stored {
-        store_game_move_message(database, mv, "remote", peer_id)?;
     }
     Ok(())
 }
@@ -402,75 +385,24 @@ pub(crate) fn handle_game_decline(
     }
 }
 
-/// Persist an inbound move against an Active game and reply with `MoveAck`.
+/// Commit an authenticated opponent move and acknowledge only after COMMIT.
 ///
-/// Requires Active status and `opponent_peer_id == peer_id`. Identical payload
-/// retries are idempotent. Soft-rejects with `GameDecline` so send-and-wait
-/// never hangs. Does not reconstruct the board or verify move legality.
+/// The authoritative operation checks chronology, turn, application and hash.
+/// Exact retries also succeed after history advances or the game completes.
+/// Rejections and persistence failures return stable `GameDecline` reasons.
 pub(crate) fn handle_move(
     database: &Database,
     peer_id: &str,
     mv: Move,
 ) -> Result<Option<Message>, HandlerError> {
-    let game = match database.get_game(&mv.game_id) {
-        Ok(game) => game,
-        Err(StorageError::GameNotFound { .. }) => {
-            warn!(
-                peer_id = %peer_id,
-                game_id = %mv.game_id,
-                "Move for unknown game"
-            );
-            return decline_invite(&mv.game_id, "game not found");
+    match chronology::commit_move(database, &mv.game_id, &mv, MoveActor::Opponent { peer_id }) {
+        Ok(outcome) => {
+            debug!(peer_id, game_id = %mv.game_id, ply = mv.ply, ?outcome, "acknowledging committed Move");
+            Ok(Some(Message::MoveAck(MoveAck::for_move(&mv))))
         }
-        Err(e) => {
-            warn!(
-                peer_id = %peer_id,
-                game_id = %mv.game_id,
-                error = %e,
-                "Move failed to load game"
-            );
-            return decline_invite(&mv.game_id, "failed to load game");
-        }
-    };
-
-    if game.opponent_peer_id != peer_id {
-        warn!(
-            peer_id = %peer_id,
-            game_id = %mv.game_id,
-            "Move from peer that is not the game opponent"
-        );
-        return decline_invite(&mv.game_id, "peer is not the game opponent");
-    }
-
-    match game.status {
-        GameStatus::Active => {
-            if let Err(e) = ensure_move_message_stored(database, peer_id, &mv) {
-                warn!(
-                    peer_id = %peer_id,
-                    game_id = %mv.game_id,
-                    error = %e,
-                    "failed to store Move message"
-                );
-                return decline_invite(&mv.game_id, "failed to persist move");
-            }
-            debug!(
-                peer_id = %peer_id,
-                game_id = %mv.game_id,
-                "persisted Move; acknowledging"
-            );
-            Ok(Some(Message::new_move_ack(&mv)))
-        }
-        other => {
-            warn!(
-                peer_id = %peer_id,
-                game_id = %mv.game_id,
-                status = ?other,
-                "Move for non-active game"
-            );
-            decline_invite(
-                &mv.game_id,
-                &format!("game is not active (status: {other:?})"),
-            )
+        Err(error) => {
+            warn!(peer_id, game_id = %mv.game_id, ply = mv.ply, error = %error, "rejecting Move");
+            decline_invite(&mv.game_id, &error.decline_reason())
         }
     }
 }

@@ -323,7 +323,11 @@ async fn server_move_acks_and_persists() {
         "expected GameAccept echo"
     );
 
-    let board_hash = hash_board_state(&Board::new());
+    let mut board = Board::new();
+    board
+        .make_move(mate::chess::Move::from_str_with_color("e2e4", Color::White).unwrap())
+        .unwrap();
+    let board_hash = hash_board_state(&board);
     connection
         .send_message(Message::new_move(
             game_id.clone(),
