@@ -5,13 +5,14 @@
 //! `GameAccept` / `GameDecline` transition pending games to Active or
 //! Abandoned and echo so send-and-wait clients never hang.
 //! `Move` persists against an Active game and replies with `MoveAck`.
-//! `SyncRequest` rebuilds board/history from stored moves and replies
-//! with `SyncResponse`. Inbound `SyncResponse` is ignored (no reply).
+//! `SyncRequest` validates ply sequencing and post-move hashes in one read
+//! snapshot before replying with `SyncResponse`. Invalid history is declined.
+//! Inbound `SyncResponse` is ignored (no reply).
 
 use crate::chess::Color;
 use crate::game::{
-    rebuild_board_from_stored_messages, store_game_accept_message, store_game_decline_message,
-    store_game_move_message, StoredMessageType,
+    load_chronology, store_game_accept_message, store_game_decline_message,
+    store_game_move_message, GameOpsError, StoredMessageType,
 };
 use crate::messages::chess::{
     create_sync_response, GameAccept, GameDecline, GameInvite, Move, MoveAck, SyncRequest,
@@ -497,9 +498,9 @@ pub(crate) fn handle_sync_request(
     peer_id: &str,
     req: SyncRequest,
 ) -> Result<Option<Message>, HandlerError> {
-    let game = match database.get_game(&req.game_id) {
-        Ok(game) => game,
-        Err(StorageError::GameNotFound { .. }) => {
+    let loaded = match load_chronology(database, &req.game_id) {
+        Ok(loaded) => loaded,
+        Err(GameOpsError::Database(StorageError::GameNotFound { .. })) => {
             warn!(
                 peer_id = %peer_id,
                 game_id = %req.game_id,
@@ -512,13 +513,13 @@ pub(crate) fn handle_sync_request(
                 peer_id = %peer_id,
                 game_id = %req.game_id,
                 error = %e,
-                "SyncRequest failed to load game"
+                "SyncRequest failed to rebuild chronology"
             );
-            return decline_invite(&req.game_id, "failed to load game");
+            return decline_invite(&req.game_id, &format!("failed to rebuild board: {e}"));
         }
     };
 
-    if game.opponent_peer_id != peer_id {
+    if loaded.game.opponent_peer_id != peer_id {
         warn!(
             peer_id = %peer_id,
             game_id = %req.game_id,
@@ -527,31 +528,8 @@ pub(crate) fn handle_sync_request(
         return decline_invite(&req.game_id, "peer is not the game opponent");
     }
 
-    let messages = match database.get_messages_for_game(&req.game_id) {
-        Ok(messages) => messages,
-        Err(e) => {
-            warn!(
-                peer_id = %peer_id,
-                game_id = %req.game_id,
-                error = %e,
-                "SyncRequest failed to load messages"
-            );
-            return decline_invite(&req.game_id, "failed to load messages");
-        }
-    };
-
-    let (board, history) = match rebuild_board_from_stored_messages(&messages) {
-        Ok(rebuilt) => rebuilt,
-        Err(reason) => {
-            warn!(
-                peer_id = %peer_id,
-                game_id = %req.game_id,
-                error = %reason,
-                "SyncRequest failed to rebuild board from stored moves"
-            );
-            return decline_invite(&req.game_id, &format!("failed to rebuild board: {reason}"));
-        }
-    };
+    let board = loaded.chronology.board;
+    let history = loaded.chronology.history;
 
     debug!(
         peer_id = %peer_id,

@@ -833,23 +833,33 @@ fn recent_messages_order_survives_delete_of_newest() {
 }
 
 #[test]
-fn same_second_moves_replay_in_insertion_order() {
+fn same_second_moves_replay_in_ply_order() {
     use mate::chess::{Board, Color, Move as ChessMove};
     use mate::game::{
-        rebuild_board_from_stored_messages, store_game_accept_message, store_game_move_message,
-        GameOps, MoveProcessor, StoredMessageType,
+        rebuild_chronology, store_game_accept_message, store_game_move_message, GameOps,
+        MoveProcessor, StoredMessageType,
     };
     use mate::messages::chess::{GameAccept, Move as MoveMessage};
 
     let (db, _env) = create_test_database();
     let game = db
-        .create_game("opponent_replay".to_string(), PlayerColor::White, None)
+        .create_game_with_id(
+            uuid::Uuid::new_v4().to_string(),
+            "opponent_replay".to_string(),
+            PlayerColor::White,
+            None,
+        )
         .expect("Failed to create replay game");
-    let moves = ["e2e4", "e7e5", "g1f3", "b8c6"];
+    db.update_game_status(&game.id, GameStatus::Active).unwrap();
+    let moves = [
+        "e2e4", "e7e5", "g1f3", "g8f6", "f1c4", "f8c5", "d2d3", "O-O",
+    ];
     let mut expected_board = Board::new();
+    let mut expected_history = Vec::new();
     for notation in moves {
         let chess_move = ChessMove::from_str_with_color(notation, expected_board.active_color())
             .expect("Failed to parse expected move");
+        expected_history.push(chess_move.to_string());
         expected_board
             .make_move(chess_move)
             .expect("Failed to apply expected move");
@@ -864,15 +874,25 @@ fn same_second_moves_replay_in_insertion_order() {
     };
     let mut stored = Vec::new();
     let accept = GameAccept::new(game.id.clone(), Color::Black);
-    for (index, notation) in moves.iter().enumerate() {
+    let mut payload_board = Board::new();
+    let payloads: Vec<_> = moves
+        .iter()
+        .enumerate()
+        .map(|(index, notation)| {
+            let chess_move =
+                ChessMove::from_str_with_color(notation, payload_board.active_color()).unwrap();
+            payload_board.make_move(chess_move).unwrap();
+            MoveMessage::new(
+                game.id.clone(),
+                index as u32 + 1,
+                notation.to_string(),
+                mate::messages::chess::hash_board_state(&payload_board),
+            )
+        })
+        .collect();
+    for (index, payload) in payloads.iter().enumerate().rev() {
         let sender = if index % 2 == 0 { "player1" } else { "player2" };
-        let payload = MoveMessage::new(
-            game.id.clone(),
-            index as u32 + 1,
-            notation.to_string(),
-            "hash".to_string(),
-        );
-        store_game_move_message(&db, &payload, "signature", sender)
+        store_game_move_message(&db, payload, "signature", sender)
             .expect("Failed to store move payload");
         stored.push(last_stored_message());
 
@@ -883,7 +903,10 @@ fn same_second_moves_replay_in_insertion_order() {
         }
     }
 
-    for timestamps in [vec![100; stored.len()], vec![5, 4, 3, 2, 1]] {
+    for timestamps in [
+        vec![100; stored.len()],
+        (1..=stored.len() as i64).rev().collect(),
+    ] {
         for (message, timestamp) in stored.iter_mut().zip(timestamps) {
             set_created_at(&db, message.id.expect("stored id"), timestamp);
             message.created_at = timestamp;
@@ -893,29 +916,62 @@ fn same_second_moves_replay_in_insertion_order() {
             .get_messages_for_game(&game.id)
             .expect("Failed to load replay history");
         assert_messages(&messages, &stored);
-        assert_eq!(messages.len(), 5);
+        assert_eq!(messages.len(), moves.len() + 1);
         assert_eq!(
-            messages[2].message_type,
+            messages[messages.len() - 2].message_type,
             StoredMessageType::GameAccept.as_str()
         );
         assert_eq!(
-            serde_json::from_str::<GameAccept>(&messages[2].content).unwrap(),
+            serde_json::from_str::<GameAccept>(&messages[messages.len() - 2].content).unwrap(),
             accept
         );
 
-        let (board, history) = rebuild_board_from_stored_messages(&messages)
-            .expect("Failed to replay insertion-ordered moves");
+        let chronology = rebuild_chronology(&game.id, &db.get_moves_for_game(&game.id).unwrap())
+            .expect("Failed to replay ply-ordered moves");
+        let board = chronology.board;
+        let history = chronology.history;
         assert_eq!(
             history.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            moves
+            expected_history
         );
         assert_eq!(board.to_fen(), expected_board.to_fen());
 
         let state = GameOps::new(&db)
             .reconstruct_game_state(&game.id)
             .expect("Failed to reconstruct game state");
-        assert_eq!(state.move_history, moves);
+        assert_eq!(state.move_history, expected_history);
         assert_eq!(state.board.to_fen(), expected_board.to_fen());
+
+        let processor = MoveProcessor::new(&db);
+        let prepared = processor.prepare_move(&game.id, "b1c3").unwrap();
+        assert_eq!(prepared.ply, 9);
+        assert_eq!(prepared.move_message.ply, 9);
+        assert_eq!(
+            prepared.move_message,
+            processor
+                .prepare_move(&game.id, "b1c3")
+                .unwrap()
+                .move_message
+        );
+        assert_eq!(
+            GameOps::new(&db).list_games().unwrap()[0]
+                .last_move
+                .as_deref(),
+            Some("O-O")
+        );
+        let response = mate::network::handlers::dispatch(
+            &db,
+            "opponent_replay",
+            mate::messages::Message::new_sync_request(game.id.clone()),
+        )
+        .unwrap();
+        match response {
+            Some(mate::messages::Message::SyncResponse(response)) => {
+                assert_eq!(response.board_state, expected_board.to_fen());
+                assert_eq!(response.move_history, expected_history);
+            }
+            other => panic!("expected sync response, got {other:?}"),
+        }
 
         let analyzed = MoveProcessor::new(&db)
             .get_move_history_with_analysis(&game.id)
@@ -927,9 +983,10 @@ fn same_second_moves_replay_in_insertion_order() {
                 .collect::<Vec<_>>(),
             moves
         );
-        let move_timestamps: Vec<_> = messages
+        let move_timestamps: Vec<_> = db
+            .get_moves_for_game(&game.id)
+            .unwrap()
             .iter()
-            .filter(|message| message.message_type == StoredMessageType::Move.as_str())
             .map(|message| message.created_at)
             .collect();
         assert_eq!(

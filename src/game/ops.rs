@@ -5,7 +5,8 @@ use crate::storage::{
     Database,
 };
 
-use super::{rebuild_board_from_stored_messages, RebuildError, StoredMessageType};
+use super::{rebuild_chronology, Chronology, ChronologyError};
+use crate::storage::StoredMove;
 
 /// Result type for game operations
 pub type GameOpsResult<T> = Result<T, GameOpsError>;
@@ -13,6 +14,8 @@ pub type GameOpsResult<T> = Result<T, GameOpsError>;
 /// Errors that can occur during game operations
 #[derive(Debug)]
 pub enum GameOpsError {
+    /// Stored protocol chronology is invalid.
+    Chronology(ChronologyError),
     /// Database operation failed
     Database(crate::storage::errors::StorageError),
     /// Chess engine error
@@ -30,6 +33,7 @@ pub enum GameOpsError {
 impl std::fmt::Display for GameOpsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            GameOpsError::Chronology(e) => write!(f, "Invalid move chronology: {e}"),
             GameOpsError::Database(e) => write!(f, "Database error: {e}"),
             GameOpsError::Chess(e) => write!(f, "Chess error: {e}"),
             GameOpsError::Serialization(e) => write!(f, "Serialization error: {e}"),
@@ -54,13 +58,37 @@ impl From<ChessError> for GameOpsError {
     }
 }
 
-impl From<RebuildError> for GameOpsError {
-    fn from(err: RebuildError) -> Self {
-        match err {
-            RebuildError::Serialization(e) => GameOpsError::Serialization(e),
-            RebuildError::Chess(e) => GameOpsError::Chess(e),
-        }
+impl From<ChronologyError> for GameOpsError {
+    fn from(err: ChronologyError) -> Self {
+        Self::Chronology(err)
     }
+}
+
+/// Rows and validated payloads captured in the same database snapshot.
+pub(crate) struct LoadedChronology {
+    pub game: Game,
+    pub chronology: Chronology,
+    pub rows: Vec<StoredMove>,
+}
+
+/// Caller must supply a connection with an active transaction.
+pub(crate) fn load_chronology_on(
+    conn: &rusqlite::Connection,
+    game_id: &str,
+) -> GameOpsResult<LoadedChronology> {
+    let game = Database::get_game_on(conn, game_id)?;
+    let rows = Database::get_moves_for_game_on(conn, game_id)?;
+    let chronology = rebuild_chronology(game_id, &rows)?;
+    Ok(LoadedChronology {
+        game,
+        chronology,
+        rows,
+    })
+}
+
+/// A deferred read transaction keeps game and moves consistent across connections.
+pub(crate) fn load_chronology(db: &Database, game_id: &str) -> GameOpsResult<LoadedChronology> {
+    db.with_transaction(|conn| Ok(load_chronology_on(conn, game_id)))?
 }
 
 /// Extended game information for display purposes
@@ -139,10 +167,10 @@ impl<'a> GameOps<'a> {
 
     /// Reconstruct board state from move history
     pub fn reconstruct_game_state(&self, game_id: &str) -> GameOpsResult<GameState> {
-        let game = self.database.get_game(game_id)?;
-        let messages = self.database.get_messages_for_game(game_id)?;
-
-        let (board, history) = rebuild_board_from_stored_messages(&messages)?;
+        let loaded = load_chronology(self.database, game_id)?;
+        let game = loaded.game;
+        let board = loaded.chronology.board;
+        let history = loaded.chronology.history;
         let move_history: Vec<String> = history.iter().map(|m| m.to_string()).collect();
 
         // Determine whose turn it is
@@ -234,25 +262,18 @@ impl<'a> GameOps<'a> {
 
     /// Helper function to create a game record with extended information
     fn create_game_record(&self, game: Game) -> GameOpsResult<GameRecord> {
-        let messages = self.database.get_messages_for_game(&game.id)?;
+        // Best-effort display only: corrupt payloads do not prevent listing games.
+        let messages = self.database.get_moves_for_game(&game.id)?;
 
         // Find the last move
-        let move_type = StoredMessageType::Move.as_str();
-        let last_move = messages
-            .iter()
-            .rev()
-            .find(|m| m.message_type == move_type)
-            .and_then(|m| {
-                serde_json::from_str::<MoveMessage>(&m.content)
-                    .ok()
-                    .map(|move_msg| move_msg.chess_move)
-            });
+        let last_move = messages.last().and_then(|m| {
+            serde_json::from_str::<MoveMessage>(&m.content)
+                .ok()
+                .map(|move_msg| move_msg.chess_move)
+        });
 
         // Count moves (each move message represents one move)
-        let move_count = messages
-            .iter()
-            .filter(|m| m.message_type == move_type)
-            .count() as u32;
+        let move_count = messages.len() as u32;
 
         // Determine if it's our turn (simplified - could be more sophisticated)
         let your_turn = match game.status {
@@ -277,7 +298,7 @@ impl<'a> GameOps<'a> {
     }
 
     /// Helper to determine if it's the current player's turn
-    fn is_your_turn(&self, game: &Game, board: &Board) -> GameOpsResult<bool> {
+    pub(crate) fn is_your_turn(&self, game: &Game, board: &Board) -> GameOpsResult<bool> {
         if game.status != GameStatus::Active {
             return Ok(false);
         }
@@ -313,5 +334,119 @@ impl GameStatistics {
         } else {
             (self.wins as f64 / self.completed_games as f64) * 100.0
         }
+    }
+}
+
+#[cfg(test)]
+mod chronology_tests {
+    use super::*;
+    use crate::chess::Move as ChessMove;
+    use crate::game::{store_game_move_message, MoveProcessor};
+    use crate::messages::chess::hash_board_state;
+
+    #[test]
+    fn reader_keeps_game_moves_and_timestamps_in_one_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("game.sqlite");
+        let reader = Database::new_with_path("self", &path).unwrap();
+        let writer = Database::new_with_path("self", &path).unwrap();
+        reader
+            .with_connection(|conn| {
+                conn.pragma_update(None, "journal_mode", "WAL")?;
+                Ok(())
+            })
+            .unwrap();
+        writer
+            .with_connection(|conn| {
+                conn.pragma_update(None, "journal_mode", "WAL")?;
+                Ok(())
+            })
+            .unwrap();
+        let game = reader
+            .create_game_with_id(
+                uuid::Uuid::new_v4().to_string(),
+                "peer".into(),
+                PlayerColor::White,
+                None,
+            )
+            .unwrap();
+        let mut board = Board::new();
+        board
+            .make_move(ChessMove::from_str_with_color("e2e4", board.active_color()).unwrap())
+            .unwrap();
+        let mv = MoveMessage::new(game.id.clone(), 1, "e2e4".into(), hash_board_state(&board));
+        reader
+            .with_transaction(|conn| {
+                // Establish the snapshot before another independent connection commits.
+                assert_eq!(
+                    Database::get_game_on(conn, &game.id)?.status,
+                    GameStatus::Pending
+                );
+                writer.with_immediate_transaction(|tx| {
+                    Database::insert_move_on(tx, &mv, "sig", "self")?;
+                    tx.execute("UPDATE games SET status='active' WHERE id=?1", [&game.id])?;
+                    tx.execute(
+                        "UPDATE messages SET created_at=42 WHERE game_id=?1",
+                        [&game.id],
+                    )?;
+                    Ok(())
+                })?;
+                let loaded = load_chronology_on(conn, &game.id).unwrap();
+                assert_eq!(loaded.game.status, GameStatus::Pending);
+                assert!(loaded.rows.is_empty());
+                assert!(loaded.chronology.moves.is_empty());
+                Ok(())
+            })
+            .unwrap();
+        let loaded = load_chronology(&reader, &game.id).unwrap();
+        assert_eq!(loaded.game.status, GameStatus::Active);
+        assert_eq!(loaded.chronology.moves[0], mv);
+        assert_eq!(loaded.rows[0].created_at, 42);
+        let processor = MoveProcessor::new(&reader);
+        let analyzed = processor.get_move_history_with_analysis(&game.id).unwrap();
+        assert_eq!(analyzed[0].timestamp, 42);
+        assert_eq!(analyzed[0].notation, "e2e4");
+        assert_eq!(analyzed[0].board_hash, mv.board_state_hash);
+        assert!(processor.prepare_move(&game.id, "e7e5").is_err());
+        assert!(processor.process_move(&game.id, "e7e5").is_err());
+        assert_eq!(reader.get_moves_for_game(&game.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn consumers_reject_corrupt_history_but_listing_remains_available() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::new_with_path("self", &dir.path().join("game.sqlite")).unwrap();
+        let game = db
+            .create_game_with_id(
+                uuid::Uuid::new_v4().to_string(),
+                "peer".into(),
+                PlayerColor::White,
+                None,
+            )
+            .unwrap();
+        db.update_game_status(&game.id, GameStatus::Active).unwrap();
+        let mv = MoveMessage::new(game.id.clone(), 1, "e2e4".into(), "wrong hash".into());
+        store_game_move_message(&db, &mv, "sig", "self").unwrap();
+        let ops = GameOps::new(&db);
+        assert!(matches!(
+            ops.reconstruct_game_state(&game.id),
+            Err(GameOpsError::Chronology(ChronologyError::HashMismatch {
+                ply: 1
+            }))
+        ));
+        let processor = MoveProcessor::new(&db);
+        assert!(processor.get_move_history_with_analysis(&game.id).is_err());
+        assert!(processor.prepare_move(&game.id, "e7e5").is_err());
+        assert_eq!(ops.list_games().unwrap().len(), 1);
+        let response = crate::network::handlers::dispatch(
+            &db,
+            "peer",
+            crate::messages::Message::new_sync_request(game.id.clone()),
+        )
+        .unwrap();
+        assert!(
+            matches!(response, Some(crate::messages::Message::GameDecline(decline)) if decline.reason.as_deref().unwrap().contains("failed to rebuild board"))
+        );
+        assert_eq!(db.get_moves_for_game(&game.id).unwrap().len(), 1);
     }
 }

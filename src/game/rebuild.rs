@@ -1,224 +1,291 @@
-//! Rebuild board state from stored messages in the order supplied.
-//!
-//! Callers pass rows in local insertion order from
-//! [`Database::get_messages_for_game`](crate::storage::Database::get_messages_for_game).
-//!
-//! Applies `"Move"` rows only, without verifying stored board-state hashes
-//! (those may be incorrect until clients send post-move hashes).
+//! Validate protocol chronology and rebuild the board from ply-ordered move rows.
 
 use crate::chess::{Board, ChessError, Move as ChessMove};
-use crate::messages::chess::Move as MoveMessage;
-use crate::storage::Message as StoredMessage;
+use crate::messages::chess::{hash_board_state, Move as MoveMessage};
+use crate::storage::StoredMove;
 
-use super::StoredMessageType;
-
-/// Errors while rebuilding a board from stored messages.
-#[derive(Debug)]
-pub enum RebuildError {
-    /// Failed to deserialize a Move message body.
-    Serialization(String),
-    /// Chess parse or apply failure.
-    Chess(ChessError),
+/// Board, parsed history and payloads validated together, in protocol ply order.
+#[derive(Debug, Clone)]
+pub struct Chronology {
+    pub board: Board,
+    pub history: Vec<ChessMove>,
+    pub moves: Vec<MoveMessage>,
 }
 
-impl std::fmt::Display for RebuildError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RebuildError::Serialization(e) => write!(f, "failed to parse Move message: {e}"),
-            RebuildError::Chess(e) => write!(f, "{e}"),
-        }
+impl Chronology {
+    /// The next one-based half-move, or an error if the protocol range is exhausted.
+    pub fn next_ply(&self) -> Result<u32, ChronologyError> {
+        next_ply_after(self.moves.len())
     }
 }
 
-impl std::error::Error for RebuildError {}
-
-impl From<ChessError> for RebuildError {
-    fn from(err: ChessError) -> Self {
-        RebuildError::Chess(err)
-    }
+fn next_ply_after(count: usize) -> Result<u32, ChronologyError> {
+    u32::try_from(count)
+        .ok()
+        .and_then(|count| count.checked_add(1))
+        .ok_or(ChronologyError::SequenceExhausted)
 }
 
-/// Rebuild board and move history from stored messages.
-///
-/// Rows are applied in slice order; this function does not sort by `id` or
-/// `created_at`, or validate protocol sequencing. Explicit move sequencing
-/// belongs to Stage 2 (`ply`).
-///
-/// Skips non-`Move` rows. Parses each move with the board's active color so
-/// castling resolves correctly for both sides. Fails on the first bad row.
-pub fn rebuild_board_from_stored_messages(
-    messages: &[StoredMessage],
-) -> Result<(Board, Vec<ChessMove>), RebuildError> {
-    let mut board = Board::new();
-    let mut history = Vec::new();
+/// A stored chronology is rejected at the first invalid row.
+#[derive(Debug, thiserror::Error)]
+pub enum ChronologyError {
+    #[error("move sequence exhausted")]
+    SequenceExhausted,
+    #[error("missing ply in row {row_id}")]
+    MissingPly { row_id: i64 },
+    #[error("ply {ply} out of range in row {row_id}")]
+    PlyOutOfRange { row_id: i64, ply: i64 },
+    #[error("expected ply {expected}, found {found}")]
+    Gap { expected: u32, found: u32 },
+    #[error("failed to parse Move at ply {ply}: {reason}")]
+    Serialization { ply: u32, reason: String },
+    #[error("column ply {column} differs from payload ply {payload}")]
+    PlyMismatch { column: u32, payload: u32 },
+    #[error("game mismatch at ply {ply}: expected {expected}, found {found}")]
+    GameMismatch {
+        ply: u32,
+        expected: String,
+        found: String,
+    },
+    #[error("failed to apply ply {ply}: {error}")]
+    Apply {
+        ply: u32,
+        #[source]
+        error: ChessError,
+    },
+    #[error("board hash mismatch at ply {ply}")]
+    HashMismatch { ply: u32 },
+}
 
-    for message in messages {
-        if message.message_type != StoredMessageType::Move.as_str() {
-            continue;
+/// Validate every row in the supplied order, without sorting or repairing history.
+/// Hashes must match the post-move board exactly. Application uses the existing
+/// chess engine and does not guarantee full chess legality or king safety.
+pub fn rebuild_chronology(
+    game_id: &str,
+    rows: &[StoredMove],
+) -> Result<Chronology, ChronologyError> {
+    let mut chronology = Chronology {
+        board: Board::new(),
+        history: Vec::new(),
+        moves: Vec::new(),
+    };
+    for (index, row) in rows.iter().enumerate() {
+        let raw = row
+            .ply
+            .ok_or(ChronologyError::MissingPly { row_id: row.id })?;
+        let ply = u32::try_from(raw).ok().filter(|ply| *ply > 0).ok_or(
+            ChronologyError::PlyOutOfRange {
+                row_id: row.id,
+                ply: raw,
+            },
+        )?;
+        let expected = next_ply_after(index)?;
+        if ply != expected {
+            return Err(ChronologyError::Gap {
+                expected,
+                found: ply,
+            });
         }
-
-        let move_msg: MoveMessage = serde_json::from_str(&message.content)
-            .map_err(|e| RebuildError::Serialization(e.to_string()))?;
-
+        let payload: MoveMessage =
+            serde_json::from_str(&row.content).map_err(|error| ChronologyError::Serialization {
+                ply,
+                reason: error.to_string(),
+            })?;
+        if payload.ply != ply {
+            return Err(ChronologyError::PlyMismatch {
+                column: ply,
+                payload: payload.ply,
+            });
+        }
+        for found in [&payload.game_id, &row.game_id] {
+            if found != game_id {
+                return Err(ChronologyError::GameMismatch {
+                    ply,
+                    expected: game_id.to_string(),
+                    found: found.clone(),
+                });
+            }
+        }
         let chess_move =
-            ChessMove::from_str_with_color(&move_msg.chess_move, board.active_color())?;
-
-        board.make_move(chess_move)?;
-        history.push(chess_move);
+            ChessMove::from_str_with_color(&payload.chess_move, chronology.board.active_color())
+                .map_err(|error| ChronologyError::Apply { ply, error })?;
+        chronology
+            .board
+            .make_move(chess_move)
+            .map_err(|error| ChronologyError::Apply { ply, error })?;
+        if hash_board_state(&chronology.board) != payload.board_state_hash {
+            return Err(ChronologyError::HashMismatch { ply });
+        }
+        chronology.history.push(chess_move);
+        chronology.moves.push(payload);
     }
-
-    Ok((board, history))
+    Ok(chronology)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::chess::{Color, Position};
-    use crate::game::StoredMessageType;
     use std::str::FromStr;
 
-    fn stored_message(message_type: &str, content: &str) -> StoredMessage {
-        StoredMessage {
-            id: None,
-            game_id: "00000000-0000-0000-0000-000000000001".to_string(),
-            message_type: message_type.to_string(),
-            content: content.to_string(),
-            signature: "sig".to_string(),
-            sender_peer_id: "peer".to_string(),
-            created_at: 0,
+    const GAME: &str = "00000000-0000-0000-0000-000000000001";
+
+    fn rows(notations: &[&str]) -> Vec<StoredMove> {
+        let mut board = Board::new();
+        notations
+            .iter()
+            .enumerate()
+            .map(|(index, notation)| {
+                let mv = ChessMove::from_str_with_color(notation, board.active_color()).unwrap();
+                board.make_move(mv).unwrap();
+                let ply = index as u32 + 1;
+                StoredMove {
+                    id: i64::from(ply),
+                    game_id: GAME.into(),
+                    ply: Some(i64::from(ply)),
+                    content: serde_json::to_string(&MoveMessage::new(
+                        GAME.into(),
+                        ply,
+                        (*notation).into(),
+                        hash_board_state(&board),
+                    ))
+                    .unwrap(),
+                    signature: "sig".into(),
+                    sender_peer_id: "peer".into(),
+                    created_at: 0,
+                }
+            })
+            .collect()
+    }
+
+    fn change_payload(row: &mut StoredMove, change: impl FnOnce(&mut MoveMessage)) {
+        let mut payload = serde_json::from_str(&row.content).unwrap();
+        change(&mut payload);
+        row.content = serde_json::to_string(&payload).unwrap();
+    }
+
+    #[test]
+    fn empty_chronology() {
+        let c = rebuild_chronology(GAME, &[]).unwrap();
+        assert_eq!(c.board.to_fen(), Board::new().to_fen());
+        assert!(c.history.is_empty());
+        assert!(c.moves.is_empty());
+        assert_eq!(c.next_ply().unwrap(), 1);
+    }
+
+    #[test]
+    fn happy_path_ignores_ids_and_timestamps_and_castles_as_black() {
+        let mut rows = rows(&[
+            "e2e4", "e7e5", "g1f3", "g8f6", "f1c4", "f8c5", "d2d3", "O-O",
+        ]);
+        for (i, row) in rows.iter_mut().enumerate() {
+            row.id = 100 - i as i64;
+            row.created_at = 100 - i as i64;
+        }
+        let c = rebuild_chronology(GAME, &rows).unwrap();
+        assert_eq!(c.next_ply().unwrap(), 9);
+        assert_eq!(c.moves.last().unwrap().chess_move, "O-O");
+        assert_eq!(
+            c.history.last().unwrap().from,
+            Position::from_str("e8").unwrap()
+        );
+        assert_eq!(
+            c.history.last().unwrap().to,
+            Position::from_str("g8").unwrap()
+        );
+        assert_eq!(c.board.active_color(), Color::White);
+    }
+
+    #[test]
+    fn rejects_missing_and_out_of_range_ply() {
+        let mut rows = rows(&["e2e4"]);
+        rows[0].ply = None;
+        assert!(matches!(
+            rebuild_chronology(GAME, &rows),
+            Err(ChronologyError::MissingPly { row_id: 1 })
+        ));
+        for raw in [-1, 0, i64::from(u32::MAX) + 1] {
+            rows[0].ply = Some(raw);
+            assert!(
+                matches!(rebuild_chronology(GAME, &rows), Err(ChronologyError::PlyOutOfRange { row_id: 1, ply }) if ply == raw)
+            );
         }
     }
 
-    fn move_content(ply: u32, chess_move: &str) -> String {
-        serde_json::json!({
-            "game_id": "00000000-0000-0000-0000-000000000001",
-            "ply": ply,
-            "chess_move": chess_move,
-            "board_state_hash": "hash",
-        })
-        .to_string()
+    #[test]
+    fn rejects_duplicate_gap_and_unsorted_rows() {
+        let rows = rows(&["e2e4", "e7e5", "g1f3"]);
+        for (indices, expected, found) in [
+            (vec![0, 1, 1, 2], 3, 2),
+            (vec![0, 2], 2, 3),
+            (vec![1, 0], 1, 2),
+        ] {
+            let input: Vec<_> = indices.into_iter().map(|i| rows[i].clone()).collect();
+            assert!(
+                matches!(rebuild_chronology(GAME, &input), Err(ChronologyError::Gap { expected: e, found: f }) if e == expected && f == found)
+            );
+        }
     }
 
     #[test]
-    fn empty_messages_yield_starting_board() {
-        let (board, history) = rebuild_board_from_stored_messages(&[]).expect("empty ok");
-        assert!(history.is_empty());
-        assert_eq!(board.active_color(), Color::White);
-        assert_eq!(board.to_fen(), Board::new().to_fen());
-    }
-
-    #[test]
-    fn non_move_rows_are_skipped() {
-        let messages = vec![
-            stored_message(
-                StoredMessageType::GameInvite.as_str(),
-                r#"{"game_id":"00000000-0000-0000-0000-000000000001"}"#,
-            ),
-            stored_message(
-                StoredMessageType::GameAccept.as_str(),
-                r#"{"game_id":"00000000-0000-0000-0000-000000000001","accepted_color":"White"}"#,
-            ),
-            stored_message("move", &move_content(1, "e2e4")), // snake_case ignored
-        ];
-
-        let (board, history) =
-            rebuild_board_from_stored_messages(&messages).expect("skip non-Move");
-        assert!(history.is_empty());
-        assert_eq!(board.to_fen(), Board::new().to_fen());
-    }
-
-    #[test]
-    fn applies_coordinate_sequence() {
-        let messages: Vec<_> = ["e2e4", "e7e5", "g1f3"]
-            .iter()
-            .enumerate()
-            .map(|(i, mv)| {
-                stored_message(
-                    StoredMessageType::Move.as_str(),
-                    &move_content(i as u32 + 1, mv),
-                )
+    fn rejects_payload_mismatch_and_wrong_games() {
+        let mut input = rows(&["e2e4"]);
+        change_payload(&mut input[0], |mv| mv.ply = 2);
+        assert!(matches!(
+            rebuild_chronology(GAME, &input),
+            Err(ChronologyError::PlyMismatch {
+                column: 1,
+                payload: 2
             })
-            .collect();
-
-        let (board, history) =
-            rebuild_board_from_stored_messages(&messages).expect("apply sequence");
-        assert_eq!(history.len(), 3);
-        assert_eq!(history[0].to_string(), "e2e4");
-        assert_eq!(history[1].to_string(), "e7e5");
-        assert_eq!(history[2].to_string(), "g1f3");
-        assert_eq!(board.active_color(), Color::Black);
+        ));
+        for payload in [true, false] {
+            let mut input = rows(&["e2e4"]);
+            if payload {
+                change_payload(&mut input[0], |mv| mv.game_id = "other".into());
+            } else {
+                input[0].game_id = "other".into();
+            }
+            assert!(
+                matches!(rebuild_chronology(GAME, &input), Err(ChronologyError::GameMismatch { ply: 1, expected, found }) if expected == GAME && found == "other")
+            );
+        }
     }
 
     #[test]
-    fn applies_rows_in_slice_order() {
-        // Both timestamp and id order disagree with the supplied move sequence.
-        let messages: Vec<_> = [("e2e4", 2, 3), ("e7e5", 3, 1), ("g1f3", 1, 2)]
-            .into_iter()
-            .enumerate()
-            .map(|(i, (mv, id, created_at))| {
-                let mut message = stored_message(
-                    StoredMessageType::Move.as_str(),
-                    &move_content(i as u32 + 1, mv),
-                );
-                message.id = Some(id);
-                message.created_at = created_at;
-                message
-            })
-            .collect();
-
-        let (board, history) =
-            rebuild_board_from_stored_messages(&messages).expect("apply rows in slice order");
-
-        assert_eq!(
-            history.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            ["e2e4", "e7e5", "g1f3"]
-        );
-        assert_eq!(
-            board.to_fen(),
-            "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
-        );
+    fn rejects_parse_apply_hash_and_json_failures() {
+        for notation in ["not-a-move", "e3e4"] {
+            let mut input = rows(&["e2e4"]);
+            change_payload(&mut input[0], |mv| mv.chess_move = notation.into());
+            assert!(matches!(
+                rebuild_chronology(GAME, &input),
+                Err(ChronologyError::Apply { ply: 1, .. })
+            ));
+        }
+        let mut input = rows(&["e2e4"]);
+        change_payload(&mut input[0], |mv| {
+            mv.board_state_hash = mv.board_state_hash.to_uppercase()
+        });
+        assert!(matches!(
+            rebuild_chronology(GAME, &input),
+            Err(ChronologyError::HashMismatch { ply: 1 })
+        ));
+        input[0].content = "not json".into();
+        assert!(matches!(
+            rebuild_chronology(GAME, &input),
+            Err(ChronologyError::Serialization { ply: 1, .. })
+        ));
     }
 
     #[test]
-    fn black_castling_uses_active_color() {
-        // Clear path for Black kingside castling, then castle with O-O.
-        let moves = [
-            "e2e4", "e7e5", "g1f3", "g8f6", "f1c4", "f8c5", "d2d3", "O-O",
-        ];
-        let messages: Vec<_> = moves
-            .iter()
-            .enumerate()
-            .map(|(i, mv)| {
-                stored_message(
-                    StoredMessageType::Move.as_str(),
-                    &move_content(i as u32 + 1, mv),
-                )
-            })
-            .collect();
-
-        let (board, history) = rebuild_board_from_stored_messages(&messages).expect("black castle");
-        assert_eq!(history.len(), 8);
-
-        let black_castle = history.last().expect("castle ply");
-        assert_eq!(black_castle.from, Position::from_str("e8").unwrap());
-        assert_eq!(black_castle.to, Position::from_str("g8").unwrap());
-        assert_eq!(board.active_color(), Color::White);
-    }
-
-    #[test]
-    fn malformed_json_fails() {
-        let messages = vec![stored_message(StoredMessageType::Move.as_str(), "not json")];
-        let err = rebuild_board_from_stored_messages(&messages).expect_err("bad json");
-        assert!(matches!(err, RebuildError::Serialization(_)));
-    }
-
-    #[test]
-    fn bad_notation_fails() {
-        let messages = vec![stored_message(
-            StoredMessageType::Move.as_str(),
-            &move_content(1, "not-a-move"),
-        )];
-        let err = rebuild_board_from_stored_messages(&messages).expect_err("bad notation");
-        assert!(matches!(err, RebuildError::Chess(_)));
+    fn checked_sequence_boundary() {
+        assert_eq!(next_ply_after(u32::MAX as usize - 1).unwrap(), u32::MAX);
+        assert!(matches!(
+            next_ply_after(u32::MAX as usize),
+            Err(ChronologyError::SequenceExhausted)
+        ));
+        assert!(matches!(
+            next_ply_after(usize::MAX),
+            Err(ChronologyError::SequenceExhausted)
+        ));
     }
 }

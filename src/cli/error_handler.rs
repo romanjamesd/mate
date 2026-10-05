@@ -365,6 +365,7 @@ impl From<anyhow::Error> for CliError {
 /// Format game operations errors with user-friendly messages
 fn format_game_ops_error(error: &GameOpsError) -> String {
     match error {
+        GameOpsError::Chronology(error) => format!("Stored move history is invalid: {error}"),
         GameOpsError::NoCurrentGame => {
             "🎮 No active games found.\n   💡 Suggestion: Start a new game with 'mate invite <address>' or use --game-id to specify a game.".to_string()
         }

@@ -39,7 +39,10 @@ fn seed_active_game(db: &Database, peer_id: &str) -> String {
 }
 
 fn sample_move(game_id: String) -> Message {
-    let board_hash = hash_board_state(&Board::new());
+    let mut board = Board::new();
+    let mv = ChessMove::from_str_with_color("e2e4", board.active_color()).unwrap();
+    board.make_move(mv).unwrap();
+    let board_hash = hash_board_state(&board);
     Message::new_move(game_id, 1, "e2e4".to_string(), board_hash)
 }
 

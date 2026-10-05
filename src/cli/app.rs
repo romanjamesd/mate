@@ -572,7 +572,7 @@ impl App {
         );
 
         let processor = MoveProcessor::new(&self.database);
-        let prepared = processor.prepare_move(&target_game_id, &chess_move, true)?;
+        let prepared = processor.prepare_move(&target_game_id, &chess_move)?;
 
         let game = self
             .database

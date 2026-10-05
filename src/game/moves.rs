@@ -1,6 +1,5 @@
 use crate::chess::{Board, ChessError, Move as ChessMove};
-use crate::game::message_type::StoredMessageType;
-use crate::game::ops::{GameOps, GameOpsError};
+use crate::game::ops::{load_chronology, GameOps, GameOpsError};
 use crate::game::store::store_game_move_message;
 use crate::messages::chess::Move as MoveMessage;
 use crate::storage::{models::GameStatus, Database};
@@ -73,7 +72,7 @@ pub struct MoveProcessingResult {
 pub struct PreparedMove {
     pub game_id: String,
     pub move_message: MoveMessage,
-    pub move_number: u32,
+    pub ply: u32,
     pub updated_board: Board,
     pub is_capture: bool,
     pub is_check: bool,
@@ -94,41 +93,34 @@ impl<'a> MoveProcessor<'a> {
     }
 
     /// Validate, parse, and build a wire `Move` without persisting.
-    pub fn prepare_move(
-        &self,
-        game_id: &str,
-        move_notation: &str,
-        validate_turn: bool,
-    ) -> MoveResult<PreparedMove> {
-        self.validate_move_preconditions(game_id, move_notation, validate_turn)?;
-
-        let game_state = self.game_ops.reconstruct_game_state(game_id)?;
-
-        if validate_turn && !game_state.your_turn {
+    pub fn prepare_move(&self, game_id: &str, move_notation: &str) -> MoveResult<PreparedMove> {
+        let loaded = load_chronology(self.game_ops.database, game_id)?;
+        self.validate_move_preconditions(&loaded.game, move_notation)?;
+        let board = &loaded.chronology.board;
+        if !self.game_ops.is_your_turn(&loaded.game, board)? {
             return Err(MoveProcessingError::InvalidGameState(
                 "It's not your turn to move".to_string(),
             ));
         }
-
-        let chess_move = self.parse_and_validate_move(move_notation, &game_state.board)?;
-
-        let mut updated_board = game_state.board.clone();
+        let ply = loaded.chronology.next_ply().map_err(GameOpsError::from)?;
+        let chess_move = self.parse_and_validate_move(move_notation, board)?;
+        let mut updated_board = board.clone();
         updated_board.make_move(chess_move)?;
 
         let board_hash = crate::messages::chess::hash_board_state(&updated_board);
         let move_message = MoveMessage::new(
             game_id.to_string(),
-            game_state.move_history.len() as u32 + 1,
+            ply,
             move_notation.to_string(),
             board_hash,
         );
 
-        let move_info = self.analyze_move(&game_state.board, &updated_board, chess_move)?;
+        let move_info = self.analyze_move(board, &updated_board, chess_move)?;
 
         Ok(PreparedMove {
             game_id: game_id.to_string(),
             move_message,
-            move_number: game_state.move_history.len() as u32 + 1,
+            ply,
             updated_board,
             is_capture: move_info.is_capture,
             is_check: move_info.is_check,
@@ -167,9 +159,8 @@ impl<'a> MoveProcessor<'a> {
         &self,
         game_id: &str,
         move_notation: &str,
-        validate_turn: bool,
     ) -> MoveResult<MoveProcessingResult> {
-        let prepared = self.prepare_move(game_id, move_notation, validate_turn)?;
+        let prepared = self.prepare_move(game_id, move_notation)?;
         self.commit_move(game_id, &prepared.move_message, "self", "")?;
         self.update_game_status_if_needed(game_id, &prepared.updated_board)?;
 
@@ -177,7 +168,7 @@ impl<'a> MoveProcessor<'a> {
             game_id: prepared.game_id,
             move_notation: prepared.move_message.chess_move.clone(),
             board_state_hash: prepared.move_message.board_state_hash.clone(),
-            move_number: prepared.move_number,
+            move_number: prepared.ply,
             is_capture: prepared.is_capture,
             is_check: prepared.is_check,
             is_checkmate: prepared.is_checkmate,
@@ -192,11 +183,8 @@ impl<'a> MoveProcessor<'a> {
         move_notation: &str,
         validate_turn: bool,
     ) -> MoveResult<bool> {
-        // Basic precondition validation
-        self.validate_move_preconditions(game_id, move_notation, validate_turn)?;
-
-        // Reconstruct current game state
         let game_state = self.game_ops.reconstruct_game_state(game_id)?;
+        self.validate_move_preconditions(&game_state.game, move_notation)?;
 
         // Check turn if requested
         if validate_turn && !game_state.your_turn {
@@ -288,45 +276,28 @@ impl<'a> MoveProcessor<'a> {
         &self,
         game_id: &str,
     ) -> MoveResult<Vec<MoveHistoryEntry>> {
-        let _game_state = self.game_ops.reconstruct_game_state(game_id)?;
-        let messages = self
-            .game_ops
-            .database
-            .get_messages_for_game(game_id)
-            .map_err(|e| MoveProcessingError::GameOps(GameOpsError::Database(e)))?;
-
+        let loaded = load_chronology(self.game_ops.database, game_id)?;
         let mut history = Vec::new();
         let mut board = Board::new();
-        let mut move_number = 1;
-        let move_type = StoredMessageType::Move.as_str();
-
-        for message in messages {
-            if message.message_type == move_type {
-                let move_message: MoveMessage =
-                    serde_json::from_str(&message.content).map_err(|e| {
-                        MoveProcessingError::HistoryError(format!("Failed to parse move: {e}"))
-                    })?;
-
-                let chess_move =
-                    ChessMove::from_str_with_color(&move_message.chess_move, board.active_color())?;
-                let old_board = board.clone();
-
-                board.make_move(chess_move)?;
-
-                let move_info = self.analyze_move(&old_board, &board, chess_move)?;
-
-                history.push(MoveHistoryEntry {
-                    move_number,
-                    notation: move_message.chess_move,
-                    timestamp: message.created_at,
-                    is_capture: move_info.is_capture,
-                    is_check: move_info.is_check,
-                    is_checkmate: move_info.is_checkmate,
-                    board_hash: move_message.board_state_hash,
-                });
-
-                move_number += 1;
-            }
+        for ((move_message, chess_move), row) in loaded
+            .chronology
+            .moves
+            .into_iter()
+            .zip(loaded.chronology.history)
+            .zip(loaded.rows)
+        {
+            let old_board = board.clone();
+            board.make_move(chess_move)?;
+            let info = self.analyze_move(&old_board, &board, chess_move)?;
+            history.push(MoveHistoryEntry {
+                move_number: move_message.ply,
+                notation: move_message.chess_move,
+                timestamp: row.created_at,
+                is_capture: info.is_capture,
+                is_check: info.is_check,
+                is_checkmate: info.is_checkmate,
+                board_hash: move_message.board_state_hash,
+            });
         }
 
         Ok(history)
@@ -335,17 +306,9 @@ impl<'a> MoveProcessor<'a> {
     /// Validate move preconditions
     fn validate_move_preconditions(
         &self,
-        game_id: &str,
+        game: &crate::storage::Game,
         move_notation: &str,
-        _validate_turn: bool,
     ) -> MoveResult<()> {
-        // Validate game exists and is active
-        let game = self
-            .game_ops
-            .database
-            .get_game(game_id)
-            .map_err(|e| MoveProcessingError::GameOps(GameOpsError::Database(e)))?;
-
         if game.status != GameStatus::Active {
             return Err(MoveProcessingError::InvalidGameState(format!(
                 "Game is not active (status: {:?})",
@@ -361,7 +324,7 @@ impl<'a> MoveProcessor<'a> {
         }
 
         // Security validation
-        crate::messages::chess::security::validate_secure_chess_move(move_notation, game_id)
+        crate::messages::chess::security::validate_secure_chess_move(move_notation, &game.id)
             .map_err(|e| {
                 MoveProcessingError::InvalidMove(format!("Security validation failed: {e}"))
             })?;

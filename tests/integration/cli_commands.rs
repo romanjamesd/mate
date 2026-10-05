@@ -166,8 +166,10 @@ async fn test_board_and_history_reconstruct_pascal_case_move() {
     .await
     .expect("Failed to create test game");
 
-    let mv =
-        mate::messages::chess::Move::new(game_id.clone(), 1, "e2e4".into(), "test_hash".into());
+    let mv = mate::game::MoveProcessor::new(&app.database)
+        .prepare_move(&game_id, "e2e4")
+        .expect("prepare valid fixture")
+        .move_message;
     mate::game::store_game_move_message(&app.database, &mv, "test_sig", app.peer_id())
         .expect("Failed to store PascalCase Move");
 
