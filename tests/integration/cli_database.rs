@@ -45,7 +45,12 @@ impl TestEnvironment {
 
     fn create_test_game(&self, db: &Database, opponent: &str, status: GameStatus) -> String {
         let game = db
-            .create_game(opponent.to_string(), PlayerColor::White, None)
+            .create_game_with_id(
+                uuid::Uuid::new_v4().to_string(),
+                opponent.to_string(),
+                PlayerColor::White,
+                None,
+            )
             .expect("Failed to create test game");
 
         if status != GameStatus::Pending {
@@ -75,30 +80,8 @@ fn create_test_database() -> (Database, TestEnvironment) {
     TestEnvironment::new()
 }
 
-/// Alternates local preparation with typed opponent fixtures until Step 4's commit exists.
 fn play_fixture_move(db: &Database, game_id: &str, notation: &str) -> mate::messages::chess::Move {
-    let state = GameOps::new(db).reconstruct_game_state(game_id).unwrap();
-    if state.your_turn {
-        let processor = MoveProcessor::new(db);
-        let prepared = processor.prepare_move(game_id, notation).unwrap();
-        processor
-            .commit_move(game_id, &prepared.move_message, "test_peer_cli", "sig")
-            .unwrap();
-        prepared.move_message
-    } else {
-        let mut board = state.board;
-        let chess_move =
-            mate::chess::Move::from_str_with_color(notation, board.active_color()).unwrap();
-        board.make_move(chess_move).unwrap();
-        let mv = mate::messages::chess::Move::new(
-            game_id.into(),
-            state.move_history.len() as u32 + 1,
-            notation.into(),
-            mate::messages::chess::hash_board_state(&board),
-        );
-        mate::game::store_game_move_message(db, &mv, "sig", &state.game.opponent_peer_id).unwrap();
-        mv
-    }
+    crate::common::test_helpers::play_move(db, game_id, notation, "test_peer_cli")
 }
 
 // =============================================================================

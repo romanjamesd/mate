@@ -1,6 +1,6 @@
 use crate::chess::{Board, ChessError, Move as ChessMove};
+use crate::game::chronology::{commit_move, CommitOutcome, MoveActor, MoveCommitError};
 use crate::game::ops::{load_chronology, GameOps, GameOpsError};
-use crate::game::store::store_game_move_message;
 use crate::messages::chess::Move as MoveMessage;
 use crate::storage::{models::GameStatus, Database};
 
@@ -18,6 +18,8 @@ pub enum MoveProcessingError {
     InvalidMove(String),
     /// Game is not in a state that allows moves
     InvalidGameState(String),
+    /// Authoritative commit rejection or persistence failure
+    Commit(MoveCommitError),
     /// Database transaction error
     TransactionError(String),
     /// Board state verification error
@@ -29,6 +31,7 @@ pub enum MoveProcessingError {
 impl std::fmt::Display for MoveProcessingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            MoveProcessingError::Commit(e) => write!(f, "Move commit error: {e}"),
             MoveProcessingError::GameOps(e) => write!(f, "Game operations error: {}", e),
             MoveProcessingError::Chess(e) => write!(f, "Chess validation error: {}", e),
             MoveProcessingError::InvalidMove(e) => write!(f, "Invalid move: {}", e),
@@ -51,6 +54,12 @@ impl From<GameOpsError> for MoveProcessingError {
 impl From<ChessError> for MoveProcessingError {
     fn from(err: ChessError) -> Self {
         MoveProcessingError::Chess(err)
+    }
+}
+
+impl From<MoveCommitError> for MoveProcessingError {
+    fn from(err: MoveCommitError) -> Self {
+        Self::Commit(err)
     }
 }
 
@@ -128,30 +137,19 @@ impl<'a> MoveProcessor<'a> {
         })
     }
 
-    /// Persist a previously prepared (or inbound) move.
-    pub fn commit_move(
+    /// Revalidate and atomically persist a prepared local payload.
+    /// Wire callers must first verify a correlated ACK from the opponent.
+    pub fn commit_local_move(
         &self,
-        game_id: &str,
-        move_message: &MoveMessage,
-        sender_peer_id: &str,
-        signature: &str,
-    ) -> MoveResult<()> {
-        store_game_move_message(
+        prepared: &PreparedMove,
+        self_peer_id: &str,
+    ) -> Result<CommitOutcome, MoveCommitError> {
+        commit_move(
             self.game_ops.database,
-            move_message,
-            signature,
-            sender_peer_id,
+            &prepared.game_id,
+            &prepared.move_message,
+            MoveActor::Local { self_peer_id },
         )
-        .map_err(|e| MoveProcessingError::TransactionError(format!("Database error: {e}")))?;
-
-        self.game_ops
-            .database
-            .update_game_status(game_id, GameStatus::Active)
-            .map_err(|e| {
-                MoveProcessingError::TransactionError(format!("Failed to update game: {e}"))
-            })?;
-
-        Ok(())
     }
 
     /// Prepare then commit — convenience for DB-only callers (e.g. tests).
@@ -161,8 +159,7 @@ impl<'a> MoveProcessor<'a> {
         move_notation: &str,
     ) -> MoveResult<MoveProcessingResult> {
         let prepared = self.prepare_move(game_id, move_notation)?;
-        self.commit_move(game_id, &prepared.move_message, "self", "")?;
-        self.update_game_status_if_needed(game_id, &prepared.updated_board)?;
+        self.commit_local_move(&prepared, "self")?;
 
         Ok(MoveProcessingResult {
             game_id: prepared.game_id,
@@ -202,65 +199,6 @@ impl<'a> MoveProcessor<'a> {
             }
             Err(_) => Ok(false),
         }
-    }
-
-    /// Apply a move from an opponent (from network message)
-    pub fn apply_opponent_move(
-        &self,
-        game_id: &str,
-        move_message: &MoveMessage,
-        sender_peer_id: &str,
-    ) -> MoveResult<MoveProcessingResult> {
-        // Validate message format and security
-        crate::messages::chess::validate_move_message(move_message).map_err(|e| {
-            MoveProcessingError::InvalidMove(format!("Message validation failed: {e}"))
-        })?;
-
-        // Reconstruct current game state
-        let game_state = self.game_ops.reconstruct_game_state(game_id)?;
-
-        // Validate it's the opponent's turn
-        if game_state.your_turn {
-            return Err(MoveProcessingError::InvalidGameState(
-                "Received move when it's not opponent's turn".to_string(),
-            ));
-        }
-
-        // Parse and validate the move
-        let chess_move =
-            self.parse_and_validate_move(&move_message.chess_move, &game_state.board)?;
-
-        // Apply move to board
-        let mut updated_board = game_state.board.clone();
-        updated_board.make_move(chess_move)?;
-
-        // Verify board hash matches message
-        let actual_hash = crate::messages::chess::hash_board_state(&updated_board);
-        if actual_hash != move_message.board_state_hash {
-            let expected_hash = move_message.board_state_hash.clone();
-            return Err(MoveProcessingError::BoardStateError(format!(
-                "Board state hash mismatch. Expected: {expected_hash}, Got: {actual_hash}"
-            )));
-        }
-
-        self.commit_move(game_id, move_message, sender_peer_id, "")?;
-
-        // Update game status if needed
-        self.update_game_status_if_needed(game_id, &updated_board)?;
-
-        // Analyze move characteristics
-        let move_info = self.analyze_move(&game_state.board, &updated_board, chess_move)?;
-
-        Ok(MoveProcessingResult {
-            game_id: game_id.to_string(),
-            move_notation: move_message.chess_move.clone(),
-            board_state_hash: move_message.board_state_hash.clone(),
-            move_number: game_state.move_history.len() as u32 + 1,
-            is_capture: move_info.is_capture,
-            is_check: move_info.is_check,
-            is_checkmate: move_info.is_checkmate,
-            updated_board,
-        })
     }
 
     /// Get all legal moves for current position
@@ -337,15 +275,6 @@ impl<'a> MoveProcessor<'a> {
         ChessMove::from_str_with_color(move_notation, board.active_color()).map_err(|e| {
             MoveProcessingError::InvalidMove(format!("Failed to parse move '{move_notation}': {e}"))
         })
-    }
-
-    /// Update game status if game is completed
-    fn update_game_status_if_needed(&self, game_id: &str, board: &Board) -> MoveResult<()> {
-        // Game-end detection (checkmate, stalemate, etc.) is not implemented yet.
-        let _ = board;
-        let _ = game_id;
-
-        Ok(())
     }
 
     /// Analyze move characteristics

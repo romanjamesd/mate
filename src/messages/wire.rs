@@ -2401,7 +2401,8 @@ pub enum FailureClass {
 impl FailureClass {
     /// Classify an error for retry decisions
     pub fn classify_error(error: &anyhow::Error) -> Self {
-        let error_str = error.to_string().to_lowercase();
+        // anyhow's Display shows only the outer context, which can hide the DNS/IO cause.
+        let error_str = format!("{error:#}").to_lowercase();
 
         // Check for immediate failures that should not be retried
         if error_str.contains("name or service not known")
@@ -2414,7 +2415,6 @@ impl FailureClass {
             || error_str.contains("name resolution failed")
             || error_str.contains("temporary failure in name resolution")
             || error_str.contains("could not resolve hostname")
-            || error_str.contains("connection refused")  // Often means service not running
             || error_str.contains("network unreachable") // Network config issue
             || error_str.contains("no route to host")
         // Routing issue

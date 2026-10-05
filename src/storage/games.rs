@@ -129,7 +129,6 @@ impl Database {
     }
 
     /// Update activity without changing lifecycle fields.
-    #[allow(dead_code)] // Used by the authoritative commit in chronology Step 4.
     pub(crate) fn touch_game_on(conn: &rusqlite::Connection, game_id: &str) -> Result<()> {
         let changed = conn.execute(
             "UPDATE games SET updated_at = ?1 WHERE id = ?2",

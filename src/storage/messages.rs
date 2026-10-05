@@ -125,7 +125,6 @@ impl Database {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    #[allow(dead_code)] // Used by the authoritative commit in chronology Step 4.
     pub(crate) fn get_move_at_ply_on(
         conn: &rusqlite::Connection,
         game_id: &str,

@@ -24,7 +24,8 @@ async fn test_successful_connection_establishment() {
     let server = Server::bind("127.0.0.1:0", server_identity, database)
         .await
         .unwrap();
-    let server_addr = server.local_addr().unwrap().to_string();
+    // Exercise hostname resolution and all resolved addresses (IPv4/IPv6 localhost).
+    let server_addr = format!("localhost:{}", server.local_addr().unwrap().port());
 
     // Start server in background
     let server_handle = tokio::spawn(async move { server.run().await });

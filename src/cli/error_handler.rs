@@ -156,6 +156,10 @@ impl From<ConnectionError> for CliError {
 impl From<MoveProcessingError> for CliError {
     fn from(err: MoveProcessingError) -> Self {
         match err {
+            MoveProcessingError::Commit(e) => CliError::UserError {
+                message: e.to_string(),
+                suggestion: None,
+            },
             MoveProcessingError::GameOps(e) => CliError::GameOps(e),
             MoveProcessingError::Chess(e) => CliError::Chess(e),
             MoveProcessingError::InvalidMove(msg) => {

@@ -1,6 +1,9 @@
 use crate::crypto::Identity;
 use crate::messages::{
-    wire::{FailureClass, RetryStrategy, WireConfig, FAST_FAIL_CONNECTION_TIMEOUT},
+    wire::{
+        FailureClass, RetryStrategy, WireConfig, CLIENT_CONNECT_TIMEOUT,
+        FAST_FAIL_CONNECTION_TIMEOUT, FAST_FAIL_DNS_TIMEOUT,
+    },
     Message,
 };
 use crate::network::Connection;
@@ -8,11 +11,26 @@ use anyhow::{Context, Result};
 use rand;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpStream;
+use tokio::net::{lookup_host, TcpStream};
 use tracing::{debug, error, info, instrument, warn};
 
 // Step 4.2: Error conversion is automatically provided by anyhow's blanket implementation
 // since ConnectionError implements std::error::Error via thiserror::Error
+
+/// Bound name resolution independently of TCP retries, which must not restart DNS lookups.
+async fn resolve_with_timeout<T>(
+    addr: &str,
+    lookup: impl std::future::Future<Output = std::io::Result<T>>,
+) -> Result<T> {
+    tokio::time::timeout(FAST_FAIL_DNS_TIMEOUT, lookup)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to connect to {addr}: could not resolve hostname within {FAST_FAIL_DNS_TIMEOUT:?}"
+            )
+        })?
+        .with_context(|| format!("Failed to connect to {addr}: could not resolve hostname"))
+}
 
 /// A secure peer-to-peer client with automatic retry logic and connection management.
 ///
@@ -272,9 +290,17 @@ impl Client {
             addr
         );
 
+        // Resolve once so slow DNS cannot escape the timeout or restart during TCP fallback.
+        let addresses: Vec<_> = resolve_with_timeout(addr, lookup_host(addr))
+            .await?
+            .collect();
+
         // Use shorter timeout for initial connection attempt to detect obvious failures quickly
-        let connection_result =
-            tokio::time::timeout(FAST_FAIL_CONNECTION_TIMEOUT, TcpStream::connect(addr)).await;
+        let connection_result = tokio::time::timeout(
+            FAST_FAIL_CONNECTION_TIMEOUT,
+            TcpStream::connect(addresses.as_slice()),
+        )
+        .await;
 
         let stream = match connection_result {
             Ok(stream_result) => {
@@ -283,9 +309,13 @@ impl Client {
             Err(_) => {
                 // Timeout occurred - this could be a legitimate slow connection, retry with normal timeout
                 debug!("Fast connection attempt timed out, trying with normal timeout");
-                TcpStream::connect(addr).await.with_context(|| {
-                    format!("Failed to connect to {addr} (after fast-fail timeout)")
-                })?
+                tokio::time::timeout(
+                    CLIENT_CONNECT_TIMEOUT,
+                    TcpStream::connect(addresses.as_slice()),
+                )
+                .await
+                .with_context(|| format!("Failed to connect to {addr}: connection timed out"))?
+                .with_context(|| format!("Failed to connect to {addr} (after fast-fail timeout)"))?
             }
         };
 
@@ -804,5 +834,51 @@ pub enum ConnectionHealth {
 impl ConnectionHealth {
     pub fn is_healthy(&self) -> bool {
         matches!(self, ConnectionHealth::Healthy { .. })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stalled_dns_lookup_times_out_without_retry() {
+        let lookup = std::future::pending::<std::io::Result<Vec<std::net::SocketAddr>>>();
+        let error = tokio::time::timeout(
+            FAST_FAIL_DNS_TIMEOUT + Duration::from_secs(1),
+            resolve_with_timeout("stalled.invalid.:8080", lookup),
+        )
+        .await
+        .expect("A stalled DNS lookup must return within its deadline")
+        .unwrap_err();
+
+        assert!(error.to_string().contains("stalled.invalid.:8080"));
+        assert!(error.to_string().contains("within"));
+        assert_eq!(FailureClass::classify_error(&error), FailureClass::NoRetry);
+    }
+
+    #[test]
+    fn contextual_connection_errors_preserve_failure_classification() {
+        let dns_error = anyhow::anyhow!("name or service not known")
+            .context("Failed to connect to test address");
+        assert_eq!(
+            FailureClass::classify_error(&dns_error),
+            FailureClass::NoRetry
+        );
+
+        // A refused connection can recover when a restarting server starts listening again.
+        let refused_error =
+            anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::ConnectionRefused))
+                .context("Failed to connect to test address");
+        assert_eq!(
+            FailureClass::classify_error(&refused_error),
+            FailureClass::Retriable
+        );
+
+        let timeout_error = anyhow::anyhow!("connection timed out").context("Failed to connect");
+        assert_eq!(
+            FailureClass::classify_error(&timeout_error),
+            FailureClass::Retriable
+        );
     }
 }

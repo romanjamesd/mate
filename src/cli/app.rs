@@ -588,12 +588,7 @@ impl App {
         {
             Ok(_outcome) => {
                 processor
-                    .commit_move(
-                        &target_game_id,
-                        &prepared.move_message,
-                        self.peer_id(),
-                        "local",
-                    )
+                    .commit_local_move(&prepared, self.peer_id())
                     .map_err(|e| CliError::UserError {
                         message: format!("Move sent but failed to persist locally: {e}"),
                         suggestion: Some(
