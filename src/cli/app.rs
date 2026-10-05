@@ -3,7 +3,9 @@ use crate::cli::display::{
     display_board, display_game_status, display_games_list, display_move_history,
 };
 use crate::cli::error_handler::{cli_error_from_anyhow, CliError, CliResult};
-use crate::cli::network_manager::{GameAcceptOutcome, InviteOutcome, NetworkManager};
+use crate::cli::network_manager::{
+    GameAcceptOutcome, InviteOutcome, MoveSendError, MoveSendOutcome, NetworkManager,
+};
 use crate::cli::validation::{InputValidationUtils, InputValidator};
 use crate::crypto::Identity;
 use crate::game::{store_game_accept_message, GameOps, GameOpsError, MoveProcessor};
@@ -580,23 +582,26 @@ impl App {
             .map_err(CliError::from)?;
 
         let dial = resolve_dial_target(&game)?;
+        let ply = prepared.ply;
+        let notation = chess_move.clone();
 
-        match self
+        // Only a correlated ACK from the authenticated opponent authorizes a local commit.
+        let outcome = self
             .network_manager
-            .send_chess_move(&dial, target_game_id.clone(), prepared.move_message.clone())
-            .await
-        {
-            Ok(_outcome) => {
+            .send_chess_move(&dial, &game.opponent_peer_id, prepared.move_message.clone())
+            .await;
+        match outcome {
+            Ok(MoveSendOutcome::Acknowledged { .. }) => {
                 processor
                     .commit_local_move(&prepared, self.peer_id())
-                    .map_err(|e| CliError::UserError {
-                        message: format!("Move sent but failed to persist locally: {e}"),
-                        suggestion: Some(
-                            "The move may have reached your opponent but local storage failed. Check database permissions and try 'mate board' to verify state.".to_string(),
-                        ),
+                    .map_err(|e| CliError::MoveRemoteCommittedLocalFailed {
+                        game_id: target_game_id.clone(),
+                        ply,
+                        notation: notation.clone(),
+                        reason: e.to_string(),
                     })?;
 
-                println!("✓ Move '{}' sent successfully!", chess_move);
+                println!("✓ Move {ply} '{chess_move}' acknowledged by your opponent and saved.");
                 println!("Waiting for opponent's response...");
                 println!(
                     "Use 'mate board --game-id {}' to view the updated board.",
@@ -606,11 +611,40 @@ impl App {
                     "Use 'mate history --game-id {}' to see the move history.",
                     target_game_id
                 );
+                Ok(())
             }
-            Err(e) => return Err(cli_error_from_anyhow(e)),
+            Ok(MoveSendOutcome::Rejected { decline, .. }) => Err(CliError::MoveRejected {
+                game_id: target_game_id,
+                ply,
+                notation,
+                reason: decline.reason,
+            }),
+            Err(MoveSendError::Protocol(error)) => Err(CliError::MoveProtocolError {
+                game_id: target_game_id,
+                ply,
+                notation,
+                error: Box::new(error),
+            }),
+            Err(MoveSendError::Delivery {
+                may_have_been_sent,
+                source,
+            }) => {
+                tracing::warn!(
+                    may_have_been_sent,
+                    "Move {} delivery to {} is uncertain: {:#}",
+                    ply,
+                    dial,
+                    source
+                );
+                Err(CliError::MoveDeliveryUncertain {
+                    game_id: target_game_id,
+                    ply,
+                    notation,
+                    may_have_been_sent,
+                    reason: format!("{source:#}"),
+                })
+            }
         }
-
-        Ok(())
     }
 
     /// Handle the 'history' command - Show move history for a game

@@ -1,4 +1,5 @@
 use crate::chess::ChessError;
+use crate::cli::network_manager::MoveProtocolError;
 use crate::cli::validation::ValidationError;
 use crate::game::{GameOpsError, MoveProcessingError};
 use crate::messages::chess::ChessProtocolError;
@@ -22,6 +23,37 @@ pub enum CliError {
     Protocol(ChessProtocolError),
     /// A correlated remote refusal of a game acceptance.
     GameAcceptanceRejected { reason: Option<String> },
+    /// A correlated remote refusal of a move; nothing was saved locally.
+    MoveRejected {
+        game_id: String,
+        ply: u32,
+        notation: String,
+        reason: Option<String>,
+    },
+    /// The move response or peer identity failed validation; nothing was
+    /// saved locally and the move was not retried.
+    MoveProtocolError {
+        game_id: String,
+        ply: u32,
+        notation: String,
+        error: Box<MoveProtocolError>,
+    },
+    /// No trustworthy response arrived; the opponent may or may not have the move.
+    MoveDeliveryUncertain {
+        game_id: String,
+        ply: u32,
+        notation: String,
+        /// False only when no send was attempted by this invocation.
+        may_have_been_sent: bool,
+        reason: String,
+    },
+    /// The opponent acknowledged the move but the local commit failed.
+    MoveRemoteCommittedLocalFailed {
+        game_id: String,
+        ply: u32,
+        notation: String,
+        reason: String,
+    },
     /// Wire protocol error
     Wire(WireProtocolError),
     /// Input validation error
@@ -64,6 +96,56 @@ impl fmt::Display for CliError {
                 reason
                     .as_deref()
                     .unwrap_or("the opponent did not provide a reason")
+            ),
+            CliError::MoveRejected {
+                game_id,
+                ply,
+                notation,
+                reason,
+            } => {
+                let reason = reason
+                    .as_deref()
+                    .unwrap_or("the opponent did not provide a reason");
+                let suggestion = if reason.starts_with("ply gap") || reason.starts_with("move conflict")
+                {
+                    format!("Your move history and your opponent's disagree. Check 'mate board --game-id {game_id}' and try again once both histories agree.")
+                } else if reason.contains("temporarily unavailable") {
+                    format!("Your opponent could not process the move right now. Re-run 'mate move {notation} --game-id {game_id}'.")
+                } else {
+                    format!("Check 'mate board --game-id {game_id}' for the current position.")
+                };
+                write!(
+                    f,
+                    "❌ Opponent rejected move {ply} ('{notation}'): {reason}\n   The move was not saved locally.\n   💡 Suggestion: {suggestion}"
+                )
+            }
+            CliError::MoveProtocolError {
+                game_id,
+                ply,
+                notation,
+                error,
+            } => write!(
+                f,
+                "🔒 Move {ply} ('{notation}') was not confirmed: {error}\n   The response could not be trusted, so the move was not saved locally and was not retried. Your opponent may still have received it.\n   💡 Suggestion: Check that game {game_id} is dialing the right opponent, then compare 'mate history --game-id {game_id}' with your opponent before moving again."
+            ),
+            CliError::MoveDeliveryUncertain {
+                game_id,
+                ply,
+                notation,
+                reason,
+                ..
+            } => write!(
+                f,
+                "⚠️  Move {ply} ('{notation}') may or may not have reached your opponent: {reason}\n   It was not saved locally.\n   💡 Suggestion: If 'mate history --game-id {game_id}' still shows no move {ply}, re-run 'mate move {notation} --game-id {game_id}' once your opponent is reachable. Resending the same move is safe: if it already arrived, your opponent acknowledges it again and it is saved here. If your local history has changed, check 'mate board --game-id {game_id}' before moving."
+            ),
+            CliError::MoveRemoteCommittedLocalFailed {
+                game_id,
+                ply,
+                notation,
+                reason,
+            } => write!(
+                f,
+                "❌ Your opponent accepted move {ply} ('{notation}'), but it could not be saved locally: {reason}\n   💡 Suggestion: Check 'mate board --game-id {game_id}'. If your local history still ends before move {ply}, fix the problem and re-run 'mate move {notation} --game-id {game_id}'; your opponent will acknowledge the same move again."
             ),
             CliError::Wire(e) => write!(f, "{}", format_wire_error(e)),
             CliError::InvalidInput {

@@ -317,7 +317,7 @@ async fn test_network_message_type_handling() {
     );
 
     let move_result = network_manager
-        .send_chess_move(&peer_address, game_id, chess_move)
+        .send_chess_move(&peer_address, "unreachable-opponent", chess_move)
         .await;
     assert!(
         move_result.is_err(),

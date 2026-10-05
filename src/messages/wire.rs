@@ -849,7 +849,7 @@ impl FramedMessage {
     async fn write_all_with_recovery(
         writer: &mut (impl AsyncWrite + Unpin),
         data: &[u8],
-    ) -> Result<()> {
+    ) -> Result<(), WireProtocolError> {
         let mut total_written = 0;
         let data_len = data.len();
 
@@ -865,9 +865,9 @@ impl FramedMessage {
                         remaining = remaining.len(),
                         "Write operation returned 0 bytes, indicating writer is closed"
                     );
-                    return Err(anyhow::anyhow!(
-                        "Write failed: writer closed after writing {total_written} of {data_len} bytes"
-                    ));
+                    return Err(WireProtocolError::connection_closed(format!(
+                        "write after {total_written} of {data_len} bytes"
+                    )));
                 }
                 Ok(written) => {
                     total_written += written;
@@ -893,9 +893,7 @@ impl FramedMessage {
                         data_size = data_len,
                         "Write operation failed"
                     );
-                    return Err(anyhow::anyhow!(
-                        "Write failed after writing {total_written} of {data_len} bytes: {e}"
-                    ));
+                    return Err(WireProtocolError::Io(e));
                 }
             }
         }
@@ -912,7 +910,7 @@ impl FramedMessage {
     async fn read_exact_with_recovery(
         reader: &mut (impl AsyncRead + Unpin),
         buffer: &mut [u8],
-    ) -> Result<()> {
+    ) -> Result<(), WireProtocolError> {
         let mut total_read = 0;
         let buffer_len = buffer.len();
 
@@ -929,9 +927,9 @@ impl FramedMessage {
                         "Unexpected EOF: read 0 bytes when {} bytes remaining",
                         remaining.len()
                     );
-                    return Err(anyhow::anyhow!(
-                        "Unexpected EOF while reading: got {total_read} of {buffer_len} expected bytes"
-                    ));
+                    return Err(WireProtocolError::unexpected_eof(format!(
+                        "{total_read} of {buffer_len} expected bytes"
+                    )));
                 }
                 Ok(read) => {
                     total_read += read;
@@ -957,9 +955,7 @@ impl FramedMessage {
                         expected = buffer_len,
                         "Read operation failed"
                     );
-                    return Err(anyhow::anyhow!(
-                        "Read failed after reading {total_read} of {buffer_len} bytes: {e}"
-                    ));
+                    return Err(WireProtocolError::Io(e));
                 }
             }
         }
@@ -1036,6 +1032,7 @@ impl FramedMessage {
         writer
             .flush()
             .await
+            .map_err(WireProtocolError::Io)
             .with_context(|| "Failed to flush writer after message write")?;
 
         let elapsed = start_time.elapsed();

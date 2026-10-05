@@ -27,6 +27,15 @@ pub enum ConnectionError {
     Io(#[from] std::io::Error),
 }
 
+/// Recover the typed failure from a `FramedMessage` error chain so callers can
+/// tell transport loss (timeouts, EOF, I/O) apart from malformed frames.
+fn wire_error_from_framing(error: anyhow::Error) -> WireProtocolError {
+    match error.downcast::<WireProtocolError>() {
+        Ok(wire) => wire,
+        Err(error) => WireProtocolError::from(error),
+    }
+}
+
 /// Represents an authenticated peer-to-peer connection with integrated wire protocol support.
 ///
 /// The `Connection` struct provides a secure, authenticated communication channel between peers
@@ -196,10 +205,8 @@ impl Connection {
             .write_message_with_default_timeout(&mut self.stream, &envelope)
             .await
             .map_err(|e| {
-                error!("Failed to write message: {}", e);
-                ConnectionError::WireProtocol(WireProtocolError::WriteTimeout {
-                    timeout: Duration::from_secs(30), // Default timeout
-                })
+                error!("Failed to write message: {:#}", e);
+                ConnectionError::WireProtocol(wire_error_from_framing(e))
             })?;
 
         let send_duration = send_start.elapsed();
@@ -237,10 +244,8 @@ impl Connection {
             .read_message_with_default_timeout(&mut self.stream)
             .await
             .map_err(|e| {
-                error!("Failed to read message: {}", e);
-                ConnectionError::WireProtocol(WireProtocolError::ReadTimeout {
-                    timeout: Duration::from_secs(30), // Default timeout
-                })
+                error!("Failed to read message: {:#}", e);
+                ConnectionError::WireProtocol(wire_error_from_framing(e))
             })?;
 
         debug!("Received envelope from sender: {}", envelope.sender());
