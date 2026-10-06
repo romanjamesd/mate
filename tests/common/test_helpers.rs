@@ -226,13 +226,14 @@ pub fn play_move(
 }
 
 /// Play a sequence with local and opponent actors alternating.
-pub fn play(db: &Database, game_id: &str, notations: &[&str]) {
+pub fn play(db: &Database, game_id: &str, notations: &[&str], self_peer_id: &str) {
     for notation in notations {
-        play_move(db, game_id, notation, "self");
+        play_move(db, game_id, notation, self_peer_id);
     }
 }
 
-/// Independent production connections to one isolated database file.
+/// Independent connections to one isolated database file.
+/// Keep the returned temp directory alive for the lifetime of both handles.
 pub fn twin_databases() -> (tempfile::TempDir, Database, Database) {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join("database.sqlite");

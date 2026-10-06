@@ -1007,7 +1007,7 @@ fn dispatch_move_retries_are_historical_authenticated_and_leave_activity_unchang
         &first,
     );
     assert_eq!(move_snapshot(&db, &id), before);
-    play(&db, &id, &["e7e5", "g1f3", "g8f6"]);
+    play(&db, &id, &["e7e5", "g1f3", "g8f6"], "test-peer-handlers");
     for completed in [false, true] {
         if completed {
             db.update_game_result(&id, mate::storage::models::GameResult::Draw)

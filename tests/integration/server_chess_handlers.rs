@@ -1,6 +1,6 @@
 //! Server chess handler integration: invite / accept / decline / move / sync lifecycle
 
-use crate::common::test_helpers::test_server_database;
+use crate::common::test_helpers::{next_move, test_server_database};
 use mate::chess::{Board, Color};
 use mate::crypto::Identity;
 use mate::messages::chess::{
@@ -323,18 +323,9 @@ async fn server_move_acks_and_persists() {
         "expected GameAccept echo"
     );
 
-    let mut board = Board::new();
-    board
-        .make_move(mate::chess::Move::from_str_with_color("e2e4", Color::White).unwrap())
-        .unwrap();
-    let board_hash = hash_board_state(&board);
+    let mv = next_move(&db_for_assert, &game_id, "e2e4");
     connection
-        .send_message(Message::new_move(
-            game_id.clone(),
-            1,
-            "e2e4".to_string(),
-            board_hash.clone(),
-        ))
+        .send_message(Message::Move(mv.clone()))
         .await
         .expect("send Move");
 
@@ -348,15 +339,7 @@ async fn server_move_acks_and_persists() {
     match move_response {
         Message::MoveAck(ack) => {
             assert_eq!(ack.game_id, game_id);
-            assert_eq!(
-                ack,
-                mate::messages::chess::MoveAck::for_move(&Move::new(
-                    game_id.clone(),
-                    1,
-                    "e2e4".into(),
-                    board_hash.clone()
-                ))
-            );
+            assert_eq!(ack, mate::messages::chess::MoveAck::for_move(&mv));
         }
         other => panic!("expected MoveAck, got {}", other.message_type()),
     }
@@ -378,7 +361,7 @@ async fn server_move_acks_and_persists() {
     let parsed: Move = serde_json::from_str(&move_msg.content).expect("parse stored move JSON");
     assert_eq!(parsed.game_id, game_id);
     assert_eq!(parsed.chess_move, "e2e4");
-    assert_eq!(parsed.board_state_hash, board_hash);
+    assert_eq!(parsed, mv);
 
     let _ = connection.close().await;
     server_handle.abort();
@@ -391,6 +374,7 @@ async fn server_sync_request_returns_sync_response() {
     let client_identity = Arc::new(Identity::generate().unwrap());
 
     let database = test_server_database(server_identity.peer_id().as_str());
+    let db_for_fixture = Arc::clone(&database);
 
     let server = Server::bind("127.0.0.1:0", server_identity, database)
         .await
@@ -439,17 +423,9 @@ async fn server_sync_request_returns_sync_response() {
         "expected GameAccept echo"
     );
 
-    let mut board = Board::new();
-    let mv = mate::chess::Move::from_str_with_color("e2e4", board.active_color()).unwrap();
-    board.make_move(mv).unwrap();
-    let board_hash = hash_board_state(&board);
+    let mv = next_move(&db_for_fixture, &game_id, "e2e4");
     connection
-        .send_message(Message::new_move(
-            game_id.clone(),
-            1,
-            "e2e4".to_string(),
-            board_hash,
-        ))
+        .send_message(Message::Move(mv))
         .await
         .expect("send Move");
 
