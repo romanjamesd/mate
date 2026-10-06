@@ -158,6 +158,30 @@ Game: game_abc123
 - Automatic peer discovery on local networks
 - Manual peer address exchange for internet play
 
+`Move` carries `game_id`, `ply`, `chess_move`, and `board_state_hash` in the
+signed payload. `ply` is a required one-based half-move number: White's first
+move is 1 and Black's first is 2. The hash describes the board after that move.
+Chess history is read in ply order and replay rejects gaps, duplicates,
+row/payload mismatches, application failures, and incorrect post-move hashes.
+Generic message history uses local insertion `id` order; timestamps are only
+display/audit metadata. Move application does not yet enforce full chess
+legality or king safety.
+
+`MoveAck` carries `game_id`, `ply`, and `move_digest`, a lowercase hex SHA-256
+digest identifying the exact Move payload. The receiver acknowledges only after
+an atomic commit, or for an exact retry from the same authenticated sender.
+Rejections return `GameDecline`. The sender verifies the opponent identity,
+response signer, and ACK fields before committing locally and reporting success.
+Legacy Move and MoveAck wire formats are incompatible; both peers must use the
+updated protocol.
+
+Moves are not queued for later delivery. If delivery is uncertain, or the
+opponent accepted but local persistence failed, follow the CLI's retry guidance.
+With unchanged local history (and any local storage problem resolved), repeating
+the same move reproduces the payload and an already committed move is acknowledged
+again. If local history has advanced, compare histories before moving again;
+recovery is not automatic.
+
 ### Security Model
 - Each player generates a unique Ed25519 keypair
 - All moves are signed with the player's private key
@@ -175,8 +199,10 @@ Mate stores configuration and game data in:
 
 Schema version 3 requires an explicit `ply` for every chess Move. A database
 with older Move rows cannot be upgraded; opening it reports the row count and
-actual file path. Recreate that development database at the reported path to
-continue. This discards its game history, so keep a copy if you need it.
+actual file path. Stop any running `mate serve` process, keep a copy if you need
+the old history, then delete the database file at the printed path. The next
+database-using command creates a fresh schema-version-3 database. This discards
+the database's games and message history; keep your identity keys.
 Migration failure leaves all existing data unchanged. Databases containing
 only invites, accepts, or other non-Move messages upgrade in place.
 `MATE_DATA_DIR` overrides the default database directory.

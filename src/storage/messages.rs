@@ -1,3 +1,11 @@
+//! Store and query message history with separate local and chess protocol orders.
+//!
+//! Generic histories use insertion `id` order, including when filtered to Moves.
+//! Chess replay uses [`Database::get_moves_for_game`] in ascending `ply` order,
+//! followed by the game layer's chronology validation. `created_at` is display
+//! and audit metadata only. Generic inserts reject `Move`; the authoritative
+//! game commit operation uses the typed insert within its transaction.
+
 use crate::messages::chess::Move;
 use crate::storage::database::Database;
 use crate::storage::errors::{Result, StorageError};
@@ -5,7 +13,8 @@ use crate::storage::models::{Message, StoredMove};
 use rusqlite::{named_params, params, OptionalExtension, Row};
 
 impl Database {
-    /// Store a new message
+    /// Store a non-Move message. `Move` is rejected with `StorageError::InvalidData`;
+    /// chess moves must go through the authoritative game commit operation.
     pub fn store_message(
         &self,
         game_id: String,
@@ -108,7 +117,9 @@ impl Database {
         })
     }
 
-    /// Read chess moves in ascending protocol ply order. Generic history uses id order.
+    /// Read chess moves in ascending protocol ply order, without validating them.
+    /// Replay must validate these rows with `crate::game::rebuild_chronology`.
+    /// Generic history uses insertion `id` order instead.
     pub fn get_moves_for_game(&self, game_id: &str) -> Result<Vec<StoredMove>> {
         self.with_connection(|conn| Self::get_moves_for_game_on(conn, game_id))
     }
@@ -165,6 +176,7 @@ impl Database {
     ///
     /// Order reflects when rows were stored in this database, not `created_at`
     /// (a wall-clock value kept for display/audit) and not peer-side order.
+    /// Use [`Self::get_moves_for_game`] for chess chronology, then validate it.
     pub fn get_messages_for_game(&self, game_id: &str) -> Result<Vec<Message>> {
         self.with_connection(|conn| {
             let mut stmt = conn.prepare(
@@ -211,6 +223,8 @@ impl Database {
     }
 
     /// Get messages by type for a game in local insertion order (ascending `id`).
+    /// Even for `"Move"`, this is generic history; chess replay uses
+    /// [`Self::get_moves_for_game`] and chronology validation.
     pub fn get_messages_by_type(&self, game_id: &str, message_type: &str) -> Result<Vec<Message>> {
         self.with_connection(|conn| {
             let mut stmt = conn.prepare(

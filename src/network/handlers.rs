@@ -6,6 +6,8 @@
 //! Abandoned and echo so send-and-wait clients never hang.
 //! `Move` validates and commits atomically before replying with a correlated
 //! `MoveAck`. Exact authenticated retries are acknowledged without state changes.
+//! The ACK names the game's ply and digest of the exact Move payload; failures
+//! return `GameDecline` without committing the move.
 //! `SyncRequest` validates ply sequencing and post-move hashes in one read
 //! snapshot before replying with `SyncResponse`. Invalid history is declined.
 //! Inbound `SyncResponse` is ignored (no reply).
@@ -389,6 +391,8 @@ pub(crate) fn handle_game_decline(
 ///
 /// The authoritative operation checks chronology, turn, application and hash.
 /// Exact retries also succeed after history advances or the game completes.
+/// A retry must match the stored payload and sender. The `MoveAck` carries the
+/// game ID, ply and digest of that exact payload, rather than receipt alone.
 /// Rejections and persistence failures return stable `GameDecline` reasons.
 pub(crate) fn handle_move(
     database: &Database,
@@ -424,6 +428,9 @@ pub(crate) fn handle_move_ack(
 /// Rebuild FEN/history from stored moves and reply with `SyncResponse`.
 ///
 /// Requires a known game with `opponent_peer_id == peer_id` (any status).
+/// Game and move rows are read in one snapshot. Replay validates contiguous
+/// plies, row/payload agreement, move application and post-move hashes; invalid
+/// history is declined without falling back to insertion or timestamp order.
 /// Soft-rejects with `GameDecline` so send-and-wait never hangs.
 pub(crate) fn handle_sync_request(
     database: &Database,

@@ -1,4 +1,8 @@
 //! Validate protocol chronology and rebuild the board from ply-ordered move rows.
+//!
+//! Moves must form a contiguous one-based half-move sequence. Row and payload
+//! game IDs and plies must agree, and each hash must match the post-move board.
+//! Insertion IDs and timestamps never determine chess order.
 
 use crate::chess::{Board, ChessError, Move as ChessMove};
 use crate::messages::chess::{hash_board_state, Move as MoveMessage};
@@ -58,6 +62,9 @@ pub enum ChronologyError {
 }
 
 /// Validate every row in the supplied order, without sorting or repairing history.
+/// Supply rows in ascending protocol ply order, starting at 1, as returned by
+/// `crate::storage::Database::get_moves_for_game`. Gaps, duplicates, unsorted
+/// input, and row/payload mismatches are errors; there is no timestamp or ID fallback.
 /// Hashes must match the post-move board exactly. Application uses the existing
 /// chess engine and does not guarantee full chess legality or king safety.
 pub fn rebuild_chronology(
