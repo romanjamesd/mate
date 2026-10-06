@@ -20,5 +20,6 @@ identity.key
 # Logs
 *.log
 
-# PR utils
+# Context utils
 PR.md
+context/*

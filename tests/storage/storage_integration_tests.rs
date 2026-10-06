@@ -1,4 +1,5 @@
-use mate::storage::{Database, GameStatus, PlayerColor};
+use mate::storage::{schema::MIGRATIONS, Database, GameStatus, Message, PlayerColor};
+use rusqlite::{params, Connection};
 use tempfile::TempDir;
 
 /// Per-test database isolation via an explicit path (not process-global env).
@@ -43,6 +44,24 @@ fn create_test_database() -> (Database, TestEnvironment) {
     TestEnvironment::new()
 }
 
+fn ids(messages: &[Message]) -> Vec<i64> {
+    messages
+        .iter()
+        .map(|message| message.id.expect("stored id"))
+        .collect()
+}
+
+fn set_created_at(db: &Database, id: i64, timestamp: i64) {
+    db.with_connection(|conn| {
+        conn.execute(
+            "UPDATE messages SET created_at = ?1 WHERE id = ?2",
+            [timestamp, id],
+        )?;
+        Ok(())
+    })
+    .expect("Failed to set message timestamp");
+}
+
 /// Priority 1: Complete Game Lifecycle Tests (3 tests)
 /// Test full game workflows from creation to completion
 
@@ -65,7 +84,7 @@ fn test_complete_game_lifecycle_with_messages() {
     assert_eq!(game.status, GameStatus::Pending);
 
     // Phase 2: Game Initialization Messages
-    let _game_request_msg = db.store_message(
+    let game_request_msg = db.store_message(
         game.id.clone(),
         "game_request".to_string(),
         serde_json::json!({"color": "white", "time_control": {"initial": 600, "increment": 10}}).to_string(),
@@ -73,7 +92,7 @@ fn test_complete_game_lifecycle_with_messages() {
         "test_peer_integration".to_string(),
     ).expect("Failed to store game request message");
 
-    let _game_accept_msg = db
+    let game_accept_msg = db
         .store_message(
             game.id.clone(),
             "game_accept".to_string(),
@@ -98,26 +117,31 @@ fn test_complete_game_lifecycle_with_messages() {
         ("Nc6", "opponent_lifecycle"),
     ];
 
+    let mut stored_ids = ids(&[game_request_msg, game_accept_msg]);
     for (move_notation, sender) in moves {
-        db.store_message(
-            game.id.clone(),
-            "move".to_string(),
-            serde_json::json!({"move": move_notation, "fen": "updated_position"}).to_string(),
-            format!("move_sig_{move_notation}"),
-            sender.to_string(),
-        )
-        .unwrap_or_else(|_| panic!("Failed to store move: {}", move_notation));
+        let message = db
+            .store_message(
+                game.id.clone(),
+                "move".to_string(),
+                serde_json::json!({"move": move_notation, "fen": "updated_position"}).to_string(),
+                format!("move_sig_{move_notation}"),
+                sender.to_string(),
+            )
+            .unwrap_or_else(|_| panic!("Failed to store move: {}", move_notation));
+        stored_ids.push(message.id.expect("stored id"));
     }
 
     // Phase 5: Chat Messages
-    db.store_message(
-        game.id.clone(),
-        "chat".to_string(),
-        serde_json::json!({"message": format!("Good move #{}", 1)}).to_string(),
-        "chat_sig_1".to_string(),
-        "opponent_lifecycle".to_string(),
-    )
-    .expect("Failed to store chat message");
+    let chat_message = db
+        .store_message(
+            game.id.clone(),
+            "chat".to_string(),
+            serde_json::json!({"message": format!("Good move #{}", 1)}).to_string(),
+            "chat_sig_1".to_string(),
+            "opponent_lifecycle".to_string(),
+        )
+        .expect("Failed to store chat message");
+    stored_ids.push(chat_message.id.expect("stored id"));
 
     // Phase 6: Game Completion
     db.update_game_result(&game.id, mate::storage::models::GameResult::Win)
@@ -129,6 +153,10 @@ fn test_complete_game_lifecycle_with_messages() {
     assert!(completed_game.completed_at.is_some());
 
     // Phase 7: Verification of Complete History
+    // Simulate clock rollback so timestamp order disagrees with lifecycle order.
+    for (order, &id) in stored_ids.iter().enumerate() {
+        set_created_at(&db, id, (stored_ids.len() - order) as i64);
+    }
     let all_messages = db
         .get_messages_for_game(&game.id)
         .expect("Failed to get all game messages");
@@ -147,13 +175,9 @@ fn test_complete_game_lifecycle_with_messages() {
         .expect("Failed to get chat messages");
     assert_eq!(chat_messages.len(), 1, "Should have 1 chat message");
 
-    // Verify chronological order
-    for i in 1..all_messages.len() {
-        assert!(
-            all_messages[i - 1].created_at <= all_messages[i].created_at,
-            "Messages should be in chronological order"
-        );
-    }
+    // Verify local insertion order
+    assert_eq!(ids(&all_messages), stored_ids);
+    assert!(stored_ids.windows(2).all(|pair| pair[0] < pair[1]));
 }
 
 #[test]
@@ -342,20 +366,49 @@ fn test_game_with_extensive_message_history() {
         "Should have all messages stored"
     );
 
-    // Test pagination on large message set
-    let page1 = db
-        .get_messages_for_game_paginated(&game.id, 10, 0)
-        .expect("Failed to get first page");
-    assert_eq!(page1.len(), 10, "First page should have 10 messages");
-
-    let last_page_offset = (expected_total / 10) * 10;
-    let last_page = db
-        .get_messages_for_game_paginated(&game.id, 10, last_page_offset as u32)
-        .expect("Failed to get last page");
-    assert!(
-        last_page.len() <= 10,
-        "Last page should have <= 10 messages"
-    );
+    // Every page must match its slice of the complete insertion-ordered history.
+    let expected_ids = ids(&all_messages);
+    assert!(expected_ids.windows(2).all(|pair| pair[0] < pair[1]));
+    let total = expected_total as u32;
+    for decreasing_timestamps in [false, true] {
+        for (order, &id) in expected_ids.iter().enumerate() {
+            let timestamp = if decreasing_timestamps {
+                (expected_total - order) as i64
+            } else {
+                100
+            };
+            set_created_at(&db, id, timestamp);
+        }
+        assert_eq!(
+            ids(&db.get_messages_for_game(&game.id).unwrap()),
+            expected_ids
+        );
+        for page_size in [1, 2, 3, 10, total, total + 1] {
+            let mut paged_ids = Vec::new();
+            // A finite bound includes the first empty page beyond the history.
+            for page_index in 0..=total.div_ceil(page_size) {
+                let offset = page_index * page_size;
+                let page = db
+                    .get_messages_for_game_paginated(&game.id, page_size, offset)
+                    .expect("Failed to get message page");
+                let start = (offset as usize).min(expected_total);
+                let end = (start + page_size as usize).min(expected_total);
+                assert_eq!(ids(&page), expected_ids[start..end]);
+                paged_ids.extend(ids(&page));
+            }
+            assert_eq!(paged_ids, expected_ids);
+            for offset in [total, total + 1] {
+                assert!(db
+                    .get_messages_for_game_paginated(&game.id, page_size, offset)
+                    .unwrap()
+                    .is_empty());
+            }
+        }
+        assert!(db
+            .get_messages_for_game_paginated(&game.id, 0, 0)
+            .unwrap()
+            .is_empty());
+    }
 
     // Verify message type distribution
     let move_messages = db
@@ -512,15 +565,164 @@ fn test_transaction_consistency() {
     ); // Allow 1 second tolerance
 }
 
-/// Priority 3: Schema and Migration Tests (2 tests)
-/// Test database schema creation and evolution
+// Priority 3: Schema and Migration Tests (5 tests)
+// Test database schema creation and evolution
+
+fn assert_insertion_order_schema(db: &Database) {
+    db.with_connection(|conn| {
+        let version: i32 =
+            conn.query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!(version, 2);
+
+        let indexes = conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'messages'",
+            )?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        assert!(indexes.iter().any(|name| name == "idx_messages_game_order"));
+        assert!(!indexes.iter().any(|name| name == "idx_messages_game"));
+
+        let columns = conn
+            .prepare("PRAGMA index_info('idx_messages_game_order')")?
+            .query_map([], |row| row.get::<_, String>(2))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        assert_eq!(columns, ["game_id", "id"]);
+        Ok(())
+    })
+    .expect("Failed to inspect insertion-order schema");
+}
+
+#[test]
+fn fresh_database_has_insertion_order_index() {
+    let (db, _env) = create_test_database();
+    assert_insertion_order_schema(&db);
+}
+
+#[test]
+fn existing_v1_database_upgrades_in_place() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let db_path = temp_dir.path().join("database.sqlite");
+    let game_id = "legacy_game";
+    let metadata = serde_json::json!({"legacy": true, "notes": ["preserve", "data"]});
+    let expected_messages: Vec<Message> = [7, 12, 21]
+        .into_iter()
+        .enumerate()
+        .map(|(i, id)| Message {
+            id: Some(id),
+            game_id: game_id.to_string(),
+            message_type: if i == 1 { "chat" } else { "move" }.to_string(),
+            content: serde_json::json!({"order": i, "text": format!("legacy message {i}")})
+                .to_string(),
+            signature: format!("legacy_signature_{i}"),
+            sender_peer_id: format!("legacy_sender_{}", i % 2),
+            created_at: 300 - i as i64 * 100,
+        })
+        .collect();
+
+    // Build a real v1 file without invoking Database, which would migrate it immediately.
+    {
+        let conn = Connection::open(&db_path).expect("Failed to open legacy database");
+        let migration = &MIGRATIONS[0];
+        assert_eq!(migration.version, 1);
+        conn.execute_batch(migration.sql)
+            .expect("Failed to create version 1 schema");
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at, description) VALUES (?1, ?2, ?3)",
+            params![migration.version, 50, migration.description],
+        )
+        .expect("Failed to record version 1 migration");
+        conn.execute(
+            "INSERT INTO games
+             (id, opponent_peer_id, my_color, status, created_at, updated_at, completed_at, result, metadata)
+             VALUES (?1, 'legacy_opponent', 'black', 'completed', 50, 90, 90, 'draw', ?2)",
+            params![game_id, metadata.to_string()],
+        )
+        .expect("Failed to insert legacy game");
+        for message in &expected_messages {
+            conn.execute(
+                "INSERT INTO messages
+                 (id, game_id, message_type, content, signature, sender_peer_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    message.id,
+                    message.game_id,
+                    message.message_type,
+                    message.content,
+                    message.signature,
+                    message.sender_peer_id,
+                    message.created_at,
+                ],
+            )
+            .expect("Failed to insert legacy message");
+        }
+    }
+
+    let db = Database::new_with_path("test_peer_integration", &db_path)
+        .expect("Failed to open and migrate legacy database");
+    assert_insertion_order_schema(&db);
+    assert_eq!(db.count_messages_for_game(game_id).unwrap(), 3);
+    let messages = db.get_messages_for_game(game_id).unwrap();
+    // Compare every persisted field, including ids, content, and rollback timestamps.
+    assert_eq!(
+        serde_json::to_value(&messages).unwrap(),
+        serde_json::to_value(&expected_messages).unwrap()
+    );
+    let game = db.get_game(game_id).unwrap();
+    assert_eq!(game.id, game_id);
+    assert_eq!(game.opponent_peer_id, "legacy_opponent");
+    assert_eq!(game.my_color, PlayerColor::Black);
+    assert_eq!(game.status, GameStatus::Completed);
+    assert_eq!(game.created_at, 50);
+    assert_eq!(game.updated_at, 90);
+    assert_eq!(game.completed_at, Some(90));
+    assert_eq!(game.result, Some(mate::storage::models::GameResult::Draw));
+    assert_eq!(game.metadata, Some(metadata));
+}
+
+#[test]
+fn per_game_query_uses_order_index_without_sort() {
+    let (db, _env) = create_test_database();
+    db.with_connection(|conn| {
+        // Check both the compact plan probe and the projections used by public reads.
+        for sql in [
+            "EXPLAIN QUERY PLAN SELECT id FROM messages WHERE game_id = ?1 ORDER BY id ASC",
+            "EXPLAIN QUERY PLAN
+             SELECT id, game_id, message_type, content, signature, sender_peer_id, created_at
+             FROM messages WHERE game_id = ?1 ORDER BY id ASC",
+            "EXPLAIN QUERY PLAN
+             SELECT id, game_id, message_type, content, signature, sender_peer_id, created_at
+             FROM messages WHERE game_id = ?1 ORDER BY id ASC LIMIT 10 OFFSET 5",
+        ] {
+            let details = conn
+                .prepare(sql)?
+                .query_map(["plan_test_game"], |row| row.get::<_, String>(3))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            assert!(
+                details
+                    .iter()
+                    .any(|detail| detail.contains("idx_messages_game_order")),
+                "Expected insertion-order index for {sql}: {details:?}"
+            );
+            assert!(
+                details
+                    .iter()
+                    .all(|detail| !detail.to_uppercase().contains("TEMP B-TREE")),
+                "Unexpected temporary sort for {sql}: {details:?}"
+            );
+        }
+        Ok(())
+    })
+    .expect("Failed to inspect per-game query plans");
+}
 
 #[test]
 fn test_database_schema_creation() {
     let (db, _env) = create_test_database();
 
-    // Verify that we can perform all expected operations
-    // This implicitly tests that the schema was created correctly
+    // Smoke-test table operations, foreign keys, and cascade deletion.
 
     // Test games table
     let game = db
@@ -629,7 +831,7 @@ fn test_database_indexes_and_performance() {
         .expect("Failed to query games by status");
     assert_eq!(pending_games.len(), 10, "All games should be pending");
 
-    // Query messages by game_id (should use game_id index)
+    // Query messages by game_id (should use the game_id, id insertion-order index)
     for game_id in &game_ids {
         let messages = db
             .get_messages_for_game(game_id)
@@ -643,7 +845,7 @@ fn test_database_indexes_and_performance() {
         .expect("Failed to query messages by type");
     assert_eq!(move_messages.len(), 5, "Should find all move messages");
 
-    // Test recent queries (should use created_at index)
+    // Test recent games by creation time and recent messages by insertion id
     let recent_games = db.get_recent_games(5).expect("Failed to get recent games");
     assert_eq!(recent_games.len(), 5, "Should get 5 most recent games");
 
@@ -724,13 +926,13 @@ fn test_data_integrity_and_consistency() {
     assert_eq!(parsed_content["move"]["from"], "e2");
     assert_eq!(parsed_content["game_state"]["turn"], "black");
 
-    // Test timestamp consistency and ordering
+    // Test timestamp metadata and local insertion order
     let initial_time = game.created_at;
 
-    // Add multiple messages with small delays to test ordering
+    // Add multiple messages and retain their insertion ids and timestamps
     let mut message_times = Vec::new();
+    let mut message_ids = Vec::new();
     for i in 0..3 {
-        std::thread::sleep(std::time::Duration::from_millis(10)); // Small delay
         let msg = db
             .store_message(
                 game.id.clone(),
@@ -742,18 +944,26 @@ fn test_data_integrity_and_consistency() {
             .unwrap_or_else(|_| panic!("Failed to store timing message {}", i));
 
         message_times.push(msg.created_at);
+        message_ids.push(msg.id.unwrap());
     }
 
-    // Verify timestamps are ordered
-    for i in 1..message_times.len() {
-        assert!(
-            message_times[i] >= message_times[i - 1],
-            "Message timestamps should be non-decreasing"
-        );
-    }
+    // Verify retrieved rows follow insertion order independently of timestamps
+    let timing_messages = db
+        .get_messages_by_type(&game.id, "timing_test")
+        .expect("Failed to retrieve timing messages");
+    assert_eq!(ids(&timing_messages), message_ids);
+    assert!(message_ids.windows(2).all(|pair| pair[0] < pair[1]));
+    assert_eq!(
+        timing_messages
+            .iter()
+            .map(|message| message.created_at)
+            .collect::<Vec<_>>(),
+        message_times
+    );
 
     // Verify all message timestamps are after game creation
     for &msg_time in &message_times {
+        assert!(msg_time > 0, "Message timestamp should be set");
         assert!(
             msg_time >= initial_time,
             "Message timestamps should be after game creation"

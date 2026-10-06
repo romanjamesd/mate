@@ -1,7 +1,7 @@
 use crate::storage::database::Database;
 use crate::storage::errors::{Result, StorageError};
 use crate::storage::models::Message;
-use rusqlite::{named_params, Row};
+use rusqlite::{named_params, params, Row};
 
 impl Database {
     /// Store a new message
@@ -87,7 +87,10 @@ impl Database {
         })
     }
 
-    /// Get all messages for a specific game
+    /// Get all messages for a game in local insertion order (ascending `id`).
+    ///
+    /// Order reflects when rows were stored in this database, not `created_at`
+    /// (a wall-clock value kept for display/audit) and not peer-side order.
     pub fn get_messages_for_game(&self, game_id: &str) -> Result<Vec<Message>> {
         self.with_connection(|conn| {
             let mut stmt = conn.prepare(
@@ -95,7 +98,7 @@ impl Database {
                 SELECT id, game_id, message_type, content, signature, sender_peer_id, created_at
                 FROM messages 
                 WHERE game_id = ?1
-                ORDER BY created_at ASC
+                ORDER BY id ASC
                 "#,
             )?;
 
@@ -105,7 +108,11 @@ impl Database {
         })
     }
 
-    /// Get messages for a game with pagination
+    /// Get one page of a game's messages in ascending insertion (`id`) order.
+    ///
+    /// For an unchanged history, consecutive pages (offset += limit) are complete
+    /// and non-overlapping, and newly stored rows appear after existing ones.
+    /// Rows deleted between calls can shift later pages; no snapshot is held.
     pub fn get_messages_for_game_paginated(
         &self,
         game_id: &str,
@@ -118,21 +125,18 @@ impl Database {
                 SELECT id, game_id, message_type, content, signature, sender_peer_id, created_at
                 FROM messages 
                 WHERE game_id = ?1
-                ORDER BY created_at ASC
+                ORDER BY id ASC
                 LIMIT ?2 OFFSET ?3
                 "#,
             )?;
 
-            let message_iter = stmt.query_map(
-                [game_id, &limit.to_string(), &offset.to_string()],
-                message_from_row,
-            )?;
+            let message_iter = stmt.query_map(params![game_id, limit, offset], message_from_row)?;
             let messages = message_iter.collect::<std::result::Result<Vec<_>, _>>()?;
             Ok(messages)
         })
     }
 
-    /// Get messages by type for a specific game
+    /// Get messages by type for a game in local insertion order (ascending `id`).
     pub fn get_messages_by_type(&self, game_id: &str, message_type: &str) -> Result<Vec<Message>> {
         self.with_connection(|conn| {
             let mut stmt = conn.prepare(
@@ -140,7 +144,7 @@ impl Database {
                 SELECT id, game_id, message_type, content, signature, sender_peer_id, created_at
                 FROM messages 
                 WHERE game_id = ?1 AND message_type = ?2
-                ORDER BY created_at ASC
+                ORDER BY id ASC
                 "#,
             )?;
 
@@ -150,7 +154,7 @@ impl Database {
         })
     }
 
-    /// Get messages from a specific sender
+    /// Get messages from a sender for a game in local insertion order (ascending `id`).
     pub fn get_messages_from_sender(
         &self,
         game_id: &str,
@@ -162,7 +166,7 @@ impl Database {
                 SELECT id, game_id, message_type, content, signature, sender_peer_id, created_at
                 FROM messages 
                 WHERE game_id = ?1 AND sender_peer_id = ?2
-                ORDER BY created_at ASC
+                ORDER BY id ASC
                 "#,
             )?;
 
@@ -172,14 +176,15 @@ impl Database {
         })
     }
 
-    /// Get recent messages across all games (for debugging/monitoring)
+    /// Get the most recently stored messages across all games, newest first
+    /// (descending `id`), for debugging/monitoring.
     pub fn get_recent_messages(&self, limit: u32) -> Result<Vec<Message>> {
         self.with_connection(|conn| {
             let mut stmt = conn.prepare(
                 r#"
                 SELECT id, game_id, message_type, content, signature, sender_peer_id, created_at
                 FROM messages 
-                ORDER BY created_at DESC
+                ORDER BY id DESC
                 LIMIT ?1
                 "#,
             )?;

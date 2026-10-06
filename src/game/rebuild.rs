@@ -1,4 +1,7 @@
-//! Rebuild board state from chronologically ordered stored messages.
+//! Rebuild board state from stored messages in the order supplied.
+//!
+//! Callers pass rows in local insertion order from
+//! [`Database::get_messages_for_game`](crate::storage::Database::get_messages_for_game).
 //!
 //! Applies `"Move"` rows only, without verifying stored board-state hashes
 //! (those may be incorrect until clients send post-move hashes).
@@ -36,6 +39,10 @@ impl From<ChessError> for RebuildError {
 }
 
 /// Rebuild board and move history from stored messages.
+///
+/// Rows are applied in slice order; this function does not sort by `id` or
+/// `created_at`, or validate protocol sequencing. Explicit move sequencing
+/// belongs to Stage 2 (`ply`).
 ///
 /// Skips non-`Move` rows. Parses each move with the board's active color so
 /// castling resolves correctly for both sides. Fails on the first bad row.
@@ -133,6 +140,33 @@ mod tests {
         assert_eq!(history[1].to_string(), "e7e5");
         assert_eq!(history[2].to_string(), "g1f3");
         assert_eq!(board.active_color(), Color::Black);
+    }
+
+    #[test]
+    fn applies_rows_in_slice_order() {
+        // Both timestamp and id order disagree with the supplied move sequence.
+        let messages: Vec<_> = [("e2e4", 2, 3), ("e7e5", 3, 1), ("g1f3", 1, 2)]
+            .into_iter()
+            .map(|(mv, id, created_at)| {
+                let mut message =
+                    stored_message(StoredMessageType::Move.as_str(), &move_content(mv));
+                message.id = Some(id);
+                message.created_at = created_at;
+                message
+            })
+            .collect();
+
+        let (board, history) =
+            rebuild_board_from_stored_messages(&messages).expect("apply rows in slice order");
+
+        assert_eq!(
+            history.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["e2e4", "e7e5", "g1f3"]
+        );
+        assert_eq!(
+            board.to_fen(),
+            "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
+        );
     }
 
     #[test]
