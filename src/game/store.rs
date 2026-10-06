@@ -183,11 +183,15 @@ mod tests {
         let game_id = generate_game_id();
         seed_game(&database, &game_id);
 
+        let mut board = crate::chess::Board::new();
+        let chess_move =
+            crate::chess::Move::from_str_with_color("e2e4", board.active_color()).unwrap();
+        board.make_move(chess_move).unwrap();
         let mv = Move::new(
             game_id.clone(),
             1,
             "e2e4".to_string(),
-            "hash-e2e4".to_string(),
+            crate::messages::chess::hash_board_state(&board),
         );
         store_game_move_message(&database, &mv, "remote", "peer-3").expect("store move");
 
