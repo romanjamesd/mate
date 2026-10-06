@@ -663,7 +663,7 @@ async fn uncertain_delivery_converges_when_the_same_move_is_rerun() {
 }
 
 // =============================================================================
-// Identity and response verification (send_chess_move)
+// Identity and response verification (handle_move and send_chess_move)
 // =============================================================================
 
 fn move_for(game_id: &str) -> Move {
@@ -699,21 +699,24 @@ fn manager() -> NetworkManager {
 
 #[tokio::test]
 async fn correctly_signed_ack_from_another_identity_is_signer_mismatch() {
+    let (app, _dir) = test_app().await;
     let opponent = Arc::new(Identity::generate().unwrap());
     let impostor = Arc::new(Identity::generate().unwrap());
     let (listener, address) = listener().await;
-    let mv = move_for(&generate_game_id());
+    let game_id = seed_active_game(&app, opponent.peer_id().as_str(), &address);
+    let mv = prepared_move(&app, &game_id, "e2e4");
     let imp = Arc::clone(&impostor);
     let task = spawn_mock(
         listener,
         vec![serve(&opponent, move |mv: &Move| reply(&imp, ack_for(mv)))],
     );
 
-    let error = send(&manager(), &address, &opponent, &mv)
-        .await
-        .unwrap_err();
-    match error {
-        MoveSendError::Protocol(MoveProtocolError::SignerMismatch { expected, actual }) => {
+    let error = run_move(&app, &game_id, "e2e4").await.unwrap_err();
+    let CliError::MoveProtocolError { error, .. } = error else {
+        panic!("expected MoveProtocolError, got {error:?}");
+    };
+    match *error {
+        MoveProtocolError::SignerMismatch { expected, actual } => {
             assert_eq!(expected, opponent.peer_id().as_str());
             assert_eq!(actual, impostor.peer_id().as_str());
         }
@@ -721,14 +724,18 @@ async fn correctly_signed_ack_from_another_identity_is_signer_mismatch() {
     }
     // Terminal: the single session is all the mock serves; no retry was attempted.
     assert_eq!(mock_received(task).await, vec![mv]);
+    assert_eq!(local_moves(&app, &game_id), 0);
+    assert_eq!(pending_messages(&app).await, 0);
 }
 
 #[tokio::test]
 async fn unverifiable_responses_are_terminal_connection_errors() {
     for case in ["bad signature", "stale timestamp", "garbage frame"] {
+        let (app, _dir) = test_app().await;
         let opponent = Arc::new(Identity::generate().unwrap());
         let (listener, address) = listener().await;
-        let mv = move_for(&generate_game_id());
+        let game_id = seed_active_game(&app, opponent.peer_id().as_str(), &address);
+        let mv = prepared_move(&app, &game_id, "e2e4");
         let opp = Arc::clone(&opponent);
         let task = spawn_mock(
             listener,
@@ -745,10 +752,11 @@ async fn unverifiable_responses_are_terminal_connection_errors() {
             })],
         );
 
-        let error = send(&manager(), &address, &opponent, &mv)
-            .await
-            .unwrap_err();
-        let MoveSendError::Protocol(MoveProtocolError::Connection(connection)) = error else {
+        let error = run_move(&app, &game_id, "e2e4").await.unwrap_err();
+        let CliError::MoveProtocolError { error, .. } = error else {
+            panic!("{case}: expected MoveProtocolError, got {error:?}");
+        };
+        let MoveProtocolError::Connection(connection) = *error else {
             panic!("{case}: expected Protocol(Connection), got {error:?}");
         };
         match case {
@@ -769,6 +777,8 @@ async fn unverifiable_responses_are_terminal_connection_errors() {
             ),
         }
         assert_eq!(mock_received(task).await, vec![mv], "{case}");
+        assert_eq!(local_moves(&app, &game_id), 0, "{case}");
+        assert_eq!(pending_messages(&app).await, 0, "{case}");
     }
 }
 
@@ -823,6 +833,41 @@ async fn unexpected_identity_on_reconnect_stops_without_resending() {
 // =============================================================================
 // Delivery tracking
 // =============================================================================
+
+#[tokio::test]
+async fn failed_move_write_reports_may_have_been_sent() {
+    let opponent = Arc::new(Identity::generate().unwrap());
+    let (listener, address) = listener().await;
+    let mut mv = move_for(&generate_game_id());
+    // Force send_message's framing write to fail deterministically after the
+    // handshake. A TCP reset can instead race with a successful buffered write
+    // and exercise the receive-error path, leaving this regression untested.
+    mv.board_state_hash = "a".repeat(WireConfig::for_network().max_message_size);
+    let task = spawn_mock(listener, vec![serve(&opponent, |_| Reply::Drop)]);
+    let manager = manager();
+
+    let error = send(&manager, &address, &opponent, &mv).await.unwrap_err();
+    match error {
+        MoveSendError::Delivery {
+            may_have_been_sent,
+            source,
+        } => {
+            assert!(may_have_been_sent);
+            assert!(
+                matches!(
+                    source.downcast_ref::<ConnectionError>(),
+                    Some(ConnectionError::WireProtocol(
+                        WireProtocolError::MessageTooLarge { .. }
+                    ))
+                ),
+                "{source:?}"
+            );
+        }
+        other => panic!("expected Delivery, got {other:?}"),
+    }
+    assert!(mock_received(task).await.is_empty());
+    assert_eq!(manager.get_network_stats().await.total_pending_messages, 0);
+}
 
 #[tokio::test]
 async fn connection_failures_before_any_send_report_not_sent() {
