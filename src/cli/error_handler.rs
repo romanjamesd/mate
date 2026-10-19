@@ -741,6 +741,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wrapped_peer_identity_mismatch_keeps_typed_cli_diagnostics() {
+        let error = anyhow::Error::from(ConnectionError::PeerIdentityMismatch {
+            expected: "expected-peer-id".to_string(),
+            actual: "actual-peer-id".to_string(),
+        })
+        .context("Receive failed")
+        .context("Request failed");
+
+        let converted = cli_error_from_anyhow(error);
+        assert!(converted
+            .to_string()
+            .contains("Peer response was signed by an unexpected party"));
+        let CliError::Connection(ConnectionError::PeerIdentityMismatch { expected, actual }) =
+            converted
+        else {
+            panic!("wrapped mismatch type was lost: {converted:?}");
+        };
+        assert_eq!(expected, "expected-peer-id");
+        assert_eq!(actual, "actual-peer-id");
+    }
+
+    #[test]
     fn peer_identity_mismatch_preserves_diagnostics_and_formats_without_peer_ids() {
         let error = ConnectionError::PeerIdentityMismatch {
             expected: "expected-peer-id".to_string(),

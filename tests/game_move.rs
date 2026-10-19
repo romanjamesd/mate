@@ -712,6 +712,9 @@ async fn correctly_signed_ack_from_another_identity_is_signer_mismatch() {
     );
 
     let error = run_move(&app, &game_id, "e2e4").await.unwrap_err();
+    let diagnostic = error.to_string();
+    assert!(diagnostic.contains("was not saved locally and was not retried"));
+    assert!(diagnostic.contains("Your opponent may still have received it"));
     let CliError::MoveProtocolError { error, .. } = error else {
         panic!("expected MoveProtocolError, got {error:?}");
     };

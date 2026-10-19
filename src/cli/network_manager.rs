@@ -966,6 +966,23 @@ mod tests {
     use super::*;
     use crate::messages::chess::generate_game_id;
 
+    #[test]
+    fn peer_identity_mismatch_is_not_a_transport_failure_regardless_of_peer_ids() {
+        // Peer IDs are diagnostics, never input to the Move retry policy.
+        for (expected, actual) in [
+            ("expected-peer", "actual-peer"),
+            ("connection closed", "timeout"),
+            ("authentication", "protocol identity handshake"),
+        ] {
+            assert!(!is_transport_failure(
+                &ConnectionError::PeerIdentityMismatch {
+                    expected: expected.to_string(),
+                    actual: actual.to_string(),
+                }
+            ));
+        }
+    }
+
     #[tokio::test]
     async fn queued_moves_are_dropped_without_sending() {
         let manager = NetworkManager::new(Arc::new(Identity::generate().unwrap()));
