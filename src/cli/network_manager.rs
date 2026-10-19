@@ -286,6 +286,7 @@ fn is_transport_failure(error: &ConnectionError) -> bool {
         ConnectionError::ConnectionClosed | ConnectionError::Io(_) => true,
         ConnectionError::HandshakeFailed { .. }
         | ConnectionError::AuthenticationFailed { .. }
+        | ConnectionError::PeerIdentityMismatch { .. }
         | ConnectionError::InvalidSignature
         | ConnectionError::InvalidTimestamp => false,
     }
@@ -314,6 +315,12 @@ async fn exchange_move(
         }
     })?;
     let (response, signer) = connection.receive_message().await.map_err(|e| {
+        if let ConnectionError::PeerIdentityMismatch { expected, actual } = e {
+            return MoveExchangeFailure::Protocol(MoveProtocolError::SignerMismatch {
+                expected,
+                actual,
+            });
+        }
         if is_transport_failure(&e) {
             MoveExchangeFailure::Transport(e)
         } else {

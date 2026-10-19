@@ -340,6 +340,12 @@ fn connection_error_from_ref(error: &ConnectionError) -> CliError {
                 peer_id: peer_id.clone(),
             }
         }
+        ConnectionError::PeerIdentityMismatch { expected, actual } => {
+            ConnectionError::PeerIdentityMismatch {
+                expected: expected.clone(),
+                actual: actual.clone(),
+            }
+        }
         ConnectionError::ConnectionClosed => ConnectionError::ConnectionClosed,
         ConnectionError::InvalidSignature => ConnectionError::InvalidSignature,
         ConnectionError::InvalidTimestamp => ConnectionError::InvalidTimestamp,
@@ -534,6 +540,9 @@ fn format_connection_error(error: &ConnectionError) -> String {
         ConnectionError::AuthenticationFailed { peer_id: _ } => {
             "🔐 Authentication failed with peer\n   💡 Suggestion: The peer may be using different credentials. Ensure both players have compatible identities.".to_string()
         }
+        ConnectionError::PeerIdentityMismatch { .. } => {
+            "🔐 Peer response was signed by an unexpected party\n   💡 Suggestion: The address may point to a different peer than expected. Do not assume the request was undelivered.".to_string()
+        }
         ConnectionError::ConnectionClosed => {
             "🌐 Connection closed unexpectedly\n   💡 Suggestion: The peer may have disconnected. Try reconnecting to continue the game.".to_string()
         }
@@ -725,4 +734,35 @@ pub fn is_recoverable_error(error: &CliError) -> bool {
             | CliError::Storage(StorageError::DatabaseLocked { .. })
             | CliError::Chess(ChessError::InvalidMove(_))
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn peer_identity_mismatch_preserves_diagnostics_and_formats_without_peer_ids() {
+        let error = ConnectionError::PeerIdentityMismatch {
+            expected: "expected-peer-id".to_string(),
+            actual: "actual-peer-id".to_string(),
+        };
+        let converted = connection_error_from_ref(&error);
+        let CliError::Connection(ConnectionError::PeerIdentityMismatch { expected, actual }) =
+            converted
+        else {
+            panic!("mismatch type was lost: {converted:?}");
+        };
+        assert_eq!(expected, "expected-peer-id");
+        assert_eq!(actual, "actual-peer-id");
+        assert_eq!(
+            error.to_string(),
+            "Message signer actual-peer-id does not match connection peer expected-peer-id"
+        );
+
+        let formatted = format_connection_error(&error);
+        assert!(formatted.contains("Peer response was signed by an unexpected party"));
+        assert!(formatted.contains("Do not assume the request was undelivered"));
+        assert!(!formatted.contains(&expected));
+        assert!(!formatted.contains(&actual));
+    }
 }

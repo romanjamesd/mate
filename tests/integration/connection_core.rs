@@ -6,11 +6,137 @@
 
 use crate::common::test_helpers::test_server_database;
 use mate::crypto::Identity;
-use mate::messages::Message;
-use mate::network::{Client, Server};
+use mate::messages::wire::{FramedMessage, WireConfig};
+use mate::messages::{Message, SignedEnvelope};
+use mate::network::{Client, Connection, ConnectionError, Server};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
+
+/// Keep the peer's raw stream so tests can change signers after a real handshake.
+/// Both halves run together without detached tasks or timing assumptions.
+async fn authenticated_raw_peer(inbound: bool, peer: &Identity) -> (Connection, TcpStream) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let (client, server) = tokio::join!(
+        TcpStream::connect(listener.local_addr().unwrap()),
+        listener.accept()
+    );
+    let (local, mut raw) = if inbound {
+        (server.unwrap().0, client.unwrap())
+    } else {
+        (client.unwrap(), server.unwrap().0)
+    };
+    let mut connection = Connection::new(local, Arc::new(Identity::generate().unwrap())).await;
+    assert_eq!(connection.peer_identity(), None);
+    let framing = FramedMessage::new(WireConfig::default());
+    let handshake = async {
+        if inbound {
+            connection.handle_handshake_request().await
+        } else {
+            connection.handshake().await
+        }
+    };
+    let raw_handshake = async {
+        if inbound {
+            let request = Message::new_ping(42, format!("HANDSHAKE_REQUEST:{}", peer.peer_id()));
+            let envelope = SignedEnvelope::create(&request, peer, None).unwrap();
+            framing.write_message(&mut raw, &envelope).await.unwrap();
+            let response = framing.read_message(&mut raw).await.unwrap();
+            assert!(response.verify_signature());
+            assert_eq!(response.get_message().unwrap().get_nonce(), 42);
+        } else {
+            let request = framing.read_message(&mut raw).await.unwrap();
+            assert!(request.verify_signature());
+            let response = Message::new_pong(
+                request.get_message().unwrap().get_nonce(),
+                format!("HANDSHAKE_RESPONSE:{}", peer.peer_id()),
+            );
+            let envelope = SignedEnvelope::create(&response, peer, None).unwrap();
+            framing.write_message(&mut raw, &envelope).await.unwrap();
+        }
+    };
+    let (result, ()) = tokio::join!(handshake, raw_handshake);
+    assert_eq!(result.unwrap(), peer.peer_id().as_str());
+    assert_eq!(connection.peer_identity(), Some(peer.peer_id().as_str()));
+    (connection, raw)
+}
+
+#[tokio::test]
+async fn authenticated_connection_binds_verified_signer_in_both_directions() {
+    timeout(Duration::from_secs(10), async {
+        for inbound in [true, false] {
+            let peer = Identity::generate().unwrap();
+            let other = Identity::generate().unwrap();
+            let (mut connection, mut raw) = authenticated_raw_peer(inbound, &peer).await;
+            let framing = FramedMessage::new(WireConfig::default());
+            let message = Message::new_ping(123, "authenticated message".to_string());
+            let envelope = SignedEnvelope::create(&message, &peer, None).unwrap();
+            framing.write_message(&mut raw, &envelope).await.unwrap();
+            let (received, sender) = connection.receive_message().await.unwrap();
+            assert!(received.is_ping());
+            assert_eq!(received.get_nonce(), message.get_nonce());
+            assert_eq!(received.get_payload(), message.get_payload());
+            assert_eq!(sender, peer.peer_id().as_str());
+
+            let envelope = SignedEnvelope::create(&message, &other, None).unwrap();
+            framing.write_message(&mut raw, &envelope).await.unwrap();
+            match connection.receive_message().await.unwrap_err() {
+                ConnectionError::PeerIdentityMismatch { expected, actual } => {
+                    assert_eq!(expected, peer.peer_id().as_str());
+                    assert_eq!(actual, other.peer_id().as_str());
+                }
+                error => panic!("expected signer mismatch, got {error:?}"),
+            }
+            assert_eq!(connection.peer_identity(), Some(peer.peer_id().as_str()));
+            assert!(connection.is_authenticated());
+        }
+    })
+    .await
+    .expect("signer binding test timed out");
+}
+
+#[tokio::test]
+async fn untrusted_envelopes_retain_errors_before_signer_binding() {
+    timeout(Duration::from_secs(10), async {
+        for inbound in [true, false] {
+            for stale in [false, true] {
+                let peer = Identity::generate().unwrap();
+                let other = Identity::generate().unwrap();
+                let (mut connection, mut raw) = authenticated_raw_peer(inbound, &peer).await;
+                let message = Message::new_ping(123, "untrusted message".to_string());
+                let mut envelope = SignedEnvelope::create(
+                    &message,
+                    &other,
+                    if stale { Some(1_000) } else { None },
+                )
+                .unwrap();
+                if !stale {
+                    envelope.signature[0] ^= 0xff;
+                }
+                FramedMessage::new(WireConfig::default())
+                    .write_message(&mut raw, &envelope)
+                    .await
+                    .unwrap();
+                let error = connection.receive_message().await.unwrap_err();
+                if stale {
+                    assert!(
+                        matches!(error, ConnectionError::InvalidTimestamp),
+                        "{error:?}"
+                    );
+                } else {
+                    assert!(
+                        matches!(error, ConnectionError::InvalidSignature),
+                        "{error:?}"
+                    );
+                }
+                assert_eq!(connection.peer_identity(), Some(peer.peer_id().as_str()));
+            }
+        }
+    })
+    .await
+    .expect("envelope validation test timed out");
+}
 
 /// Test successful connection establishment with valid server address
 #[tokio::test]

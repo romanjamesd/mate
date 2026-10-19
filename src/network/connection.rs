@@ -17,6 +17,8 @@ pub enum ConnectionError {
     HandshakeFailed { reason: String },
     #[error("Authentication failed for peer: {peer_id}")]
     AuthenticationFailed { peer_id: String },
+    #[error("Message signer {actual} does not match connection peer {expected}")]
+    PeerIdentityMismatch { expected: String, actual: String },
     #[error("Connection closed unexpectedly")]
     ConnectionClosed,
     #[error("Invalid signature in received message")]
@@ -62,6 +64,8 @@ fn wire_error_from_framing(error: anyhow::Error) -> WireProtocolError {
 ///   - *Recovery*: Verify peer identity credentials and retry. Check for clock skew.
 /// - **`AuthenticationFailed`**: Cryptographic verification failure.
 ///   - *Recovery*: Check identity keys and peer certificates. May indicate malicious activity.
+/// - **`PeerIdentityMismatch`**: A verified message signer differs from the authenticated peer.
+///   - *Recovery*: Terminal for the caller: drop the connection and do not resend the request.
 /// - **`InvalidSignature`**: Message signature verification failed.
 ///   - *Recovery*: Do not retry. Log security event. May indicate tampering or wrong keys.
 /// - **`InvalidTimestamp`**: Message timestamp outside acceptable window.
@@ -233,6 +237,14 @@ impl Connection {
         Ok(())
     }
 
+    /// Receive a signed, fresh message and its verified sender.
+    ///
+    /// After handshake, every successful receive is bound to the authenticated
+    /// peer: the returned sender equals `peer_identity()`. Before authentication,
+    /// handshake routines must validate the payload against the verified sender.
+    /// A `PeerIdentityMismatch` is terminal: callers must drop the connection and
+    /// must not automatically resend the request. The peer binding is retained
+    /// on failure; clearing it would allow a later receive to bypass this check.
     #[instrument(level = "debug", skip(self), fields(peer_id = self.peer_id.as_deref()))]
     pub async fn receive_message(&mut self) -> Result<(Message, String), ConnectionError> {
         let receive_start = std::time::Instant::now();
@@ -273,6 +285,16 @@ impl Connection {
                 envelope.get_age_seconds()
             );
             return Err(ConnectionError::InvalidTimestamp);
+        }
+
+        if let Some(expected) = self.peer_id.as_deref() {
+            let actual = envelope.sender();
+            if actual != expected {
+                return Err(ConnectionError::PeerIdentityMismatch {
+                    expected: expected.to_owned(),
+                    actual: actual.to_owned(),
+                });
+            }
         }
 
         // Extract the message from the envelope
