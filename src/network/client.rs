@@ -6,7 +6,7 @@ use crate::messages::{
     },
     Message,
 };
-use crate::network::Connection;
+use crate::network::{Connection, ConnectionError};
 use anyhow::{Context, Result};
 use rand;
 use std::sync::Arc;
@@ -462,6 +462,9 @@ impl Client {
                         "Failed to receive echo response for message {} (nonce: {}): {}",
                         i, nonce, e
                     );
+                    if matches!(e, ConnectionError::PeerIdentityMismatch { .. }) {
+                        return Err(anyhow::Error::from(e).context("Echo session ended"));
+                    }
                     warn!("Echo session continuing with remaining messages");
                     continue;
                 }

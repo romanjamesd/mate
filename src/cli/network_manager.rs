@@ -14,6 +14,16 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
+/// Signer mismatches stay terminal even through contextual error wrappers.
+pub(super) fn is_peer_identity_mismatch(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<ConnectionError>(),
+            Some(ConnectionError::PeerIdentityMismatch { .. })
+        )
+    })
+}
+
 /// Configuration for network operations
 #[derive(Debug, Clone)]
 pub struct NetworkConfig {
@@ -434,7 +444,9 @@ impl NetworkManager {
             match result {
                 Ok(outcome) => return Ok(classify_invite_response(&invite, outcome)?),
                 Err(e) => {
-                    if FailureClass::classify_error(&e) == FailureClass::NoRetry {
+                    if is_peer_identity_mismatch(&e)
+                        || FailureClass::classify_error(&e) == FailureClass::NoRetry
+                    {
                         return Err(e);
                     }
                     last_error = Some(e);
@@ -475,6 +487,9 @@ impl NetworkManager {
             }
             Err(e) => {
                 warn!("Failed to send game acceptance to {}: {}", peer_address, e);
+                if is_peer_identity_mismatch(&e) {
+                    return Err(e);
+                }
                 // Store as pending message for when peer comes online
                 self.store_pending_message(peer_address, message, game_id)
                     .await?;
@@ -628,16 +643,20 @@ impl NetworkManager {
                                         "Failed to receive response from {} (attempt {}): {}",
                                         peer_address, attempt, e
                                     );
-                                    let failure_class =
-                                        FailureClass::classify_error(&anyhow::anyhow!("{}", e));
-                                    if failure_class == FailureClass::NoRetry {
-                                        return Err(anyhow::anyhow!("Receive failed: {}", e));
-                                    }
-                                    last_error = Some(anyhow::anyhow!("Receive failed: {}", e));
                                     // Mark connection as unhealthy
                                     self.update_connection_health(peer_address, false).await;
                                     // Remove the failed connection
                                     self.remove_connection(peer_address).await;
+                                    let mismatch =
+                                        matches!(e, ConnectionError::PeerIdentityMismatch { .. });
+                                    let error = anyhow::Error::from(e).context("Receive failed");
+                                    if mismatch
+                                        || FailureClass::classify_error(&error)
+                                            == FailureClass::NoRetry
+                                    {
+                                        return Err(error);
+                                    }
+                                    last_error = Some(error);
                                 }
                             }
                         }
@@ -822,7 +841,7 @@ impl NetworkManager {
 
                     // If we haven't exceeded max attempts, put it back in pending
                     let max_attempts = self.config.default_retry_strategy.max_attempts();
-                    if pending_msg.attempts < max_attempts {
+                    if !is_peer_identity_mismatch(&e) && pending_msg.attempts < max_attempts {
                         let mut pending = self.pending_messages.lock().await;
                         pending
                             .entry(peer_address.to_string())
@@ -965,6 +984,127 @@ impl std::fmt::Display for NetworkStats {
 mod tests {
     use super::*;
     use crate::messages::chess::generate_game_id;
+
+    #[test]
+    fn mismatch_detection_uses_typed_sources_through_contexts() {
+        for (expected, actual) in [
+            ("expected", "actual"),
+            ("authentication", "protocol identity handshake"),
+            ("timeout", "connection closed"),
+        ] {
+            let error = anyhow::Error::from(ConnectionError::PeerIdentityMismatch {
+                expected: expected.into(),
+                actual: actual.into(),
+            })
+            .context("inner")
+            .context("outer");
+            assert!(is_peer_identity_mismatch(&error));
+        }
+        assert!(!is_peer_identity_mismatch(&anyhow::anyhow!(
+            "Message signer actual does not match connection peer expected"
+        )));
+    }
+
+    #[tokio::test]
+    async fn decline_mismatch_is_terminal_and_pending_decline_is_not_requeued() {
+        use crate::messages::{wire::FramedMessage, SignedEnvelope};
+        use tokio::net::TcpListener;
+
+        for queued in [false, true] {
+            let manager = NetworkManager::with_config(
+                Arc::new(Identity::generate().unwrap()),
+                NetworkConfig {
+                    default_retry_strategy: RetryStrategy::Normal,
+                    ..NetworkConfig::default()
+                },
+            );
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap().to_string();
+            let peer = Identity::generate().unwrap();
+            let other = Identity::generate().unwrap();
+            let game_id = generate_game_id();
+            let message = Message::GameDecline(GameDecline::new_no_reason(game_id.clone()));
+            if queued {
+                manager
+                    .store_pending_message(&address, message.clone(), game_id.clone())
+                    .await
+                    .unwrap();
+            }
+            let operation = async {
+                if queued {
+                    assert_eq!(manager.send_pending_messages(&address).await.unwrap(), 0);
+                } else {
+                    let error = manager
+                        .send_message_with_retry(&address, message.clone(), &game_id)
+                        .await
+                        .unwrap_err();
+                    assert!(is_peer_identity_mismatch(&error));
+                    assert!(matches!(
+                        crate::cli::error_handler::cli_error_from_anyhow(error),
+                        crate::cli::error_handler::CliError::Connection(
+                            ConnectionError::PeerIdentityMismatch { .. }
+                        )
+                    ));
+                }
+                let stats = manager.get_network_stats().await;
+                assert_eq!(stats.total_pending_messages, 0);
+                assert_eq!(stats.healthy_connections, 0);
+            };
+            let remote = async {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let framed = FramedMessage::default();
+                let hello = framed
+                    .read_message(&mut stream)
+                    .await
+                    .unwrap()
+                    .get_message()
+                    .unwrap();
+                let response = Message::new_pong(
+                    hello.get_nonce(),
+                    format!("HANDSHAKE_RESPONSE:{}", peer.peer_id()),
+                );
+                framed
+                    .write_message(
+                        &mut stream,
+                        &SignedEnvelope::create(&response, &peer, None).unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                let request = framed
+                    .read_message(&mut stream)
+                    .await
+                    .unwrap()
+                    .get_message()
+                    .unwrap();
+                assert_eq!(
+                    serde_json::to_value(request).unwrap(),
+                    serde_json::to_value(&message).unwrap()
+                );
+                framed
+                    .write_message(
+                        &mut stream,
+                        &SignedEnvelope::create(&message, &other, None).unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert!(
+                    framed.read_message(&mut stream).await.is_err(),
+                    "failed connection must be dropped"
+                );
+            };
+            tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(operation, remote)
+            })
+            .await
+            .unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                    .await
+                    .is_err(),
+                "mismatch must not reconnect"
+            );
+        }
+    }
 
     #[test]
     fn peer_identity_mismatch_is_not_a_transport_failure_regardless_of_peer_ids() {

@@ -4,7 +4,8 @@ use crate::cli::display::{
 };
 use crate::cli::error_handler::{cli_error_from_anyhow, CliError, CliResult};
 use crate::cli::network_manager::{
-    GameAcceptOutcome, InviteOutcome, MoveSendError, MoveSendOutcome, NetworkManager,
+    is_peer_identity_mismatch, GameAcceptOutcome, InviteOutcome, MoveSendError, MoveSendOutcome,
+    NetworkManager,
 };
 use crate::cli::validation::{InputValidationUtils, InputValidator};
 use crate::crypto::Identity;
@@ -397,7 +398,9 @@ impl App {
             .map_err(|error| {
                 // Neither an uncertain delivery nor a protocol error authorizes
                 // a status write: an inbound acceptance may already be Active.
-                if error.downcast_ref::<ChessProtocolError>().is_some() {
+                if is_peer_identity_mismatch(&error)
+                    || error.downcast_ref::<ChessProtocolError>().is_some()
+                {
                     cli_error_from_anyhow(error)
                 } else {
                     CliError::UserError {
