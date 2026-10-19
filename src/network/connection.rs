@@ -17,6 +17,8 @@ pub enum ConnectionError {
     HandshakeFailed { reason: String },
     #[error("Authentication failed for peer: {peer_id}")]
     AuthenticationFailed { peer_id: String },
+    /// A fresh, valid envelope was signed by someone other than the authenticated
+    /// peer. Terminal: drop the connection without automatically resending.
     #[error("Message signer {actual} does not match connection peer {expected}")]
     PeerIdentityMismatch { expected: String, actual: String },
     #[error("Connection closed unexpectedly")]
@@ -45,15 +47,28 @@ fn wire_error_from_framing(error: anyhow::Error) -> WireProtocolError {
 /// maintains state about the authenticated peer and handles message serialization, transmission,
 /// and verification automatically.
 ///
+/// # Authentication Invariant
+///
+/// Once [`Self::peer_identity`] is `Some(A)`, every successful [`Self::receive_message`]
+/// returns a validly signed, fresh envelope's message with sender A. Before authentication,
+/// receives verify signatures and freshness but leave payload/sender validation to the
+/// handshake routines. Receiving an application message never establishes a peer binding.
+/// A signer mismatch returns [`ConnectionError::PeerIdentityMismatch`] before message
+/// deserialization, retains the binding to A, and never returns the rejected payload.
+///
 /// # Security Features
 ///
 /// - **Message Authentication**: All messages are automatically wrapped in `SignedEnvelope` with
 ///   cryptographic signatures. Invalid signatures are rejected automatically.
-/// - **Timestamp Validation**: Messages are validated for freshness (5-minute maximum age) to
-///   prevent replay attacks.
+/// - **Timestamp Validation**: Messages are validated for freshness (5-minute maximum age).
+///   This does not deduplicate envelopes within the accepted window.
 /// - **Handshake Protocol**: Bidirectional authentication ensures both peers verify each other's
 ///   identity before message exchange.
-/// - **Nonce-based Handshake**: Handshake uses random nonces to prevent replay attacks.
+/// - **Nonce Correlation**: The initiator checks that the handshake response echoes its nonce.
+///   Signer binding does not add broader handshake replay protection.
+/// - **Signer Binding**: All application envelopes, including invite, accept, decline, and Move
+///   responses, must be signed by the authenticated connection peer. Game authorization
+///   separately checks that this peer is the stored opponent.
 ///
 /// # Error Recovery Strategies
 ///
@@ -65,7 +80,11 @@ fn wire_error_from_framing(error: anyhow::Error) -> WireProtocolError {
 /// - **`AuthenticationFailed`**: Cryptographic verification failure.
 ///   - *Recovery*: Check identity keys and peer certificates. May indicate malicious activity.
 /// - **`PeerIdentityMismatch`**: A verified message signer differs from the authenticated peer.
-///   - *Recovery*: Terminal for the caller: drop the connection and do not resend the request.
+///   - *Recovery*: Terminal for the caller: drop the connection; do not automatically resend
+///     or queue the request. All CLI paths stop on this error, including interactive sessions.
+///     An untrusted response does not establish whether the peer received or committed the
+///     request. Inspect the game state and peer address before deciding on a manual retry.
+///     The receive failure retains the peer binding but does not shut down the socket itself.
 /// - **`InvalidSignature`**: Message signature verification failed.
 ///   - *Recovery*: Do not retry. Log security event. May indicate tampering or wrong keys.
 /// - **`InvalidTimestamp`**: Message timestamp outside acceptable window.
@@ -82,7 +101,7 @@ fn wire_error_from_framing(error: anyhow::Error) -> WireProtocolError {
 /// ## Performance Considerations
 /// - Monitor throughput metrics in debug logs to identify bottlenecks
 /// - Large message handling is automatic via wire protocol
-/// - Connection reuse is recommended for multiple messages to same peer
+/// - Reuse authenticated connections only while healthy; drop them after a terminal error
 ///
 /// # Example Usage
 ///
@@ -242,7 +261,9 @@ impl Connection {
     /// After handshake, every successful receive is bound to the authenticated
     /// peer: the returned sender equals `peer_identity()`. Before authentication,
     /// handshake routines must validate the payload against the verified sender.
-    /// A `PeerIdentityMismatch` is terminal: callers must drop the connection and
+    /// Signature and timestamp validation precede the peer comparison, so invalid
+    /// envelopes retain their existing error types rather than reporting a trusted signer.
+    /// A [`ConnectionError::PeerIdentityMismatch`] is terminal: callers must drop the connection and
     /// must not automatically resend the request. The peer binding is retained
     /// on failure; clearing it would allow a later receive to bypass this check.
     #[instrument(level = "debug", skip(self), fields(peer_id = self.peer_id.as_deref()))]
@@ -518,10 +539,11 @@ impl Connection {
         self.peer_id.as_deref()
     }
 
-    /// Close the connection gracefully
+    /// Clear the authenticated peer binding.
     ///
-    /// This method attempts to shutdown the TCP stream gracefully.
-    /// Note: The actual close operation is handled by dropping the TcpStream.
+    /// This method does not shut down the TCP stream; dropping the `Connection`
+    /// closes its socket. After a terminal receive error, drop the connection
+    /// rather than calling `close()` and continuing to receive without a binding.
     #[instrument(level = "debug", skip(self))]
     pub async fn close(&mut self) -> Result<(), ConnectionError> {
         info!("Closing connection to peer: {:?}", self.peer_id);

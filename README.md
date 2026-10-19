@@ -7,7 +7,7 @@ A fully decentralized peer-to-peer chess game with cryptographic security and of
 ### Core Gameplay
 - **True P2P Chess**: Play directly with peers without any central servers
 - **Offline-first Design**: All game data stored locally, sync when both players are online
-- **Cryptographic Integrity**: Every move is cryptographically signed with Ed25519, preventing tampering
+- **Message Authentication**: Move envelopes are signed with Ed25519 and verified on receipt
 - **Resilient Networking**: Games continue seamlessly despite network interruptions
 - **Cross-platform**: Works on macOS, Linux, and Windows
 
@@ -16,12 +16,12 @@ A fully decentralized peer-to-peer chess game with cryptographic security and of
 - Accept/decline invitations with color preferences
 - Multiple concurrent games with different opponents
 - Automatic game synchronization when peers reconnect
-- Complete move history with cryptographic proof
+- Local move history in ply order
 
 ### Security
 - Ed25519 digital signatures ensure move authenticity
 - Each player has a unique cryptographic identity
-- Tamper-proof game history
+- Received envelope signers are bound to the authenticated connection peer
 - No trusted third parties required
 
 ## Installation
@@ -150,13 +150,20 @@ Game: game_abc123
 - **No Central Server**: Players connect directly to each other
 - **Local Database**: SQLite stores all game state locally
 - **P2P Synchronization**: Games sync when both players are online
-- **Conflict Resolution**: Cryptographic signatures prevent cheating
+- **Message Verification**: Cryptographic signatures authenticate received envelopes
 
 ### Network Protocol
 - TCP connections with message framing
 - Ed25519 signatures on all moves
 - Automatic peer discovery on local networks
 - Manual peer address exchange for internet play
+
+Signed application envelopes must match the connection's authenticated peer.
+This includes invite, accept, and decline responses as well as Move responses.
+A signer mismatch is terminal on every CLI path: the connection is dropped and
+the request is not automatically retried or queued; interactive sessions end.
+An untrusted response does not prove the request was undelivered. Check the peer
+address and game state before deciding whether to retry manually.
 
 `Move` carries `game_id`, `ply`, `chess_move`, and `board_state_hash` in the
 signed payload. `ply` is a required one-based half-move number: White's first
@@ -185,8 +192,14 @@ recovery is not automatic.
 ### Security Model
 - Each player generates a unique Ed25519 keypair
 - All moves are signed with the player's private key
-- Game history is tamper-proof and independently verifiable
+- Signatures are verified on receipt; stored Move records currently use
+  `local`/`remote` signature placeholders and cannot independently prove the
+  original envelope signer
 - No trusted third parties or central authorities
+
+Signer binding does not add broader handshake replay protection or automatic
+recovery. Timestamp freshness checks do not deduplicate messages within the
+accepted window.
 
 ## Configuration
 

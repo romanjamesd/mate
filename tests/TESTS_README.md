@@ -134,6 +134,39 @@ cargo test -- --test-threads=1
 
 ## 📊 Test Coverage
 
+### Authenticated signer binding regressions
+
+Raw-socket peers complete a real handshake as A, then send a fresh, valid
+envelope signed by B. Ordinary `Connection::send_message` uses its fixed local
+identity, so it cannot construct this case. Socket operations are bounded by
+timeouts; a timeout is a failure, not evidence of rejection.
+
+| Boundary | Assertions | Location |
+| --- | --- | --- |
+| Connection receive | Both handshake directions accept A, reject B with expected/actual identities, and retain A's binding; signature and timestamp errors take precedence | [connection_core.rs](integration/connection_core.rs) |
+| Live server | New Moves and historical retries in Active/Completed games receive no application reply and leave complete game/message snapshots unchanged; legitimate A reconnections still receive correlated ACKs; stored-opponent authorization remains separate | [server_chess_handlers.rs](integration/server_chess_handlers.rs) |
+| Outbound Move | A mismatched ACK preserves signer diagnostics with one transmission, no local commit, and no pending entry | [game_move.rs](game_move.rs) |
+| Other receive callers | Invite/accept preserve pending state without queueing; Client echo/one-shot and interactive CLI terminate without resend or reconnect | [signer_mismatch.rs](signer_mismatch.rs) |
+| Retry and CLI errors | Decline mismatches are terminal and pending declines are not requeued; typed errors survive context wrappers; user-facing text hides peer IDs and preserves delivery uncertainty | [network_manager.rs](../src/cli/network_manager.rs), [error_handler.rs](../src/cli/error_handler.rs) |
+
+Run the focused suites from the repository root:
+
+```sh
+cargo test --test mod integration::connection_core::
+cargo test --test mod integration::server_chess_handlers::
+cargo test --test game_move
+cargo test --test signer_mismatch
+cargo test --lib cli::network_manager::tests::
+cargo test --lib cli::error_handler::tests::
+```
+
+`--test mod` selects the target containing the integration submodules;
+`game_move` and `signer_mismatch` are standalone targets. Network tests need
+localhost socket access. Bind permission errors are infrastructure failures.
+These tests cover signer binding and terminal mismatch handling, not broader
+handshake replay protection, full chess legality, stored signature verification,
+or automatic recovery.
+
 The test suite covers these essential areas from our test specification:
 
 | Test Area | Coverage | Location |
