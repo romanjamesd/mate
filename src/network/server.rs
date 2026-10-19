@@ -307,13 +307,12 @@ impl Server {
         let mut connection = Connection::new_with_config(stream, identity, wire_config).await;
 
         // Perform handshake
-        let peer_id = match connection.handle_handshake_request().await {
+        match connection.handle_handshake_request().await {
             Ok(peer_id) => {
                 info!(
                     "Handshake successful for connection {} with peer: {}",
                     connection_id, peer_id
                 );
-                peer_id
             }
             Err(e) => {
                 error!("Handshake failed for connection {}: {}", connection_id, e);
@@ -341,9 +340,11 @@ impl Server {
                                 connection_id
                             );
 
+                            // Connection verified the signature and bound this sender
+                            // to the authenticated connection peer.
                             match crate::network::handlers::dispatch(
                                 database.as_ref(),
-                                &peer_id,
+                                &sender,
                                 message,
                             ) {
                                 Ok(Some(response)) => {
@@ -507,6 +508,10 @@ mod tests {
         let loud = [
             ConnectionError::InvalidSignature,
             ConnectionError::InvalidTimestamp,
+            ConnectionError::PeerIdentityMismatch {
+                expected: "authenticated-peer".to_owned(),
+                actual: "unexpected-signer".to_owned(),
+            },
             WireProtocolError::corrupted_data("bad frame").into(),
             WireProtocolError::Io(std::io::ErrorKind::PermissionDenied.into()).into(),
         ];
