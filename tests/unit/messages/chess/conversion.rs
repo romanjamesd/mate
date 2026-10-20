@@ -22,7 +22,7 @@ mod tests {
         )
         .unwrap();
 
-        let message = create_move_message(&game_id, &chess_move, &board);
+        let message = create_move_message(&game_id, 1, &chess_move, &board);
 
         if let Message::Move(move_msg) = message {
             assert_eq!(move_msg.game_id, game_id);
@@ -44,7 +44,7 @@ mod tests {
         )
         .unwrap();
 
-        let message = create_move_message(&game_id, &chess_move, &board);
+        let message = create_move_message(&game_id, 1, &chess_move, &board);
 
         if let Message::Move(move_msg) = message {
             assert_eq!(move_msg.game_id, game_id);
@@ -66,7 +66,7 @@ mod tests {
             None,
         );
 
-        let message = create_move_message(&game_id, &chess_move, &board);
+        let message = create_move_message(&game_id, 1, &chess_move, &board);
 
         if let Message::Move(move_msg) = message {
             assert_eq!(move_msg.game_id, game_id);
@@ -97,8 +97,8 @@ mod tests {
         )
         .unwrap();
 
-        let message1 = create_move_message(&game_id, &chess_move, &board1);
-        let message2 = create_move_message(&game_id, &chess_move, &board2);
+        let message1 = create_move_message(&game_id, 1, &chess_move, &board1);
+        let message2 = create_move_message(&game_id, 1, &chess_move, &board2);
 
         if let (Message::Move(move_msg1), Message::Move(move_msg2)) = (message1, message2) {
             assert_eq!(move_msg1.chess_move, move_msg2.chess_move);
@@ -136,7 +136,7 @@ mod tests {
         let expected_strings = ["a1a8", "h2h4", "b7b8R"];
 
         for (chess_move, expected) in moves.iter().zip(expected_strings.iter()) {
-            let message = create_move_message(&game_id, chess_move, &board);
+            let message = create_move_message(&game_id, 1, chess_move, &board);
             if let Message::Move(move_msg) = message {
                 assert_eq!(move_msg.chess_move, *expected);
             } else {
@@ -320,7 +320,7 @@ mod tests {
         temp_board.make_move(chess_move).unwrap();
         let expected_hash = hash_board_state(&temp_board);
 
-        let move_msg = MessageMove::new(generate_game_id(), "e2e4".to_string(), expected_hash);
+        let move_msg = MessageMove::new(generate_game_id(), 1, "e2e4".to_string(), expected_hash);
 
         let result = apply_move_from_message(&mut board, &move_msg);
 
@@ -335,6 +335,7 @@ mod tests {
 
         let move_msg = MessageMove::new(
             generate_game_id(),
+            1,
             "e7e8Q".to_string(),
             hash_board_state(&board),
         );
@@ -355,6 +356,7 @@ mod tests {
 
         let move_msg = MessageMove::new(
             generate_game_id(),
+            1,
             "invalid-move".to_string(),
             hash_board_state(&board),
         );
@@ -374,6 +376,7 @@ mod tests {
 
         let move_msg = MessageMove::new(
             generate_game_id(),
+            1,
             "e2e4".to_string(),
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
         );
@@ -395,6 +398,7 @@ mod tests {
 
         let move_msg = MessageMove::new(
             generate_game_id(),
+            1,
             "invalid".to_string(),
             "wrong_hash".to_string(),
         );
@@ -470,6 +474,7 @@ mod tests {
         let game_id = generate_game_id();
         let move_msg = MessageMove::new(
             game_id.clone(),
+            1,
             "e2e4".to_string(),
             hash_board_state(&Board::new()),
         );
@@ -588,7 +593,7 @@ mod tests {
 
             if should_be_valid {
                 if let Ok(chess_move) = result {
-                    let message = create_move_message(&game_id, &chess_move, &board);
+                    let message = create_move_message(&game_id, 1, &chess_move, &board);
                     assert!(matches!(message, Message::Move(_)));
                 }
             } else {

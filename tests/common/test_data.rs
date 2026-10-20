@@ -48,3 +48,13 @@ pub async fn write_multiple_messages_to_buffer(messages: &[(SignedEnvelope, Mess
 
     stream.get_written_data().to_vec()
 }
+
+/// Acknowledgment fixture derived from a complete sample move payload.
+pub fn move_ack(game_id: String, ply: u32) -> mate::messages::chess::MoveAck {
+    mate::messages::chess::MoveAck::for_move(&mate::messages::chess::Move::new(
+        game_id,
+        ply,
+        "e2e4".into(),
+        "0".repeat(64),
+    ))
+}

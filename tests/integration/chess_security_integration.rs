@@ -23,7 +23,7 @@ use mate::messages::chess::{
         ChessRateLimiter, SecurityViolation, MAX_FEN_LENGTH, MAX_MOVE_HISTORY_SIZE,
         MAX_MOVE_NOTATION_LENGTH, MAX_REASON_LENGTH,
     },
-    GameAccept, GameDecline, GameInvite, Move, MoveAck, SyncRequest, SyncResponse,
+    GameAccept, GameDecline, GameInvite, Move, SyncRequest, SyncResponse,
 };
 use mate::messages::types::Message;
 
@@ -304,6 +304,7 @@ mod attack_simulation_tests {
             // Chess move with SQL injection attempt
             Message::Move(Move::new(
                 game_id.clone(),
+                1,
                 "'; DROP TABLE games; --".to_string(),
                 "tampered_hash_value".to_string(),
             )),
@@ -362,6 +363,7 @@ mod security_pipeline_integration_tests {
 
         let valid_message = Message::Move(Move::new(
             valid_game_id.clone(),
+            1,
             "e2e4".to_string(),
             valid_hash,
         ));
@@ -372,7 +374,8 @@ mod security_pipeline_integration_tests {
 
         // Test message with security violations is caught at each stage
         let malicious_message = Message::Move(Move::new(
-            "malicious<script>".to_string(),       // Invalid game ID
+            "malicious<script>".to_string(), // Invalid game ID
+            1,
             "'; DROP TABLE moves; --".to_string(), // SQL injection in move
             "tampered_hash".to_string(),           // Invalid hash
         ));
@@ -398,6 +401,7 @@ mod security_pipeline_integration_tests {
                 "Chess move injection attempt",
                 Message::Move(Move::new(
                     generate_game_id(),
+                    1,
                     "<script>alert(1)</script>".to_string(),
                     hash_board_state(&Board::new()),
                 )),
@@ -517,7 +521,7 @@ mod performance_impact_tests {
         let board = Board::new();
         let hash = hash_board_state(&board);
 
-        let test_message = Message::Move(Move::new(game_id, "e2e4".to_string(), hash));
+        let test_message = Message::Move(Move::new(game_id, 1, "e2e4".to_string(), hash));
 
         // Measure baseline message validation time
         let baseline_start = Instant::now();
@@ -861,16 +865,14 @@ mod compliance_verification_tests {
                 "Move",
                 Message::Move(Move::new(
                     game_id.clone(),
+                    1,
                     "e2e4".to_string(),
                     valid_hash.clone(),
                 )),
             ),
             (
                 "MoveAck",
-                Message::MoveAck(MoveAck::new_with_move_id(
-                    game_id.clone(),
-                    "move-1".to_string(),
-                )),
+                Message::MoveAck(crate::common::test_data::move_ack(game_id.clone(), 1)),
             ),
             (
                 "SyncRequest",

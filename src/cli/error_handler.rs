@@ -1,4 +1,5 @@
 use crate::chess::ChessError;
+use crate::cli::network_manager::MoveProtocolError;
 use crate::cli::validation::ValidationError;
 use crate::game::{GameOpsError, MoveProcessingError};
 use crate::messages::chess::ChessProtocolError;
@@ -22,6 +23,37 @@ pub enum CliError {
     Protocol(ChessProtocolError),
     /// A correlated remote refusal of a game acceptance.
     GameAcceptanceRejected { reason: Option<String> },
+    /// A correlated remote refusal of a move; nothing was saved locally.
+    MoveRejected {
+        game_id: String,
+        ply: u32,
+        notation: String,
+        reason: Option<String>,
+    },
+    /// The move response or peer identity failed validation; nothing was
+    /// saved locally and the move was not retried.
+    MoveProtocolError {
+        game_id: String,
+        ply: u32,
+        notation: String,
+        error: Box<MoveProtocolError>,
+    },
+    /// No trustworthy response arrived; the opponent may or may not have the move.
+    MoveDeliveryUncertain {
+        game_id: String,
+        ply: u32,
+        notation: String,
+        /// False only when no send was attempted by this invocation.
+        may_have_been_sent: bool,
+        reason: String,
+    },
+    /// The opponent acknowledged the move but the local commit failed.
+    MoveRemoteCommittedLocalFailed {
+        game_id: String,
+        ply: u32,
+        notation: String,
+        reason: String,
+    },
     /// Wire protocol error
     Wire(WireProtocolError),
     /// Input validation error
@@ -64,6 +96,56 @@ impl fmt::Display for CliError {
                 reason
                     .as_deref()
                     .unwrap_or("the opponent did not provide a reason")
+            ),
+            CliError::MoveRejected {
+                game_id,
+                ply,
+                notation,
+                reason,
+            } => {
+                let reason = reason
+                    .as_deref()
+                    .unwrap_or("the opponent did not provide a reason");
+                let suggestion = if reason.starts_with("ply gap") || reason.starts_with("move conflict")
+                {
+                    format!("Your move history and your opponent's disagree. Check 'mate board --game-id {game_id}' and try again once both histories agree.")
+                } else if reason.contains("temporarily unavailable") {
+                    format!("Your opponent could not process the move right now. Re-run 'mate move {notation} --game-id {game_id}'.")
+                } else {
+                    format!("Check 'mate board --game-id {game_id}' for the current position.")
+                };
+                write!(
+                    f,
+                    "❌ Opponent rejected move {ply} ('{notation}'): {reason}\n   The move was not saved locally.\n   💡 Suggestion: {suggestion}"
+                )
+            }
+            CliError::MoveProtocolError {
+                game_id,
+                ply,
+                notation,
+                error,
+            } => write!(
+                f,
+                "🔒 Move {ply} ('{notation}') was not confirmed: {error}\n   The response could not be trusted, so the move was not saved locally and was not retried. Your opponent may still have received it.\n   💡 Suggestion: Check that game {game_id} is dialing the right opponent, then compare 'mate history --game-id {game_id}' with your opponent before moving again."
+            ),
+            CliError::MoveDeliveryUncertain {
+                game_id,
+                ply,
+                notation,
+                reason,
+                ..
+            } => write!(
+                f,
+                "⚠️  Move {ply} ('{notation}') may or may not have reached your opponent: {reason}\n   It was not saved locally.\n   💡 Suggestion: If 'mate history --game-id {game_id}' still shows no move {ply}, re-run 'mate move {notation} --game-id {game_id}' once your opponent is reachable. Resending the same move is safe: if it already arrived, your opponent acknowledges it again and it is saved here. If your local history has changed, check 'mate board --game-id {game_id}' before moving."
+            ),
+            CliError::MoveRemoteCommittedLocalFailed {
+                game_id,
+                ply,
+                notation,
+                reason,
+            } => write!(
+                f,
+                "❌ Your opponent accepted move {ply} ('{notation}'), but it could not be saved locally: {reason}\n   💡 Suggestion: Check 'mate board --game-id {game_id}'. If your local history still ends before move {ply}, fix the problem and re-run 'mate move {notation} --game-id {game_id}'; your opponent will acknowledge the same move again."
             ),
             CliError::Wire(e) => write!(f, "{}", format_wire_error(e)),
             CliError::InvalidInput {
@@ -156,6 +238,10 @@ impl From<ConnectionError> for CliError {
 impl From<MoveProcessingError> for CliError {
     fn from(err: MoveProcessingError) -> Self {
         match err {
+            MoveProcessingError::Commit(e) => CliError::UserError {
+                message: e.to_string(),
+                suggestion: None,
+            },
             MoveProcessingError::GameOps(e) => CliError::GameOps(e),
             MoveProcessingError::Chess(e) => CliError::Chess(e),
             MoveProcessingError::InvalidMove(msg) => {
@@ -252,6 +338,12 @@ fn connection_error_from_ref(error: &ConnectionError) -> CliError {
         ConnectionError::AuthenticationFailed { peer_id } => {
             ConnectionError::AuthenticationFailed {
                 peer_id: peer_id.clone(),
+            }
+        }
+        ConnectionError::PeerIdentityMismatch { expected, actual } => {
+            ConnectionError::PeerIdentityMismatch {
+                expected: expected.clone(),
+                actual: actual.clone(),
             }
         }
         ConnectionError::ConnectionClosed => ConnectionError::ConnectionClosed,
@@ -365,6 +457,7 @@ impl From<anyhow::Error> for CliError {
 /// Format game operations errors with user-friendly messages
 fn format_game_ops_error(error: &GameOpsError) -> String {
     match error {
+        GameOpsError::Chronology(error) => format!("Stored move history is invalid: {error}"),
         GameOpsError::NoCurrentGame => {
             "🎮 No active games found.\n   💡 Suggestion: Start a new game with 'mate invite <address>' or use --game-id to specify a game.".to_string()
         }
@@ -446,6 +539,9 @@ fn format_connection_error(error: &ConnectionError) -> String {
         }
         ConnectionError::AuthenticationFailed { peer_id: _ } => {
             "🔐 Authentication failed with peer\n   💡 Suggestion: The peer may be using different credentials. Ensure both players have compatible identities.".to_string()
+        }
+        ConnectionError::PeerIdentityMismatch { .. } => {
+            "🔐 Peer response was signed by an unexpected party\n   💡 Suggestion: The address may point to a different peer than expected. Do not assume the request was undelivered.".to_string()
         }
         ConnectionError::ConnectionClosed => {
             "🌐 Connection closed unexpectedly\n   💡 Suggestion: The peer may have disconnected. Try reconnecting to continue the game.".to_string()
@@ -638,4 +734,57 @@ pub fn is_recoverable_error(error: &CliError) -> bool {
             | CliError::Storage(StorageError::DatabaseLocked { .. })
             | CliError::Chess(ChessError::InvalidMove(_))
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrapped_peer_identity_mismatch_keeps_typed_cli_diagnostics() {
+        let error = anyhow::Error::from(ConnectionError::PeerIdentityMismatch {
+            expected: "expected-peer-id".to_string(),
+            actual: "actual-peer-id".to_string(),
+        })
+        .context("Receive failed")
+        .context("Request failed");
+
+        let converted = cli_error_from_anyhow(error);
+        assert!(converted
+            .to_string()
+            .contains("Peer response was signed by an unexpected party"));
+        let CliError::Connection(ConnectionError::PeerIdentityMismatch { expected, actual }) =
+            converted
+        else {
+            panic!("wrapped mismatch type was lost: {converted:?}");
+        };
+        assert_eq!(expected, "expected-peer-id");
+        assert_eq!(actual, "actual-peer-id");
+    }
+
+    #[test]
+    fn peer_identity_mismatch_preserves_diagnostics_and_formats_without_peer_ids() {
+        let error = ConnectionError::PeerIdentityMismatch {
+            expected: "expected-peer-id".to_string(),
+            actual: "actual-peer-id".to_string(),
+        };
+        let converted = connection_error_from_ref(&error);
+        let CliError::Connection(ConnectionError::PeerIdentityMismatch { expected, actual }) =
+            converted
+        else {
+            panic!("mismatch type was lost: {converted:?}");
+        };
+        assert_eq!(expected, "expected-peer-id");
+        assert_eq!(actual, "actual-peer-id");
+        assert_eq!(
+            error.to_string(),
+            "Message signer actual-peer-id does not match connection peer expected-peer-id"
+        );
+
+        let formatted = format_connection_error(&error);
+        assert!(formatted.contains("Peer response was signed by an unexpected party"));
+        assert!(formatted.contains("Do not assume the request was undelivered"));
+        assert!(!formatted.contains(&expected));
+        assert!(!formatted.contains(&actual));
+    }
 }

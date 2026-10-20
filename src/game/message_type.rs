@@ -100,7 +100,7 @@ mod tests {
         );
         assert_eq!(
             StoredMessageType::Move.as_str(),
-            Message::new_move(game_id, "e2e4".to_string(), "hash".to_string()).message_type()
+            Message::new_move(game_id, 1, "e2e4".to_string(), "hash".to_string()).message_type()
         );
     }
 

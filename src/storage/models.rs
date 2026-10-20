@@ -131,3 +131,16 @@ pub struct TimeControl {
     pub initial_time_ms: u64,
     pub increment_ms: u64,
 }
+
+/// Raw move row, ordered by protocol ply rather than insertion time.
+/// The game layer validates the nullable, signed column and its payload together.
+#[derive(Debug, Clone)]
+pub struct StoredMove {
+    pub id: i64,
+    pub game_id: String,
+    pub ply: Option<i64>,
+    pub content: String,
+    pub signature: String,
+    pub sender_peer_id: String,
+    pub created_at: i64,
+}

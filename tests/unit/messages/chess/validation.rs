@@ -366,7 +366,7 @@ mod board_hash_format_validation_tests {
 
         // Note: The actual validation function is private, so we test through message validation
         for hash in valid_hashes {
-            let move_msg = Move::new(generate_game_id(), "e2e4".to_string(), hash.to_string());
+            let move_msg = Move::new(generate_game_id(), 1, "e2e4".to_string(), hash.to_string());
             // The validation should accept properly formatted hashes
             // (though they may fail board verification)
             // For Move messages, only format validation is done, not board state verification
@@ -400,7 +400,7 @@ mod board_hash_format_validation_tests {
         ];
 
         for hash in invalid_hashes {
-            let move_msg = Move::new(generate_game_id(), "e2e4".to_string(), hash.to_string());
+            let move_msg = Move::new(generate_game_id(), 1, "e2e4".to_string(), hash.to_string());
             assert!(
                 matches!(
                     validate_move_message(&move_msg),
@@ -425,7 +425,7 @@ mod board_hash_format_validation_tests {
         ];
 
         for hash in invalid_hashes {
-            let move_msg = Move::new(generate_game_id(), "e2e4".to_string(), hash.to_string());
+            let move_msg = Move::new(generate_game_id(), 1, "e2e4".to_string(), hash.to_string());
             assert!(
                 matches!(
                     validate_move_message(&move_msg),
@@ -447,7 +447,7 @@ mod board_hash_format_validation_tests {
         ];
 
         for hash in mixed_case_hashes {
-            let move_msg = Move::new(generate_game_id(), "e2e4".to_string(), hash.to_string());
+            let move_msg = Move::new(generate_game_id(), 1, "e2e4".to_string(), hash.to_string());
             // The format should be valid (though verification may fail)
             match validate_move_message(&move_msg) {
                 Ok(_) => {
@@ -478,7 +478,7 @@ mod board_hash_format_validation_tests {
         ];
 
         for hash in hashes_with_whitespace {
-            let move_msg = Move::new(generate_game_id(), "e2e4".to_string(), hash.to_string());
+            let move_msg = Move::new(generate_game_id(), 1, "e2e4".to_string(), hash.to_string());
             // Whitespace-trimmed hash should be valid format
             match validate_move_message(&move_msg) {
                 Ok(_) => {
@@ -631,12 +631,18 @@ mod message_specific_validation_tests {
         let valid_hash = hash_board_state(&board);
 
         // Valid move
-        let valid_move = Move::new(generate_game_id(), "e2e4".to_string(), valid_hash.clone());
+        let valid_move = Move::new(
+            generate_game_id(),
+            1,
+            "e2e4".to_string(),
+            valid_hash.clone(),
+        );
         assert!(validate_move_message(&valid_move).is_ok());
 
         // Invalid game ID
         let invalid_game_id_move = Move::new(
             "not-a-uuid".to_string(),
+            1,
             "e2e4".to_string(),
             valid_hash.clone(),
         );
@@ -648,6 +654,7 @@ mod message_specific_validation_tests {
         // Invalid chess move
         let invalid_chess_move = Move::new(
             generate_game_id(),
+            1,
             "invalid".to_string(),
             valid_hash.clone(),
         );
@@ -659,6 +666,7 @@ mod message_specific_validation_tests {
         // Invalid hash format
         let invalid_hash_move = Move::new(
             generate_game_id(),
+            1,
             "e2e4".to_string(),
             "invalid-hash".to_string(),
         );
@@ -671,6 +679,7 @@ mod message_specific_validation_tests {
         let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
         let _wrong_hash_move = Move::new(
             generate_game_id(),
+            1,
             "e2e4".to_string(),
             wrong_hash.to_string(),
         );
@@ -679,41 +688,37 @@ mod message_specific_validation_tests {
 
     #[test]
     fn test_move_ack_validation() {
-        // Valid acks
-        let valid_ack = MoveAck::new(generate_game_id(), None);
+        let valid_ack = crate::common::test_data::move_ack(generate_game_id(), 1);
         assert!(validate_move_ack(&valid_ack).is_ok());
-
-        let valid_ack_with_id = MoveAck::new(generate_game_id(), Some("move-123".to_string()));
-        assert!(validate_move_ack(&valid_ack_with_id).is_ok());
-
-        // Invalid game ID
-        let invalid_ack = MoveAck::new("not-a-uuid".to_string(), None);
+        let invalid_ack = crate::common::test_data::move_ack("not-a-uuid".to_string(), 1);
         assert!(matches!(
             validate_move_ack(&invalid_ack),
             Err(ValidationError::InvalidGameId(_))
         ));
-
-        // Empty move ID should be None instead
-        let empty_move_id_ack = MoveAck::new(generate_game_id(), Some("".to_string()));
+        let mut zero_ply = valid_ack.clone();
+        zero_ply.ply = 0;
         assert!(matches!(
-            validate_move_ack(&empty_move_id_ack),
+            validate_move_ack(&zero_ply),
             Err(ValidationError::InvalidMessageFormat(_))
         ));
-
-        // Too long move ID
-        let long_move_id = "a".repeat(65);
-        let long_move_id_ack = MoveAck::new(generate_game_id(), Some(long_move_id));
-        assert!(matches!(
-            validate_move_ack(&long_move_id_ack),
-            Err(ValidationError::InvalidMessageFormat(_))
-        ));
-
-        // Invalid characters in move ID
-        let invalid_char_move_id = MoveAck::new(generate_game_id(), Some("move@123".to_string()));
-        assert!(matches!(
-            validate_move_ack(&invalid_char_move_id),
-            Err(ValidationError::InvalidMessageFormat(_))
-        ));
+        for digest in [
+            "".into(),
+            "a".repeat(63),
+            "a".repeat(65),
+            "A".repeat(64),
+            "g".repeat(64),
+            " ".repeat(64),
+            format!(" {}", "a".repeat(64)),
+        ] {
+            let ack = MoveAck {
+                move_digest: digest,
+                ..valid_ack.clone()
+            };
+            assert!(matches!(
+                validate_move_ack(&ack),
+                Err(ValidationError::InvalidMessageFormat(_))
+            ));
+        }
     }
 
     #[test]
@@ -844,7 +849,7 @@ mod message_specific_validation_tests {
         let minimal_decline = GameDecline::new(generate_game_id(), Some("No".to_string()));
         assert!(validate_game_decline(&minimal_decline).is_ok());
 
-        let minimal_ack = MoveAck::new(generate_game_id(), Some("1".to_string()));
+        let minimal_ack = crate::common::test_data::move_ack(generate_game_id(), 1);
         assert!(validate_move_ack(&minimal_ack).is_ok());
     }
 
@@ -890,8 +895,8 @@ mod integration_validation_tests {
         // Create messages that reference each other
         let invite = GameInvite::new(game_id.clone(), Some(Color::White));
         let accept = GameAccept::new(game_id.clone(), Color::Black);
-        let move_msg = Move::new(game_id.clone(), "e2e4".to_string(), hash.clone());
-        let ack = MoveAck::new(game_id.clone(), Some("move-1".to_string()));
+        let move_msg = Move::new(game_id.clone(), 1, "e2e4".to_string(), hash.clone());
+        let ack = MoveAck::for_move(&move_msg);
         let sync_req = SyncRequest::new(game_id.clone());
         let sync_resp = SyncResponse::new(
             game_id.clone(),
@@ -921,10 +926,11 @@ mod integration_validation_tests {
         let decline = GameDecline::new(invalid_game_id.to_string(), None);
         let move_msg = Move::new(
             invalid_game_id.to_string(),
+            1,
             "e2e4".to_string(),
             "valid".repeat(16),
         );
-        let ack = MoveAck::new(invalid_game_id.to_string(), None);
+        let ack = crate::common::test_data::move_ack(invalid_game_id.to_string(), 1);
         let sync_req = SyncRequest::new(invalid_game_id.to_string());
         let sync_resp = SyncResponse::new(
             invalid_game_id.to_string(),
@@ -976,8 +982,13 @@ mod integration_validation_tests {
             Message::GameInvite(GameInvite::new(game_id.clone(), Some(Color::White))),
             Message::GameAccept(GameAccept::new(game_id.clone(), Color::Black)),
             Message::GameDecline(GameDecline::new(game_id.clone(), Some("Busy".to_string()))),
-            Message::Move(Move::new(game_id.clone(), "e2e4".to_string(), hash.clone())),
-            Message::MoveAck(MoveAck::new(game_id.clone(), Some("move-1".to_string()))),
+            Message::Move(Move::new(
+                game_id.clone(),
+                1,
+                "e2e4".to_string(),
+                hash.clone(),
+            )),
+            Message::MoveAck(crate::common::test_data::move_ack(game_id.clone(), 1)),
             Message::SyncRequest(SyncRequest::new(game_id.clone())),
             Message::SyncResponse(SyncResponse::new(
                 game_id.clone(),
@@ -1001,6 +1012,7 @@ mod integration_validation_tests {
             Message::GameAccept(GameAccept::new("invalid".to_string(), Color::White)),
             Message::Move(Move::new(
                 game_id.clone(),
+                1,
                 "invalid-move".to_string(),
                 hash.clone(),
             )),
@@ -1042,7 +1054,7 @@ mod integration_validation_tests {
 
         let invite = GameInvite::new(game_id.clone(), Some(Color::White));
         let accept = GameAccept::new(game_id.clone(), Color::Black);
-        let move_msg = Move::new(game_id.clone(), "e2e4".to_string(), hash.clone());
+        let move_msg = Move::new(game_id.clone(), 1, "e2e4".to_string(), hash.clone());
         let sync_resp = SyncResponse::new(
             game_id.clone(),
             board.to_fen(),
@@ -1087,6 +1099,7 @@ mod integration_validation_tests {
 
         let hash_error = validate_move_message(&Move::new(
             generate_game_id(),
+            1,
             "e2e4".to_string(),
             "invalid-hash".to_string(),
         ))
@@ -1159,10 +1172,11 @@ mod integration_validation_tests {
         let _ = validate_game_decline(&GameDecline::new(game_id.clone(), None));
         let _ = validate_move_message(&Move::new(
             game_id.clone(),
+            1,
             "e2e4".to_string(),
             hash.clone(),
         ));
-        let _ = validate_move_ack(&MoveAck::new(game_id.clone(), None));
+        let _ = validate_move_ack(&crate::common::test_data::move_ack(game_id.clone(), 1));
         let _ = validate_sync_request(&SyncRequest::new(game_id.clone()));
         let _ = validate_sync_response(&SyncResponse::new(game_id, board.to_fen(), vec![], hash));
     }

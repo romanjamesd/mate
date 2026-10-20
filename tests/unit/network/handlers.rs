@@ -39,8 +39,11 @@ fn seed_active_game(db: &Database, peer_id: &str) -> String {
 }
 
 fn sample_move(game_id: String) -> Message {
-    let board_hash = hash_board_state(&Board::new());
-    Message::new_move(game_id, "e2e4".to_string(), board_hash)
+    let mut board = Board::new();
+    let mv = ChessMove::from_str_with_color("e2e4", board.active_color()).unwrap();
+    board.make_move(mv).unwrap();
+    let board_hash = hash_board_state(&board);
+    Message::new_move(game_id, 1, "e2e4".to_string(), board_hash)
 }
 
 #[test]
@@ -616,7 +619,7 @@ fn dispatch_move_ack_and_sync_response_return_no_reply() {
     let board_hash = hash_board_state(&board);
 
     let no_reply = [
-        Message::new_move_ack(game_id.clone(), None),
+        Message::MoveAck(crate::common::test_data::move_ack(game_id.clone(), 1)),
         Message::new_sync_response(game_id, board.to_fen(), Vec::new(), board_hash),
     ];
 
@@ -759,13 +762,16 @@ fn dispatch_move_acks_and_persists() {
     let game_id = seed_active_game(db.as_ref(), "peer-a");
     let mv = sample_move(game_id.clone());
 
-    let result = dispatch(db.as_ref(), "peer-a", mv).expect("move dispatch");
+    let result = dispatch(db.as_ref(), "peer-a", mv.clone()).expect("move dispatch");
     let response = result.expect("Move should produce a reply");
 
     match response {
         Message::MoveAck(ack) => {
             assert_eq!(ack.game_id, game_id);
-            assert!(ack.move_id.is_none());
+            let Message::Move(ref payload) = mv else {
+                panic!("expected Move");
+            };
+            assert_eq!(ack, mate::messages::chess::MoveAck::for_move(payload));
         }
         other => panic!("expected MoveAck, got {other:?}"),
     }
@@ -794,6 +800,11 @@ fn dispatch_move_idempotent_for_identical_payload() {
     assert!(
         matches!(second, Some(Message::MoveAck(_))),
         "identical Move retry should MoveAck"
+    );
+
+    assert_eq!(
+        serde_json::to_string(&first.unwrap()).unwrap(),
+        serde_json::to_string(&second.unwrap()).unwrap()
     );
 
     let messages = db.get_messages_for_game(&game_id).expect("messages");
@@ -881,6 +892,7 @@ fn dispatch_invalid_move_soft_rejects_with_decline() {
     let db = test_db();
     let mv = Message::new_move(
         "not-a-uuid".to_string(),
+        1,
         "e2e4".to_string(),
         hash_board_state(&Board::new()),
     );
@@ -942,4 +954,193 @@ fn old_catch_all_log_replaced_by_typed_dispatch() {
         !handlers_src.contains("handler not yet implemented"),
         "handlers module should no longer have stub-not-implemented wording"
     );
+}
+
+fn assert_move_ack(response: Option<Message>, mv: &Move) {
+    match response {
+        Some(Message::MoveAck(ack)) => {
+            assert_eq!(ack, mate::messages::chess::MoveAck::for_move(mv))
+        }
+        other => panic!("expected correlated ACK, got {other:?}"),
+    }
+}
+
+fn move_snapshot(db: &Database, game_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "game": db.get_game(game_id).unwrap(),
+        "messages": db.get_messages_for_game(game_id).unwrap(),
+    })
+}
+
+fn assert_declined_unchanged(db: &Database, peer: &str, mv: Move, reason: &str) {
+    let before = move_snapshot(db, &mv.game_id);
+    let response = dispatch(db, peer, Message::Move(mv.clone())).unwrap();
+    match response {
+        Some(Message::GameDecline(decline)) => {
+            assert_eq!(decline.game_id, mv.game_id);
+            assert_eq!(decline.reason.as_deref(), Some(reason));
+        }
+        other => panic!("expected decline, got {other:?}"),
+    }
+    assert_eq!(move_snapshot(db, &mv.game_id), before);
+}
+
+#[test]
+fn dispatch_move_retries_are_historical_authenticated_and_leave_activity_unchanged() {
+    use crate::common::test_helpers::{next_move, play};
+    let db = test_db();
+    let id = seed_active_game(&db, "peer-a");
+    let first = next_move(&db, &id, "e2e4");
+    assert_move_ack(
+        dispatch(&db, "peer-a", Message::Move(first.clone())).unwrap(),
+        &first,
+    );
+    // An old activity timestamp makes an accidental touch on retry observable.
+    db.with_connection(|conn| {
+        conn.execute("UPDATE games SET updated_at = 1 WHERE id = ?1", [&id])?;
+        Ok(())
+    })
+    .unwrap();
+    let before = move_snapshot(&db, &id);
+    assert_move_ack(
+        dispatch(&db, "peer-a", Message::Move(first.clone())).unwrap(),
+        &first,
+    );
+    assert_eq!(move_snapshot(&db, &id), before);
+    play(&db, &id, &["e7e5", "g1f3", "g8f6"], "test-peer-handlers");
+    for completed in [false, true] {
+        if completed {
+            db.update_game_result(&id, mate::storage::models::GameResult::Draw)
+                .unwrap();
+        }
+        db.with_connection(|conn| {
+            conn.execute("UPDATE games SET updated_at = 1 WHERE id = ?1", [&id])?;
+            Ok(())
+        })
+        .unwrap();
+        let before = move_snapshot(&db, &id);
+        assert_move_ack(
+            dispatch(&db, "peer-a", Message::Move(first.clone())).unwrap(),
+            &first,
+        );
+        assert_eq!(move_snapshot(&db, &id), before);
+        assert_declined_unchanged(
+            &db,
+            "intruder",
+            first.clone(),
+            "peer is not the game opponent",
+        );
+    }
+    assert_eq!(db.get_moves_for_game(&id).unwrap().len(), 4);
+}
+
+#[test]
+fn dispatch_move_rejects_conflicts_gaps_wrong_turn_hash_and_application() {
+    use crate::common::test_helpers::next_move;
+    let db = test_db();
+    let id = seed_active_game(&db, "peer-a");
+    let first = next_move(&db, &id, "e2e4");
+    let mut bad = first.clone();
+    bad.ply = 3;
+    assert_declined_unchanged(&db, "peer-a", bad, "ply gap: expected 1, got 3");
+    let mut bad = first.clone();
+    bad.board_state_hash = "0".repeat(64);
+    assert_declined_unchanged(&db, "peer-a", bad, "board hash mismatch");
+    let mut bad = first.clone();
+    bad.chess_move = "e3e4".into();
+    assert_declined_unchanged(&db, "peer-a", bad, "failed to apply move");
+    let mut bad = first.clone();
+    bad.chess_move = "invalid".into();
+    // Format validation is handled by dispatch before invoking the commit core.
+    let before = move_snapshot(&db, &id);
+    assert!(matches!(
+        dispatch(&db, "peer-a", Message::Move(bad)).unwrap(),
+        Some(Message::GameDecline(_))
+    ));
+    assert_eq!(move_snapshot(&db, &id), before);
+    assert_move_ack(
+        dispatch(&db, "peer-a", Message::Move(first.clone())).unwrap(),
+        &first,
+    );
+    let mut conflict = first.clone();
+    conflict.chess_move = "d2d4".into();
+    assert_declined_unchanged(&db, "peer-a", conflict, "move conflict at ply 1");
+    let mut conflict = first.clone();
+    conflict.board_state_hash = "0".repeat(64);
+    assert_declined_unchanged(&db, "peer-a", conflict, "move conflict at ply 1");
+    let second = next_move(&db, &id, "e7e5");
+    assert_declined_unchanged(&db, "peer-a", second, "not your turn");
+    // Same payload with a different stored sender must not be acknowledged.
+    db.with_connection(|conn| {
+        conn.execute("UPDATE messages SET sender_peer_id = 'self' WHERE game_id = ?1 AND message_type = 'Move'", [&id])?;
+        Ok(())
+    }).unwrap();
+    assert_declined_unchanged(&db, "peer-a", first, "move conflict at ply 1");
+}
+
+#[test]
+fn dispatch_move_rejects_inactive_games_without_changes() {
+    for status in [
+        GameStatus::Pending,
+        GameStatus::Abandoned,
+        GameStatus::Completed,
+    ] {
+        let db = test_db();
+        let id = seed_active_game(&db, "peer-a");
+        db.update_game_status(&id, status.clone()).unwrap();
+        let mv = crate::common::test_helpers::next_move(&db, &id, "e2e4");
+        assert_declined_unchanged(
+            &db,
+            "peer-a",
+            mv,
+            &format!("game is not active (status: {status:?})"),
+        );
+    }
+}
+
+#[test]
+fn dispatch_move_and_sync_fail_closed_on_corrupt_history() {
+    for corrupt_ply in [None, Some(2)] {
+        let db = test_db();
+        let id = seed_active_game(&db, "peer-a");
+        let first = crate::common::test_helpers::next_move(&db, &id, "e2e4");
+        mate::game::store_game_move_message(&db, &first, "remote", "peer-a").unwrap();
+        db.with_connection(|conn| {
+            conn.execute_batch("PRAGMA ignore_check_constraints = ON")?;
+            conn.execute(
+                "UPDATE messages SET ply = ?1 WHERE game_id = ?2 AND message_type = 'Move'",
+                rusqlite::params![corrupt_ply, id],
+            )?;
+            conn.execute_batch("PRAGMA ignore_check_constraints = OFF")?;
+            Ok(())
+        })
+        .unwrap();
+        assert_declined_unchanged(&db, "peer-a", first, "stored move history is invalid");
+        let before = move_snapshot(&db, &id);
+        match dispatch(&db, "peer-a", Message::new_sync_request(id.clone())).unwrap() {
+            Some(Message::GameDecline(decline)) => assert!(decline
+                .reason
+                .unwrap()
+                .starts_with("failed to rebuild board:")),
+            other => panic!("expected decline, got {other:?}"),
+        }
+        assert_eq!(move_snapshot(&db, &id), before);
+    }
+}
+
+#[test]
+fn dispatch_move_persistence_failures_roll_back_and_retry_can_commit() {
+    for trigger in [
+        "CREATE TRIGGER fail_move BEFORE INSERT ON messages WHEN NEW.message_type = 'Move' BEGIN SELECT RAISE(ABORT, 'private insert failure'); END",
+        "CREATE TRIGGER fail_move BEFORE UPDATE ON games BEGIN SELECT RAISE(ABORT, 'private update failure'); END",
+    ] {
+        let db = test_db();
+        let id = seed_active_game(&db, "peer-a");
+        let mv = crate::common::test_helpers::next_move(&db, &id, "e2e4");
+        db.with_connection(|conn| { conn.execute_batch(trigger)?; Ok(()) }).unwrap();
+        assert_declined_unchanged(&db, "peer-a", mv.clone(), "failed to persist move");
+        db.with_connection(|conn| { conn.execute_batch("DROP TRIGGER fail_move")?; Ok(()) }).unwrap();
+        assert_move_ack(dispatch(&db, "peer-a", Message::Move(mv.clone())).unwrap(), &mv);
+        assert_eq!(db.get_moves_for_game(&id).unwrap().len(), 1);
+    }
 }

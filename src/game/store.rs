@@ -67,22 +67,19 @@ pub fn store_game_accept_message(
     )
 }
 
-/// Serialize and store a `Move` row.
+/// Store a typed `Move` without enforcing chronology, turn, or board hash.
+///
+/// This helper supports storage fixtures. Production move paths use the
+/// authoritative commit operation in `chronology`.
 pub fn store_game_move_message(
     database: &Database,
     mv: &Move,
     signature: &str,
     sender_peer_id: &str,
 ) -> Result<(), StorageError> {
-    store_typed_message(
-        database,
-        mv.game_id.clone(),
-        StoredMessageType::Move,
-        mv,
-        signature,
-        sender_peer_id,
-        "Move message content",
-    )
+    database.with_connection(|conn| {
+        Database::insert_move_on(conn, mv, signature, sender_peer_id).map(|_| ())
+    })
 }
 
 /// Serialize and store a `GameDecline` row.
@@ -186,7 +183,16 @@ mod tests {
         let game_id = generate_game_id();
         seed_game(&database, &game_id);
 
-        let mv = Move::new(game_id.clone(), "e2e4".to_string(), "hash-e2e4".to_string());
+        let mut board = crate::chess::Board::new();
+        let chess_move =
+            crate::chess::Move::from_str_with_color("e2e4", board.active_color()).unwrap();
+        board.make_move(chess_move).unwrap();
+        let mv = Move::new(
+            game_id.clone(),
+            1,
+            "e2e4".to_string(),
+            crate::messages::chess::hash_board_state(&board),
+        );
         store_game_move_message(&database, &mv, "remote", "peer-3").expect("store move");
 
         let messages = database

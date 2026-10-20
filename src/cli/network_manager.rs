@@ -1,16 +1,28 @@
 use crate::crypto::Identity;
 use crate::messages::chess::{
-    ChessProtocolError, GameAccept, GameDecline, GameInvite, Move as ChessMove,
+    ChessProtocolError, GameAccept, GameDecline, GameInvite, Move as ChessMove, MoveAck,
 };
 use crate::messages::types::Message;
+use crate::messages::wire::WireProtocolError;
 use crate::messages::{FailureClass, RetryStrategy};
-use crate::network::{Client, Connection};
+use crate::network::{Client, Connection, ConnectionError};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
+
+/// Signer mismatches stay terminal even through contextual error wrappers.
+pub(super) fn is_peer_identity_mismatch(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<ConnectionError>(),
+            Some(ConnectionError::PeerIdentityMismatch { .. })
+        )
+    })
+}
 
 /// Configuration for network operations
 #[derive(Debug, Clone)]
@@ -155,6 +167,188 @@ pub fn classify_invite_response(
     }
 }
 
+/// Application-level response to a move, separate from transport success.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MoveSendOutcome {
+    /// The opponent acknowledged exactly the move that was sent.
+    Acknowledged { ack: MoveAck, peer_id: String },
+    /// The opponent refused the move; nothing was committed remotely.
+    Rejected {
+        decline: GameDecline,
+        peer_id: String,
+    },
+}
+
+/// Terminal move failures: never retried or committed locally.
+#[derive(Debug)]
+pub enum MoveProtocolError {
+    /// Handshake peer ≠ stored opponent; nothing was sent on that connection.
+    PeerMismatch { expected: String, actual: String },
+    /// Verified response envelope signer ≠ handshake peer / opponent.
+    SignerMismatch { expected: String, actual: String },
+    /// Uncorrelated or unexpected response (from `classify_move_response`).
+    Response(ChessProtocolError),
+    /// Invalid signature, invalid timestamp or a malformed response.
+    Connection(ConnectionError),
+}
+
+impl fmt::Display for MoveProtocolError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PeerMismatch { expected, actual } => write!(
+                f,
+                "authenticated peer {actual} is not the game opponent {expected}"
+            ),
+            Self::SignerMismatch { expected, actual } => write!(
+                f,
+                "move response was signed by {actual}, not the game opponent {expected}"
+            ),
+            Self::Response(e) => write!(f, "{e}"),
+            Self::Connection(e) => write!(f, "invalid move response: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for MoveProtocolError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Response(e) => Some(e),
+            Self::Connection(e) => Some(e),
+            Self::PeerMismatch { .. } | Self::SignerMismatch { .. } => None,
+        }
+    }
+}
+
+/// Why a move send produced no trustworthy response.
+#[derive(Debug)]
+pub enum MoveSendError {
+    Protocol(MoveProtocolError),
+    /// Transport or local send failure. `may_have_been_sent` is false only
+    /// when no send was attempted during this operation.
+    Delivery {
+        may_have_been_sent: bool,
+        source: anyhow::Error,
+    },
+}
+
+impl fmt::Display for MoveSendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Protocol(e) => write!(f, "{e}"),
+            Self::Delivery { source, .. } => write!(f, "move delivery failed: {source:#}"),
+        }
+    }
+}
+
+impl std::error::Error for MoveSendError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Protocol(e) => Some(e),
+            Self::Delivery { source, .. } => Some(source.as_ref()),
+        }
+    }
+}
+
+/// Correlate a received response with the exact move sent to `expected_peer`.
+pub fn classify_move_response(
+    request: &ChessMove,
+    expected_peer: &str,
+    outcome: SendOutcome,
+) -> Result<MoveSendOutcome, ChessProtocolError> {
+    let SendOutcome { response, peer_id } = outcome;
+    if expected_peer.is_empty() || peer_id != expected_peer {
+        return Err(ChessProtocolError::SecurityViolation {
+            game_id: request.game_id.clone(),
+            violation: format!(
+                "Move response peer {peer_id} does not match game opponent {expected_peer}"
+            ),
+        });
+    }
+    let expected_ack = MoveAck::for_move(request);
+    match response {
+        Message::MoveAck(ack) if ack == expected_ack => {
+            Ok(MoveSendOutcome::Acknowledged { ack, peer_id })
+        }
+        Message::GameDecline(decline) if decline.game_id == request.game_id => {
+            Ok(MoveSendOutcome::Rejected { decline, peer_id })
+        }
+        response => Err(ChessProtocolError::UnexpectedMessage {
+            game_id: request.game_id.clone(),
+            expected: format!("{expected_ack:?} or GameDecline for {}", request.game_id),
+            received: format!("{response:?}"),
+        }),
+    }
+}
+
+/// Lost or timed-out connections; the same move may be resent on a new one.
+fn is_transport_failure(error: &ConnectionError) -> bool {
+    match error {
+        ConnectionError::WireProtocol(wire) => matches!(
+            wire,
+            WireProtocolError::Timeout(_)
+                | WireProtocolError::ReadTimeout { .. }
+                | WireProtocolError::WriteTimeout { .. }
+                | WireProtocolError::OperationTimeout { .. }
+                | WireProtocolError::UnexpectedEof { .. }
+                | WireProtocolError::ConnectionClosed { .. }
+                | WireProtocolError::Io(_)
+        ),
+        ConnectionError::ConnectionClosed | ConnectionError::Io(_) => true,
+        ConnectionError::HandshakeFailed { .. }
+        | ConnectionError::AuthenticationFailed { .. }
+        | ConnectionError::PeerIdentityMismatch { .. }
+        | ConnectionError::InvalidSignature
+        | ConnectionError::InvalidTimestamp => false,
+    }
+}
+
+/// One move request/response exchange on an authenticated connection.
+enum MoveExchangeFailure {
+    /// Retryable on a new connection.
+    Transport(ConnectionError),
+    /// The move could not be written for a non-transport reason.
+    LocalWrite(ConnectionError),
+    Protocol(MoveProtocolError),
+}
+
+async fn exchange_move(
+    connection: &mut Connection,
+    message: Message,
+    peer_id: &str,
+    expected_peer: &str,
+) -> Result<Message, MoveExchangeFailure> {
+    connection.send_message(message).await.map_err(|e| {
+        if is_transport_failure(&e) {
+            MoveExchangeFailure::Transport(e)
+        } else {
+            MoveExchangeFailure::LocalWrite(e)
+        }
+    })?;
+    let (response, signer) = connection.receive_message().await.map_err(|e| {
+        if let ConnectionError::PeerIdentityMismatch { expected, actual } = e {
+            return MoveExchangeFailure::Protocol(MoveProtocolError::SignerMismatch {
+                expected,
+                actual,
+            });
+        }
+        if is_transport_failure(&e) {
+            MoveExchangeFailure::Transport(e)
+        } else {
+            MoveExchangeFailure::Protocol(MoveProtocolError::Connection(e))
+        }
+    })?;
+    // A valid signature from any identity other than the opponent is not an answer.
+    if signer != peer_id || signer != expected_peer {
+        return Err(MoveExchangeFailure::Protocol(
+            MoveProtocolError::SignerMismatch {
+                expected: expected_peer.to_string(),
+                actual: signer,
+            },
+        ));
+    }
+    Ok(response)
+}
+
 fn authenticated_peer(connection: &Connection) -> Result<String> {
     connection
         .peer_identity()
@@ -250,7 +444,9 @@ impl NetworkManager {
             match result {
                 Ok(outcome) => return Ok(classify_invite_response(&invite, outcome)?),
                 Err(e) => {
-                    if FailureClass::classify_error(&e) == FailureClass::NoRetry {
+                    if is_peer_identity_mismatch(&e)
+                        || FailureClass::classify_error(&e) == FailureClass::NoRetry
+                    {
                         return Err(e);
                     }
                     last_error = Some(e);
@@ -291,6 +487,9 @@ impl NetworkManager {
             }
             Err(e) => {
                 warn!("Failed to send game acceptance to {}: {}", peer_address, e);
+                if is_peer_identity_mismatch(&e) {
+                    return Err(e);
+                }
                 // Store as pending message for when peer comes online
                 self.store_pending_message(peer_address, message, game_id)
                     .await?;
@@ -299,35 +498,94 @@ impl NetworkManager {
         }
     }
 
-    /// Send a chess move with retry logic
+    /// Send the complete prepared move and classify the opponent's answer.
+    ///
+    /// Moves are never queued: every failure is returned, and re-running the
+    /// same move resends the identical payload, which the opponent handles
+    /// idempotently. Transport failures are retried on a new connection that
+    /// must again authenticate as `expected_peer` before anything is sent.
     pub async fn send_chess_move(
         &self,
         peer_address: &str,
-        game_id: String,
+        expected_peer: &str,
         chess_move: ChessMove,
-    ) -> Result<SendOutcome> {
-        let message = Message::new_move(
-            game_id.clone(),
-            chess_move.chess_move.clone(),
-            chess_move.board_state_hash.clone(),
-        );
+    ) -> Result<MoveSendOutcome, MoveSendError> {
+        let strategy = RetryStrategy::for_cli_operation("move");
+        let message = Message::Move(chess_move.clone());
+        let mut may_have_been_sent = false;
+        let mut last_error = None;
 
-        match self
-            .send_message_with_retry(peer_address, message.clone(), &game_id)
-            .await
-        {
-            Ok(outcome) => {
-                info!("Chess move sent successfully to {}", peer_address);
-                Ok(outcome)
+        for attempt in 1..=strategy.max_attempts() {
+            let retry = match self
+                .get_or_create_connection_with_strategy(peer_address, strategy)
+                .await
+            {
+                Ok(mut connection) => {
+                    let peer_id = connection.peer_identity().unwrap_or_default().to_string();
+                    if expected_peer.is_empty() || peer_id != expected_peer {
+                        return Err(MoveSendError::Protocol(MoveProtocolError::PeerMismatch {
+                            expected: expected_peer.to_string(),
+                            actual: peer_id,
+                        }));
+                    }
+                    // A failed write may still have transmitted part or all of the frame.
+                    may_have_been_sent = true;
+                    match exchange_move(&mut connection, message.clone(), &peer_id, expected_peer)
+                        .await
+                    {
+                        Ok(response) => {
+                            let outcome = classify_move_response(
+                                &chess_move,
+                                expected_peer,
+                                SendOutcome { response, peer_id },
+                            )
+                            .map_err(|e| MoveSendError::Protocol(MoveProtocolError::Response(e)))?;
+                            info!("Move response from {}: {:?}", peer_address, outcome);
+                            return Ok(outcome);
+                        }
+                        Err(MoveExchangeFailure::Protocol(e)) => {
+                            return Err(MoveSendError::Protocol(e));
+                        }
+                        Err(MoveExchangeFailure::LocalWrite(e)) => {
+                            return Err(MoveSendError::Delivery {
+                                may_have_been_sent,
+                                source: e.into(),
+                            });
+                        }
+                        Err(MoveExchangeFailure::Transport(e)) => {
+                            warn!(
+                                "Move transport to {} failed (attempt {}): {}",
+                                peer_address, attempt, e
+                            );
+                            last_error = Some(anyhow::Error::from(e));
+                            true
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to connect to {} for move (attempt {}): {:#}",
+                        peer_address, attempt, e
+                    );
+                    let retry = FailureClass::classify_error(&e) != FailureClass::NoRetry;
+                    last_error = Some(e);
+                    retry
+                }
+            };
+
+            if !retry {
+                break;
             }
-            Err(e) => {
-                warn!("Failed to send chess move to {}: {}", peer_address, e);
-                // Store as pending message for when peer comes online
-                self.store_pending_message(peer_address, message, game_id)
-                    .await?;
-                Err(e)
+            if attempt < strategy.max_attempts() {
+                tokio::time::sleep(self.calculate_retry_delay_for_strategy(attempt, strategy))
+                    .await;
             }
         }
+
+        Err(MoveSendError::Delivery {
+            may_have_been_sent,
+            source: last_error.unwrap_or_else(|| anyhow::anyhow!("Move send attempts exhausted")),
+        })
     }
 
     /// Send a message with retry logic and connection management
@@ -385,16 +643,20 @@ impl NetworkManager {
                                         "Failed to receive response from {} (attempt {}): {}",
                                         peer_address, attempt, e
                                     );
-                                    let failure_class =
-                                        FailureClass::classify_error(&anyhow::anyhow!("{}", e));
-                                    if failure_class == FailureClass::NoRetry {
-                                        return Err(anyhow::anyhow!("Receive failed: {}", e));
-                                    }
-                                    last_error = Some(anyhow::anyhow!("Receive failed: {}", e));
                                     // Mark connection as unhealthy
                                     self.update_connection_health(peer_address, false).await;
                                     // Remove the failed connection
                                     self.remove_connection(peer_address).await;
+                                    let mismatch =
+                                        matches!(e, ConnectionError::PeerIdentityMismatch { .. });
+                                    let error = anyhow::Error::from(e).context("Receive failed");
+                                    if mismatch
+                                        || FailureClass::classify_error(&error)
+                                            == FailureClass::NoRetry
+                                    {
+                                        return Err(error);
+                                    }
+                                    last_error = Some(error);
                                 }
                             }
                         }
@@ -545,6 +807,15 @@ impl NetworkManager {
         );
 
         for mut pending_msg in messages {
+            if matches!(pending_msg.message, Message::Move(_)) {
+                // Moves are never queued; resending one outside `mate move` could
+                // reach the opponent without any local commit following it.
+                warn!(
+                    "Dropping queued move for game {} without sending it",
+                    pending_msg.game_id
+                );
+                continue;
+            }
             pending_msg.attempts += 1;
 
             match self
@@ -570,7 +841,7 @@ impl NetworkManager {
 
                     // If we haven't exceeded max attempts, put it back in pending
                     let max_attempts = self.config.default_retry_strategy.max_attempts();
-                    if pending_msg.attempts < max_attempts {
+                    if !is_peer_identity_mismatch(&e) && pending_msg.attempts < max_attempts {
                         let mut pending = self.pending_messages.lock().await;
                         pending
                             .entry(peer_address.to_string())
@@ -706,5 +977,172 @@ impl std::fmt::Display for NetworkStats {
             "Active connections: {}, Healthy: {}, Pending messages: {}",
             self.active_connections, self.healthy_connections, self.total_pending_messages
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::messages::chess::generate_game_id;
+
+    #[test]
+    fn mismatch_detection_uses_typed_sources_through_contexts() {
+        for (expected, actual) in [
+            ("expected", "actual"),
+            ("authentication", "protocol identity handshake"),
+            ("timeout", "connection closed"),
+        ] {
+            let error = anyhow::Error::from(ConnectionError::PeerIdentityMismatch {
+                expected: expected.into(),
+                actual: actual.into(),
+            })
+            .context("inner")
+            .context("outer");
+            assert!(is_peer_identity_mismatch(&error));
+        }
+        assert!(!is_peer_identity_mismatch(&anyhow::anyhow!(
+            "Message signer actual does not match connection peer expected"
+        )));
+    }
+
+    #[tokio::test]
+    async fn decline_mismatch_is_terminal_and_pending_decline_is_not_requeued() {
+        use crate::messages::{wire::FramedMessage, SignedEnvelope};
+        use tokio::net::TcpListener;
+
+        for queued in [false, true] {
+            let manager = NetworkManager::with_config(
+                Arc::new(Identity::generate().unwrap()),
+                NetworkConfig {
+                    default_retry_strategy: RetryStrategy::Normal,
+                    ..NetworkConfig::default()
+                },
+            );
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap().to_string();
+            let peer = Identity::generate().unwrap();
+            let other = Identity::generate().unwrap();
+            let game_id = generate_game_id();
+            let message = Message::GameDecline(GameDecline::new_no_reason(game_id.clone()));
+            if queued {
+                manager
+                    .store_pending_message(&address, message.clone(), game_id.clone())
+                    .await
+                    .unwrap();
+            }
+            let operation = async {
+                if queued {
+                    assert_eq!(manager.send_pending_messages(&address).await.unwrap(), 0);
+                } else {
+                    let error = manager
+                        .send_message_with_retry(&address, message.clone(), &game_id)
+                        .await
+                        .unwrap_err();
+                    assert!(is_peer_identity_mismatch(&error));
+                    assert!(matches!(
+                        crate::cli::error_handler::cli_error_from_anyhow(error),
+                        crate::cli::error_handler::CliError::Connection(
+                            ConnectionError::PeerIdentityMismatch { .. }
+                        )
+                    ));
+                }
+                let stats = manager.get_network_stats().await;
+                assert_eq!(stats.total_pending_messages, 0);
+                assert_eq!(stats.healthy_connections, 0);
+            };
+            let remote = async {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let framed = FramedMessage::default();
+                let hello = framed
+                    .read_message(&mut stream)
+                    .await
+                    .unwrap()
+                    .get_message()
+                    .unwrap();
+                let response = Message::new_pong(
+                    hello.get_nonce(),
+                    format!("HANDSHAKE_RESPONSE:{}", peer.peer_id()),
+                );
+                framed
+                    .write_message(
+                        &mut stream,
+                        &SignedEnvelope::create(&response, &peer, None).unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                let request = framed
+                    .read_message(&mut stream)
+                    .await
+                    .unwrap()
+                    .get_message()
+                    .unwrap();
+                assert_eq!(
+                    serde_json::to_value(request).unwrap(),
+                    serde_json::to_value(&message).unwrap()
+                );
+                framed
+                    .write_message(
+                        &mut stream,
+                        &SignedEnvelope::create(&message, &other, None).unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert!(
+                    framed.read_message(&mut stream).await.is_err(),
+                    "failed connection must be dropped"
+                );
+            };
+            tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(operation, remote)
+            })
+            .await
+            .unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                    .await
+                    .is_err(),
+                "mismatch must not reconnect"
+            );
+        }
+    }
+
+    #[test]
+    fn peer_identity_mismatch_is_not_a_transport_failure_regardless_of_peer_ids() {
+        // Peer IDs are diagnostics, never input to the Move retry policy.
+        for (expected, actual) in [
+            ("expected-peer", "actual-peer"),
+            ("connection closed", "timeout"),
+            ("authentication", "protocol identity handshake"),
+        ] {
+            assert!(!is_transport_failure(
+                &ConnectionError::PeerIdentityMismatch {
+                    expected: expected.to_string(),
+                    actual: actual.to_string(),
+                }
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn queued_moves_are_dropped_without_sending() {
+        let manager = NetworkManager::new(Arc::new(Identity::generate().unwrap()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let mv = ChessMove::new(generate_game_id(), 1, "e2e4".into(), "a".repeat(64));
+        manager
+            .store_pending_message(&address, Message::Move(mv.clone()), mv.game_id.clone())
+            .await
+            .unwrap();
+        assert_eq!(manager.get_network_stats().await.total_pending_messages, 1);
+
+        assert_eq!(manager.send_pending_messages(&address).await.unwrap(), 0);
+
+        assert_eq!(manager.get_network_stats().await.total_pending_messages, 0);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), listener.accept())
+                .await
+                .is_err(),
+            "a queued move must never be transmitted"
+        );
     }
 }

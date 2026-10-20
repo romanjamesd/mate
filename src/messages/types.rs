@@ -103,6 +103,7 @@ impl Message {
     ///
     /// # Arguments
     /// * `game_id` - Game identifier for the move
+    /// * `ply` - One-based half-move sequence number
     /// * `chess_move` - Chess move in algebraic notation (e.g., "e2e4")
     /// * `board_state_hash` - SHA-256 hash of the board state after the move
     ///
@@ -115,33 +116,32 @@ impl Message {
     /// let board = Board::new();
     /// let msg = Message::new_move(
     ///     generate_game_id(),
+    ///     1,
     ///     "e2e4".to_string(),
     ///     hash_board_state(&board)
     /// );
     /// assert!(msg.is_chess_message());
     /// ```
-    pub fn new_move(game_id: String, chess_move: String, board_state_hash: String) -> Self {
+    pub fn new_move(
+        game_id: String,
+        ply: u32,
+        chess_move: String,
+        board_state_hash: String,
+    ) -> Self {
         use crate::messages::chess::Move;
-        Message::Move(Move::new(game_id, chess_move, board_state_hash))
+        Message::Move(Move::new(game_id, ply, chess_move, board_state_hash))
     }
 
-    /// Create a new MoveAck message
+    /// Acknowledge an exact move payload.
     ///
-    /// # Arguments
-    /// * `game_id` - Game identifier for the acknowledgment
-    /// * `move_id` - Optional move identifier being acknowledged
-    ///
-    /// # Example
     /// ```
-    /// use mate::messages::types::Message;
-    /// use mate::messages::chess::generate_game_id;
-    ///
-    /// let msg = Message::new_move_ack(generate_game_id(), Some("move-123".to_string()));
+    /// use mate::messages::{Message, chess::{Move, generate_game_id}};
+    /// let mv = Move::new(generate_game_id(), 1, "e2e4".into(), "0".repeat(64));
+    /// let msg = Message::new_move_ack(&mv);
     /// assert!(msg.is_chess_message());
     /// ```
-    pub fn new_move_ack(game_id: String, move_id: Option<String>) -> Self {
-        use crate::messages::chess::MoveAck;
-        Message::MoveAck(MoveAck::new(game_id, move_id))
+    pub fn new_move_ack(mv: &Move) -> Self {
+        Message::MoveAck(MoveAck::for_move(mv))
     }
 
     /// Create a new SyncRequest message
@@ -425,13 +425,12 @@ impl Message {
                 32 + decline.game_id.len() + reason_size + 8
             }
             Message::Move(mv) => {
-                // Base overhead + game_id + chess_move + board_state_hash (64 chars)
-                32 + mv.game_id.len() + mv.chess_move.len() + mv.board_state_hash.len() + 16
+                // Base overhead + game_id + ply + chess_move + board_state_hash
+                32 + mv.game_id.len() + mv.chess_move.len() + mv.board_state_hash.len() + 20
             }
             Message::MoveAck(ack) => {
-                // Base overhead + game_id + optional move_id
-                let move_id_size = ack.move_id.as_ref().map_or(0, |id| id.len());
-                32 + ack.game_id.len() + move_id_size + 8
+                // Base overhead + game_id + ply + move_digest
+                32 + ack.game_id.len() + ack.move_digest.len() + 12
             }
             Message::SyncRequest(req) => {
                 // Base overhead + game_id
@@ -546,15 +545,17 @@ impl Message {
             Message::Move(mv) => {
                 let game_id_short = short_game_id(&mv.game_id);
                 let chess_move = &mv.chess_move;
-                format!("Move(game={game_id_short}, move={chess_move})")
+                format!(
+                    "Move(game={game_id_short}, ply={}, move={chess_move})",
+                    mv.ply
+                )
             }
             Message::MoveAck(ack) => {
-                let move_id_info = ack.move_id.as_ref().map_or("none".to_string(), |id| {
-                    let len = id.len();
-                    format!("{len}chars")
-                });
                 let game_id_short = short_game_id(&ack.game_id);
-                format!("MoveAck(game={game_id_short}, move_id={move_id_info})")
+                format!(
+                    "MoveAck(game={game_id_short}, ply={}, digest={})",
+                    ack.ply, ack.move_digest
+                )
             }
             Message::SyncRequest(req) => {
                 let game_id_short = short_game_id(&req.game_id);

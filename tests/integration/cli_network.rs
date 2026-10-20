@@ -297,7 +297,7 @@ async fn test_network_message_type_handling() {
     // Test different message types - verify each operation type is attempted
     let invite = GameInvite::new(game_id.clone(), Some(PlayerColor::White.into()));
     let accept = GameAccept::new(game_id.clone(), PlayerColor::Black.into());
-    let chess_move = ChessMove::new(game_id.clone(), "e4".to_string(), "hash123".to_string());
+    let chess_move = ChessMove::new(game_id.clone(), 1, "e4".to_string(), "hash123".to_string());
 
     // Each operation should fail but attempt the correct message type
     let invite_result = network_manager
@@ -317,7 +317,7 @@ async fn test_network_message_type_handling() {
     );
 
     let move_result = network_manager
-        .send_chess_move(&peer_address, game_id, chess_move)
+        .send_chess_move(&peer_address, "unreachable-opponent", chess_move)
         .await;
     assert!(
         move_result.is_err(),

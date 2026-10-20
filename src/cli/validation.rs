@@ -129,7 +129,7 @@ impl<'a> InputValidator<'a> {
     /// Accepts various formats:
     /// - IP:port (127.0.0.1:8080)
     /// - hostname:port (localhost:8080)
-    /// - IPv6 addresses ([::1]:8080)
+    /// - IPv6 addresses (`[::1]:8080`)
     pub fn validate_peer_address(&self, address: &str) -> ValidationResult<SocketAddr> {
         let trimmed = address.trim();
 

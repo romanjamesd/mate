@@ -45,7 +45,12 @@ impl TestEnvironment {
 
     fn create_test_game(&self, db: &Database, opponent: &str, status: GameStatus) -> String {
         let game = db
-            .create_game(opponent.to_string(), PlayerColor::White, None)
+            .create_game_with_id(
+                uuid::Uuid::new_v4().to_string(),
+                opponent.to_string(),
+                PlayerColor::White,
+                None,
+            )
             .expect("Failed to create test game");
 
         if status != GameStatus::Pending {
@@ -73,6 +78,10 @@ impl Drop for TestEnvironment {
 
 fn create_test_database() -> (Database, TestEnvironment) {
     TestEnvironment::new()
+}
+
+fn play_fixture_move(db: &Database, game_id: &str, notation: &str) -> mate::messages::chess::Move {
+    crate::common::test_helpers::play_move(db, game_id, notation, "test_peer_cli")
 }
 
 // =============================================================================
@@ -144,56 +153,36 @@ fn test_database_game_state_reconstruction() {
     // Create game with move history using valid move sequence
     let game_id = env.create_test_game(&db, "test_opponent", GameStatus::Active);
 
-    // Store some moves that form a valid game sequence
-    let moves = [
-        ("e2e4", "test_peer_cli"),
-        ("e7e5", "test_opponent"),
-        ("g1f3", "test_peer_cli"),
-        ("b8c6", "test_opponent"),
-    ];
+    let moves = ["e2e4", "e7e5", "g1f3", "b8c6"];
 
-    for (i, (move_notation, sender)) in moves.iter().enumerate() {
-        db.store_message(
-            game_id.clone(),
-            "Move".to_string(),
-            json!({
-                "game_id": game_id,
-                "chess_move": move_notation,
-                "board_state_hash": format!("hash_{i}")
-            })
-            .to_string(),
-            format!("sig_{i}"),
-            sender.to_string(),
-        )
-        .expect("Failed to store test move");
-
-        std::thread::sleep(std::time::Duration::from_millis(1));
+    let mut board = Board::new();
+    for move_notation in moves {
+        play_fixture_move(&db, &game_id, move_notation);
+        let chess_move =
+            mate::chess::Move::from_str_with_color(move_notation, board.active_color()).unwrap();
+        board.make_move(chess_move).unwrap();
     }
 
-    // Test game state reconstruction
-    let game_state = game_ops.reconstruct_game_state(&game_id);
-
-    match game_state {
-        Ok(state) => {
-            assert_eq!(state.game.id, game_id);
-            // The exact number of moves processed depends on chess engine validation
-            // so we just verify that some moves were processed
-            assert!(
-                !state.move_history.is_empty(),
-                "Should have processed at least some moves"
-            );
-
-            // Verify first move if any were processed
-            if !state.move_history.is_empty() {
-                assert_eq!(state.move_history[0], "e2e4", "First move should be e2e4");
-            }
-        }
-        Err(_) => {
-            // If reconstruction fails due to chess validation issues,
-            // that's also acceptable - the important thing is that the
-            // CLI-database integration is working and errors are handled properly
-        }
-    }
+    let state = game_ops
+        .reconstruct_game_state(&game_id)
+        .expect("Failed to reconstruct valid game state");
+    assert_eq!(state.game.id, game_id);
+    assert_eq!(state.move_history, moves);
+    assert_eq!(state.board, board);
+    let stored_moves = db.get_moves_for_game(&game_id).unwrap();
+    let senders: Vec<_> = stored_moves
+        .iter()
+        .map(|row| row.sender_peer_id.as_str())
+        .collect();
+    assert_eq!(
+        senders,
+        [
+            "test_peer_cli",
+            "test_opponent",
+            "test_peer_cli",
+            "test_opponent"
+        ]
+    );
 
     // Test reconstruction with no moves
     let empty_game_id = env.create_test_game(&db, "empty_opponent", GameStatus::Active);
@@ -400,7 +389,7 @@ fn test_database_move_storage_transaction_handling() {
     let game_id = env.create_test_game(&db, "transaction_opponent", GameStatus::Active);
 
     // Test successful move processing and storage
-    let result = move_processor.process_move(&game_id, "e2e4", true);
+    let result = move_processor.process_move(&game_id, "e2e4");
     assert!(result.is_ok(), "Should successfully process and store move");
 
     let move_result = result.unwrap();
@@ -424,7 +413,7 @@ fn test_database_move_storage_transaction_handling() {
     assert_eq!(history[0].move_number, 1);
 
     // Test transaction consistency by attempting invalid move after valid one
-    let invalid_result = move_processor.process_move(&game_id, "invalid_move", true);
+    let invalid_result = move_processor.process_move(&game_id, "invalid_move");
     assert!(
         invalid_result.is_err(),
         "Should reject invalid move and not corrupt database"
@@ -453,9 +442,7 @@ fn test_database_board_state_hash_generation() {
     let mut previous_hash = String::new();
 
     for (i, move_notation) in moves.iter().enumerate() {
-        let result = move_processor
-            .process_move(&game_id, move_notation, false) // Disable turn checking for test
-            .expect("Failed to process move");
+        let result = play_fixture_move(&db, &game_id, move_notation);
 
         // Verify hash is generated and different for each position
         assert!(
@@ -484,20 +471,18 @@ fn test_database_board_state_hash_generation() {
         );
     }
 
-    // Test that identical positions produce identical hashes
+    // Hashes are generated for both an advanced game and a fresh game.
     let game_id_2 = env.create_test_game(&db, "hash_opponent_2", GameStatus::Active);
 
-    // Apply same first move to both games (without turn validation for testing)
+    // Both games have White to move.
     let result_1 = move_processor
-        .process_move(&game_id, "d2d4", false)
+        .process_move(&game_id, "d2d4")
         .expect("Failed to process move in game 1");
 
     let result_2 = move_processor
-        .process_move(&game_id_2, "d2d4", false)
+        .process_move(&game_id_2, "d2d4")
         .expect("Failed to process move in game 2");
 
-    // Note: This test may need adjustment based on actual hash implementation
-    // The hash might include game-specific information
     assert!(!result_1.board_state_hash.is_empty());
     assert!(!result_2.board_state_hash.is_empty());
 }
@@ -517,9 +502,7 @@ fn test_database_move_history_reconstruction_accuracy() {
 
     // Process moves one by one and verify history accuracy
     for (i, move_notation) in move_sequence.iter().enumerate() {
-        move_processor
-            .process_move(&game_id, move_notation, false)
-            .expect("Failed to process move");
+        play_fixture_move(&db, &game_id, move_notation);
 
         // Verify history reconstruction matches expected sequence
         let game_state = game_ops
@@ -606,6 +589,9 @@ fn test_database_malformed_messages_handling() {
 
     let game_id = env.create_test_game(&db, "malformed_opponent", GameStatus::Active);
 
+    // Prepare the valid post-move hash before deliberately corrupting history.
+    let mut valid = crate::common::test_helpers::next_move(&db, &game_id, "e2e4");
+
     // Store malformed move messages directly in database
     let malformed_messages = [
         ("Move", r#"{"invalid": "json"}"#), // Missing chess_move field
@@ -616,53 +602,34 @@ fn test_database_malformed_messages_handling() {
     ];
 
     for (i, (msg_type, content)) in malformed_messages.iter().enumerate() {
-        db.store_message(
-            game_id.clone(),
-            msg_type.to_string(),
-            content.to_string(),
-            format!("sig_{i}"),
-            "malformed_opponent".to_string(),
-        )
-        .expect("Failed to store malformed message");
+        // Deliberately bypass typed storage to exercise corrupt-payload handling.
+        db.with_connection(|conn| {
+            conn.execute(
+                "INSERT INTO messages (game_id, message_type, ply, content, signature, sender_peer_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'malformed_opponent', 1)",
+                rusqlite::params![game_id, msg_type, (i + 1) as u32, content, format!("sig_{i}")],
+            )?;
+            Ok(())
+        }).expect("Failed to store malformed fixture");
     }
 
-    // Store one valid move message
-    db.store_message(
-        game_id.clone(),
-        "Move".to_string(),
-        json!({"chess_move": "e2e4"}).to_string(),
-        "valid_sig".to_string(),
-        "test_peer_cli".to_string(),
-    )
-    .expect("Failed to store valid message");
+    // Bypass authoritative commit so a valid payload can follow the corrupt rows.
+    valid.ply = u32::try_from(malformed_messages.len() + 1).unwrap();
+    mate::game::store_game_move_message(&db, &valid, "valid_sig", "test_peer_cli")
+        .expect("Failed to store valid message");
 
     // Test game state reconstruction with malformed messages
     let result = game_ops.reconstruct_game_state(&game_id);
 
-    // The reconstruction should handle malformed messages gracefully
-    match result {
-        Ok(game_state) => {
-            // If reconstruction succeeds, it should only include valid moves
-            // In this case, only the last valid move should be processed
-            assert!(
-                game_state.move_history.len() <= 1,
-                "Should process at most the valid moves"
-            );
-            if !game_state.move_history.is_empty() {
-                assert_eq!(game_state.move_history[0], "e2e4");
-            }
-        }
-        Err(GameOpsError::Serialization(_)) => {
-            // Expected behavior - malformed messages cause serialization errors
-        }
-        Err(GameOpsError::Chess(_)) => {
-            // Expected behavior - invalid moves cause chess errors
-        }
-        Err(GameOpsError::InvalidGameState(_)) => {
-            // Expected behavior - corrupted state
-        }
-        Err(_) => panic!("Unexpected error type for malformed messages"),
-    }
+    assert!(
+        matches!(
+            result,
+            Err(GameOpsError::Chronology(
+                mate::game::ChronologyError::Serialization { ply: 1, .. }
+            ))
+        ),
+        "Malformed chronology must fail closed"
+    );
 
     // Verify all messages are still stored (error recovery doesn't delete data)
     let all_messages = db
@@ -762,20 +729,27 @@ fn test_database_message_storage_all_types() {
 
     let mut stored_ids = Vec::new();
     for (i, (msg_type, content)) in message_types.iter().enumerate() {
-        let message = db
-            .store_message(
+        let sender = if i % 2 == 0 {
+            "test_peer_cli"
+        } else {
+            "message_opponent"
+        };
+        let message = if *msg_type == "Move" {
+            play_fixture_move(&db, &game_id, "e2e4");
+            db.get_messages_by_type(&game_id, "Move")
+                .unwrap()
+                .pop()
+                .expect("Committed Move fixture")
+        } else {
+            db.store_message(
                 game_id.clone(),
                 msg_type.to_string(),
                 content.to_string(),
                 format!("sig_{i}"),
-                if i % 2 == 0 {
-                    "test_peer_cli"
-                } else {
-                    "message_opponent"
-                }
-                .to_string(),
+                sender.to_string(),
             )
-            .expect("Failed to store message");
+            .expect("Failed to store message")
+        };
 
         assert!(message.id.is_some(), "Message should have assigned ID");
         assert_eq!(message.message_type, *msg_type);
@@ -860,7 +834,7 @@ fn test_database_transaction_rollback_on_failures() {
         .expect("Failed to get initial count");
 
     // Attempt to process an invalid move (should trigger rollback)
-    let invalid_result = move_processor.process_move(&game_id, "invalid_move", true);
+    let invalid_result = move_processor.process_move(&game_id, "invalid_move");
     assert!(invalid_result.is_err(), "Invalid move should fail");
 
     // Verify no messages were stored due to rollback
@@ -873,7 +847,7 @@ fn test_database_transaction_rollback_on_failures() {
     );
 
     // Process a valid move to ensure system still works
-    let valid_result = move_processor.process_move(&game_id, "e2e4", true);
+    let valid_result = move_processor.process_move(&game_id, "e2e4");
     assert!(
         valid_result.is_ok(),
         "Valid move should succeed after failed transaction"

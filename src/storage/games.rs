@@ -108,22 +108,36 @@ impl Database {
 
     /// Get a game by ID
     pub fn get_game(&self, game_id: &str) -> Result<Game> {
-        self.with_connection(|conn| {
-            conn.query_row(
-                r#"
+        self.with_connection(|conn| Self::get_game_on(conn, game_id))
+    }
+
+    pub(crate) fn get_game_on(conn: &rusqlite::Connection, game_id: &str) -> Result<Game> {
+        conn.query_row(
+            r#"
                 SELECT id, opponent_peer_id, my_color, status, 
                        created_at, updated_at, completed_at, result, metadata
                 FROM games 
                 WHERE id = ?1
                 "#,
-                [game_id],
-                game_from_row,
-            )
-            .map_err(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => StorageError::game_not_found(game_id),
-                _ => StorageError::ConnectionFailed(e),
-            })
+            [game_id],
+            game_from_row,
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => StorageError::game_not_found(game_id),
+            _ => StorageError::ConnectionFailed(e),
         })
+    }
+
+    /// Update activity without changing lifecycle fields.
+    pub(crate) fn touch_game_on(conn: &rusqlite::Connection, game_id: &str) -> Result<()> {
+        let changed = conn.execute(
+            "UPDATE games SET updated_at = ?1 WHERE id = ?2",
+            (Self::current_timestamp(), game_id),
+        )?;
+        if changed == 0 {
+            return Err(StorageError::game_not_found(game_id));
+        }
+        Ok(())
     }
 
     /// Update game status

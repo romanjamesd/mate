@@ -307,13 +307,12 @@ impl Server {
         let mut connection = Connection::new_with_config(stream, identity, wire_config).await;
 
         // Perform handshake
-        let peer_id = match connection.handle_handshake_request().await {
+        match connection.handle_handshake_request().await {
             Ok(peer_id) => {
                 info!(
                     "Handshake successful for connection {} with peer: {}",
                     connection_id, peer_id
                 );
-                peer_id
             }
             Err(e) => {
                 error!("Handshake failed for connection {}: {}", connection_id, e);
@@ -341,9 +340,11 @@ impl Server {
                                 connection_id
                             );
 
+                            // Connection verified the signature and bound this sender
+                            // to the authenticated connection peer.
                             match crate::network::handlers::dispatch(
                                 database.as_ref(),
-                                &peer_id,
+                                &sender,
                                 message,
                             ) {
                                 Ok(Some(response)) => {
@@ -373,16 +374,10 @@ impl Server {
                             }
                         }
                         Err(e) => {
-                            match e {
-                                ConnectionError::WireProtocol(WireProtocolError::ReadTimeout { .. }) => {
-                                    debug!("Read timeout on connection {}, closing", connection_id);
-                                }
-                                ConnectionError::ConnectionClosed => {
-                                    info!("Connection {} closed by peer", connection_id);
-                                }
-                                _ => {
-                                    error!("Error receiving message on connection {}: {}", connection_id, e);
-                                }
+                            if is_normal_disconnect(&e) {
+                                info!("Connection {} ended by peer or idle timeout: {}", connection_id, e);
+                            } else {
+                                error!("Error receiving message on connection {}: {}", connection_id, e);
                             }
                             break;
                         }
@@ -465,5 +460,63 @@ impl Server {
 
         info!("Server shutdown complete");
         Ok(())
+    }
+}
+
+/// Receive failures that mean the peer went away or the connection idled out.
+/// These close the connection quietly; anything else is logged as an error.
+fn is_normal_disconnect(error: &ConnectionError) -> bool {
+    match error {
+        ConnectionError::ConnectionClosed => true,
+        ConnectionError::WireProtocol(wire) => match wire {
+            WireProtocolError::ReadTimeout { .. }
+            | WireProtocolError::OperationTimeout { .. }
+            | WireProtocolError::Timeout(_)
+            | WireProtocolError::UnexpectedEof { .. }
+            | WireProtocolError::ConnectionClosed { .. } => true,
+            WireProtocolError::Io(io_err) => matches!(
+                io_err.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+            ),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disconnects_and_idle_timeouts_close_quietly() {
+        let quiet = [
+            ConnectionError::ConnectionClosed,
+            WireProtocolError::unexpected_eof("length prefix").into(),
+            WireProtocolError::connection_closed("write").into(),
+            WireProtocolError::ReadTimeout {
+                timeout: Duration::from_secs(1),
+            }
+            .into(),
+            WireProtocolError::Io(std::io::ErrorKind::ConnectionReset.into()).into(),
+        ];
+        for error in quiet {
+            assert!(is_normal_disconnect(&error), "{error:?}");
+        }
+        let loud = [
+            ConnectionError::InvalidSignature,
+            ConnectionError::InvalidTimestamp,
+            ConnectionError::PeerIdentityMismatch {
+                expected: "authenticated-peer".to_owned(),
+                actual: "unexpected-signer".to_owned(),
+            },
+            WireProtocolError::corrupted_data("bad frame").into(),
+            WireProtocolError::Io(std::io::ErrorKind::PermissionDenied.into()).into(),
+        ];
+        for error in loud {
+            assert!(!is_normal_disconnect(&error), "{error:?}");
+        }
     }
 }

@@ -653,6 +653,7 @@ async fn test_connection_interruption_recovery() -> Result<()> {
     // Create a message to transmit
     let move_msg = Message::new_move(
         game_id.clone(),
+        1,
         "e2e4".to_string(),
         "dummy_hash".to_string(),
     );
@@ -795,6 +796,7 @@ async fn test_network_recovery_mechanisms() -> Result<()> {
 
     let move_msg = Message::new_move(
         game_id.clone(),
+        1,
         "e2e4".to_string(),
         hash_board_state(&Board::new()),
     );
@@ -890,8 +892,8 @@ async fn test_high_volume_message_processing() -> Result<()> {
 
             let message = match message_num % 3 {
                 0 => Message::new_game_invite(game_id, Some(Color::White)),
-                1 => Message::new_move(game_id, "e2e4".to_string(), "dummy_hash".to_string()),
-                _ => Message::new_move_ack(game_id, Some(format!("move_{message_num}"))),
+                1 => Message::new_move(game_id, 1, "e2e4".to_string(), "dummy_hash".to_string()),
+                _ => Message::MoveAck(crate::common::test_data::move_ack(game_id, 1)),
             };
 
             let envelope = SignedEnvelope::create(&message, &identity, None)?;

@@ -6,7 +6,7 @@ use mate::cli::{
 };
 use mate::crypto::Identity;
 use mate::messages::Message;
-use mate::network::Client;
+use mate::network::{Client, ConnectionError};
 
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
@@ -430,6 +430,13 @@ async fn main() -> Result<()> {
                                                 "Connection error: Failed to exchange message: {}",
                                                 e
                                             );
+                                            if matches!(
+                                                e,
+                                                ConnectionError::PeerIdentityMismatch { .. }
+                                            ) {
+                                                println!("Peer response was signed by an unexpected party. Ending session; the request may have been received.");
+                                                break;
+                                            }
                                             warn!("The connection to the peer may have been lost.");
                                             println!("Connection status: Disconnected");
                                             println!("Attempting to reconnect...");

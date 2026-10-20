@@ -21,6 +21,9 @@ pub mod cli_app_lifecycle;
 // CLI-Database integration tests
 pub mod cli_database;
 
+// Shared chronology fixture helpers
+pub mod shared_test_helpers;
+
 // CLI error handling integration tests
 pub mod cli_error_handling;
 

@@ -4,9 +4,7 @@
 
 use anyhow::Result;
 use mate::cli::app::App;
-use mate::game::StoredMessageType;
 use mate::storage::models::{GameStatus, PlayerColor};
-use serde_json::json;
 use tempfile::TempDir;
 
 /// Create a test app with isolated temporary directory
@@ -168,19 +166,11 @@ async fn test_board_and_history_reconstruct_pascal_case_move() {
     .await
     .expect("Failed to create test game");
 
-    app.database
-        .store_message(
-            game_id.clone(),
-            StoredMessageType::Move.as_str().to_string(),
-            json!({
-                "game_id": game_id,
-                "chess_move": "e2e4",
-                "board_state_hash": "test_hash"
-            })
-            .to_string(),
-            "test_sig".to_string(),
-            app.peer_id().to_string(),
-        )
+    let mv = mate::game::MoveProcessor::new(&app.database)
+        .prepare_move(&game_id, "e2e4")
+        .expect("prepare valid fixture")
+        .move_message;
+    mate::game::store_game_move_message(&app.database, &mv, "test_sig", app.peer_id())
         .expect("Failed to store PascalCase Move");
 
     let board_result = app.handle_board(Some(game_id.clone())).await;

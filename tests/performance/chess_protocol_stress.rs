@@ -62,7 +62,7 @@ mod high_volume_tests {
                     // Create and process different message types
                     let message = match i % 4 {
                         0 => Message::GameInvite(GameInvite::new(game_id, Some(Color::White))),
-                        1 => Message::Move(Move::new(game_id, chess_move, board_hash)),
+                        1 => Message::Move(Move::new(game_id, 1, chess_move, board_hash)),
                         2 => Message::GameAccept(GameAccept::new(game_id, Color::Black)),
                         _ => Message::SyncRequest(SyncRequest::new(game_id)),
                     };
@@ -235,8 +235,12 @@ mod high_volume_tests {
                 for move_idx in 0..moves_per_game {
                     let board_hash = hash_board_state(&Board::new());
                     let chess_move = format!("move_{game_idx}_{move_idx}");
-                    let _move_msg =
-                        Message::Move(Move::new(game_id.clone(), chess_move, board_hash));
+                    let _move_msg = Message::Move(Move::new(
+                        game_id.clone(),
+                        move_idx as u32 + 1,
+                        chess_move,
+                        board_hash,
+                    ));
 
                     if tx.send(("move", game_idx)).await.is_ok() {
                         move_count += 1;
@@ -388,7 +392,7 @@ mod memory_pressure_tests {
                     0 => Message::GameInvite(GameInvite::new(game_id, Some(Color::White))),
                     1 => {
                         let board_hash = hash_board_state(&Board::new());
-                        Message::Move(Move::new(game_id, format!("move_{i}"), board_hash))
+                        Message::Move(Move::new(game_id, 1, format!("move_{i}"), board_hash))
                     }
                     _ => Message::SyncRequest(SyncRequest::new(game_id)),
                 };
@@ -475,7 +479,7 @@ mod long_running_tests {
             } else {
                 // Standard messages
                 let board_hash = hash_board_state(&Board::new());
-                Message::Move(Move::new(game_id, "e2e4".to_string(), board_hash))
+                Message::Move(Move::new(game_id, 1, "e2e4".to_string(), board_hash))
             };
 
             // Process message

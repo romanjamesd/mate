@@ -7,7 +7,7 @@ A fully decentralized peer-to-peer chess game with cryptographic security and of
 ### Core Gameplay
 - **True P2P Chess**: Play directly with peers without any central servers
 - **Offline-first Design**: All game data stored locally, sync when both players are online
-- **Cryptographic Integrity**: Every move is cryptographically signed with Ed25519, preventing tampering
+- **Message Authentication**: Move envelopes are signed with Ed25519 and verified on receipt
 - **Resilient Networking**: Games continue seamlessly despite network interruptions
 - **Cross-platform**: Works on macOS, Linux, and Windows
 
@@ -16,12 +16,12 @@ A fully decentralized peer-to-peer chess game with cryptographic security and of
 - Accept/decline invitations with color preferences
 - Multiple concurrent games with different opponents
 - Automatic game synchronization when peers reconnect
-- Complete move history with cryptographic proof
+- Local move history in ply order
 
 ### Security
 - Ed25519 digital signatures ensure move authenticity
 - Each player has a unique cryptographic identity
-- Tamper-proof game history
+- Received envelope signers are bound to the authenticated connection peer
 - No trusted third parties required
 
 ## Installation
@@ -150,7 +150,7 @@ Game: game_abc123
 - **No Central Server**: Players connect directly to each other
 - **Local Database**: SQLite stores all game state locally
 - **P2P Synchronization**: Games sync when both players are online
-- **Conflict Resolution**: Cryptographic signatures prevent cheating
+- **Message Verification**: Cryptographic signatures authenticate received envelopes
 
 ### Network Protocol
 - TCP connections with message framing
@@ -158,11 +158,48 @@ Game: game_abc123
 - Automatic peer discovery on local networks
 - Manual peer address exchange for internet play
 
+Signed application envelopes must match the connection's authenticated peer.
+This includes invite, accept, and decline responses as well as Move responses.
+A signer mismatch is terminal on every CLI path: the connection is dropped and
+the request is not automatically retried or queued; interactive sessions end.
+An untrusted response does not prove the request was undelivered. Check the peer
+address and game state before deciding whether to retry manually.
+
+`Move` carries `game_id`, `ply`, `chess_move`, and `board_state_hash` in the
+signed payload. `ply` is a required one-based half-move number: White's first
+move is 1 and Black's first is 2. The hash describes the board after that move.
+Chess history is read in ply order and replay rejects gaps, duplicates,
+row/payload mismatches, application failures, and incorrect post-move hashes.
+Generic message history uses local insertion `id` order; timestamps are only
+display/audit metadata. Move application does not yet enforce full chess
+legality or king safety.
+
+`MoveAck` carries `game_id`, `ply`, and `move_digest`, a lowercase hex SHA-256
+digest identifying the exact Move payload. The receiver acknowledges only after
+an atomic commit, or for an exact retry from the same authenticated sender.
+Rejections return `GameDecline`. The sender verifies the opponent identity,
+response signer, and ACK fields before committing locally and reporting success.
+Legacy Move and MoveAck wire formats are incompatible; both peers must use the
+updated protocol.
+
+Moves are not queued for later delivery. If delivery is uncertain, or the
+opponent accepted but local persistence failed, follow the CLI's retry guidance.
+With unchanged local history (and any local storage problem resolved), repeating
+the same move reproduces the payload and an already committed move is acknowledged
+again. If local history has advanced, compare histories before moving again;
+recovery is not automatic.
+
 ### Security Model
 - Each player generates a unique Ed25519 keypair
 - All moves are signed with the player's private key
-- Game history is tamper-proof and independently verifiable
+- Signatures are verified on receipt; stored Move records currently use
+  `local`/`remote` signature placeholders and cannot independently prove the
+  original envelope signer
 - No trusted third parties or central authorities
+
+Signer binding does not add broader handshake replay protection or automatic
+recovery. Timestamp freshness checks do not deduplicate messages within the
+accepted window.
 
 ## Configuration
 
@@ -170,6 +207,18 @@ Mate stores configuration and game data in:
 - **Linux**: `~/.config/mate/`
 - **macOS**: `~/Library/Application Support/mate/`
 - **Windows**: `%APPDATA%\mate\`
+
+### Upgrading a development database
+
+Schema version 3 requires an explicit `ply` for every chess Move. A database
+with older Move rows cannot be upgraded; opening it reports the row count and
+actual file path. Stop any running `mate serve` process, keep a copy if you need
+the old history, then delete the database file at the printed path. The next
+database-using command creates a fresh schema-version-3 database. This discards
+the database's games and message history; keep your identity keys.
+Migration failure leaves all existing data unchanged. Databases containing
+only invites, accepts, or other non-Move messages upgrade in place.
+`MATE_DATA_DIR` overrides the default database directory.
 
 ## Contributing
 

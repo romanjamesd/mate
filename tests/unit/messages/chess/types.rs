@@ -253,7 +253,7 @@ mod tests {
         let board = Board::new();
         let board_hash = hash_board_state(&board);
 
-        let move_msg = Move::new(game_id.clone(), chess_move.clone(), board_hash.clone());
+        let move_msg = Move::new(game_id.clone(), 1, chess_move.clone(), board_hash.clone());
 
         assert_eq!(move_msg.game_id, game_id);
         assert_eq!(move_msg.chess_move, chess_move);
@@ -267,7 +267,7 @@ mod tests {
         let board = Board::new();
         let board_hash = hash_board_state(&board);
 
-        let move_msg = Move::new(game_id.clone(), chess_move.clone(), board_hash.clone());
+        let move_msg = Move::new(game_id.clone(), 1, chess_move.clone(), board_hash.clone());
 
         assert_eq!(move_msg.game_id, game_id);
         assert_eq!(move_msg.chess_move, chess_move);
@@ -281,7 +281,7 @@ mod tests {
         let board = Board::new();
         let board_hash = hash_board_state(&board);
 
-        let move_msg = Move::new(game_id.clone(), chess_move.clone(), board_hash.clone());
+        let move_msg = Move::new(game_id.clone(), 1, chess_move.clone(), board_hash.clone());
 
         assert_eq!(move_msg.game_id, game_id);
         assert_eq!(move_msg.chess_move, chess_move);
@@ -294,9 +294,9 @@ mod tests {
         let chess_move = "Nf3".to_string();
         let board_hash = hash_board_state(&Board::new());
 
-        let move1 = Move::new(game_id.clone(), chess_move.clone(), board_hash.clone());
-        let move2 = Move::new(game_id.clone(), chess_move.clone(), board_hash.clone());
-        let move3 = Move::new(game_id.clone(), "d2d4".to_string(), board_hash.clone());
+        let move1 = Move::new(game_id.clone(), 1, chess_move.clone(), board_hash.clone());
+        let move2 = Move::new(game_id.clone(), 1, chess_move.clone(), board_hash.clone());
+        let move3 = Move::new(game_id.clone(), 1, "d2d4".to_string(), board_hash.clone());
 
         assert_eq!(move1, move2);
         assert_ne!(move1, move3);
@@ -314,14 +314,19 @@ mod tests {
         // Same board state should produce same hash
         assert_eq!(hash1, hash2);
 
-        let move_msg = Move::new(game_id, "e2e4".to_string(), hash1);
+        let move_msg = Move::new(game_id, 1, "e2e4".to_string(), hash1);
         assert_eq!(move_msg.board_state_hash.len(), 64); // SHA-256 hex length
     }
 
     #[test]
     fn test_move_json_serialization() {
         let game_id = generate_game_id();
-        let move_msg = Move::new(game_id, "Qh5".to_string(), hash_board_state(&Board::new()));
+        let move_msg = Move::new(
+            game_id,
+            1,
+            "Qh5".to_string(),
+            hash_board_state(&Board::new()),
+        );
 
         let json = serde_json::to_string(&move_msg).expect("Failed to serialize");
         let deserialized: Move = serde_json::from_str(&json).expect("Failed to deserialize");
@@ -334,6 +339,7 @@ mod tests {
         let game_id = generate_game_id();
         let move_msg = Move::new(
             game_id,
+            1,
             "O-O-O".to_string(),
             hash_board_state(&Board::new()),
         );
@@ -349,85 +355,26 @@ mod tests {
     // =============================================================================
 
     #[test]
-    fn test_move_ack_new_no_move_id() {
-        let game_id = generate_game_id();
-        let ack = MoveAck::new(game_id.clone(), None);
+    fn test_move_ack_for_move() {
+        let mv = Move::new(generate_game_id(), 7, "e2e4".into(), "0".repeat(64));
+        let ack = MoveAck::for_move(&mv);
+        assert_eq!(ack.game_id, mv.game_id);
+        assert_eq!(ack.ply, mv.ply);
+        assert_eq!(ack.move_digest, mate::messages::chess::move_digest(&mv));
+        assert_eq!(ack, MoveAck::for_move(&mv));
 
-        assert_eq!(ack.game_id, game_id);
-        assert_eq!(ack.move_id, None);
+        let mut different = mv.clone();
+        different.ply += 1;
+        assert_ne!(ack, MoveAck::for_move(&different));
     }
 
     #[test]
-    fn test_move_ack_new_with_move_id() {
-        let game_id = generate_game_id();
-        let move_id = "move-123".to_string();
-        let ack = MoveAck::new(game_id.clone(), Some(move_id.clone()));
-
-        assert_eq!(ack.game_id, game_id);
-        assert_eq!(ack.move_id, Some(move_id));
-    }
-
-    #[test]
-    fn test_move_ack_new_no_move_id_convenience() {
-        let game_id = generate_game_id();
-        let ack = MoveAck::new_no_move_id(game_id.clone());
-
-        assert_eq!(ack.game_id, game_id);
-        assert_eq!(ack.move_id, None);
-    }
-
-    #[test]
-    fn test_move_ack_new_with_move_id_convenience() {
-        let game_id = generate_game_id();
-        let move_id = "move-456".to_string();
-        let ack = MoveAck::new_with_move_id(game_id.clone(), move_id.clone());
-
-        assert_eq!(ack.game_id, game_id);
-        assert_eq!(ack.move_id, Some(move_id));
-    }
-
-    #[test]
-    fn test_move_ack_equality() {
-        let game_id = generate_game_id();
-        let ack1 = MoveAck::new(game_id.clone(), Some("id".to_string()));
-        let ack2 = MoveAck::new(game_id.clone(), Some("id".to_string()));
-        let ack3 = MoveAck::new(game_id.clone(), None);
-
-        assert_eq!(ack1, ack2);
-        assert_ne!(ack1, ack3);
-    }
-
-    #[test]
-    fn test_move_ack_json_serialization_with_move_id() {
-        let game_id = generate_game_id();
-        let ack = MoveAck::new_with_move_id(game_id, "move-789".to_string());
-
-        let json = serde_json::to_string(&ack).expect("Failed to serialize");
-        let deserialized: MoveAck = serde_json::from_str(&json).expect("Failed to deserialize");
-
-        assert_eq!(ack, deserialized);
-    }
-
-    #[test]
-    fn test_move_ack_json_serialization_no_move_id() {
-        let game_id = generate_game_id();
-        let ack = MoveAck::new_no_move_id(game_id);
-
-        let json = serde_json::to_string(&ack).expect("Failed to serialize");
-        let deserialized: MoveAck = serde_json::from_str(&json).expect("Failed to deserialize");
-
-        assert_eq!(ack, deserialized);
-    }
-
-    #[test]
-    fn test_move_ack_binary_serialization() {
-        let game_id = generate_game_id();
-        let ack = MoveAck::new_with_move_id(game_id, "complex-move-id-123".to_string());
-
-        let bytes = bincode::serialize(&ack).expect("Failed to serialize");
-        let deserialized: MoveAck = bincode::deserialize(&bytes).expect("Failed to deserialize");
-
-        assert_eq!(ack, deserialized);
+    fn test_move_ack_serialization() {
+        let ack = crate::common::test_data::move_ack(generate_game_id(), 7);
+        let json = serde_json::to_string(&ack).unwrap();
+        assert_eq!(ack, serde_json::from_str::<MoveAck>(&json).unwrap());
+        let bytes = bincode::serialize(&ack).unwrap();
+        assert_eq!(ack, bincode::deserialize::<MoveAck>(&bytes).unwrap());
     }
 
     // =============================================================================

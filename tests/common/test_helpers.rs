@@ -172,3 +172,72 @@ pub fn test_server_database(peer_id: &str) -> Arc<Database> {
     std::mem::forget(temp_dir);
     Arc::new(database)
 }
+
+/// Build a correctly hashed payload at the validated current position.
+pub fn next_move(db: &Database, game_id: &str, notation: &str) -> mate::messages::chess::Move {
+    let state = mate::game::GameOps::new(db)
+        .reconstruct_game_state(game_id)
+        .unwrap();
+    let mut board = state.board;
+    let mv = mate::chess::Move::from_str_with_color(notation, board.active_color()).unwrap();
+    board.make_move(mv).unwrap();
+    mate::messages::chess::Move::new(
+        game_id.into(),
+        u32::try_from(state.move_history.len())
+            .unwrap()
+            .checked_add(1)
+            .unwrap(),
+        notation.into(),
+        mate::messages::chess::hash_board_state(&board),
+    )
+}
+
+/// Play through the authoritative commit, selecting the actor by the current turn.
+pub fn play_move(
+    db: &Database,
+    game_id: &str,
+    notation: &str,
+    self_peer_id: &str,
+) -> mate::messages::chess::Move {
+    use mate::game::{chronology::commit_move, CommitOutcome, GameOps, MoveActor, MoveProcessor};
+    let state = GameOps::new(db).reconstruct_game_state(game_id).unwrap();
+    let (mv, outcome) = if state.your_turn {
+        let processor = MoveProcessor::new(db);
+        let prepared = processor.prepare_move(game_id, notation).unwrap();
+        let outcome = processor
+            .commit_local_move(&prepared, self_peer_id)
+            .unwrap();
+        (prepared.move_message, outcome)
+    } else {
+        let mv = next_move(db, game_id, notation);
+        let outcome = commit_move(
+            db,
+            game_id,
+            &mv,
+            MoveActor::Opponent {
+                peer_id: &state.game.opponent_peer_id,
+            },
+        )
+        .unwrap();
+        (mv, outcome)
+    };
+    assert_eq!(outcome, CommitOutcome::Committed);
+    mv
+}
+
+/// Play a sequence with local and opponent actors alternating.
+pub fn play(db: &Database, game_id: &str, notations: &[&str], self_peer_id: &str) {
+    for notation in notations {
+        play_move(db, game_id, notation, self_peer_id);
+    }
+}
+
+/// Independent connections to one isolated database file.
+/// Keep the returned temp directory alive for the lifetime of both handles.
+pub fn twin_databases() -> (tempfile::TempDir, Database, Database) {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("database.sqlite");
+    let first = Database::new_with_path("self", &path).unwrap();
+    let second = Database::new_with_path("self", &path).unwrap();
+    (dir, first, second)
+}

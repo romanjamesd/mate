@@ -26,25 +26,29 @@ async fn start_test_server(bind_addr: &str) -> Result<Server> {
     Ok(server)
 }
 
-/// Helper function to build the mate binary path
-fn get_mate_binary_path() -> String {
-    // In tests, the binary is built in target/debug/
-    "target/debug/mate".to_string()
+/// Run the binary built for this test without inheriting another test's identity directory.
+fn mate_command(data_dir: &tempfile::TempDir) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_mate"));
+    command
+        .env("MATE_DATA_DIR", data_dir.path())
+        .kill_on_drop(true);
+    command
 }
 
 /// Test graceful handling of connection establishment failures
 #[tokio::test]
 async fn test_graceful_connection_establishment_failure_handling() {
+    let data_dir = tempfile::tempdir().expect("Failed to create test identity directory");
     println!("Testing graceful handling of connection establishment failures");
 
-    // Test invalid address format
+    // Use an absolute reserved .invalid name to avoid local DNS search domains.
     let invalid_addresses = [
-        "invalid-address",      // Missing port
-        "192.168.1.999:8080",   // Invalid IP
-        "localhost:999999",     // Invalid port
-        "not-a-real-host:8080", // Non-existent host
-        "",                     // Empty address
-        "127.0.0.1:0",          // Port 0 (reserved)
+        "invalid-address",               // Missing port
+        "192.168.1.999:8080",            // Invalid IP
+        "localhost:999999",              // Invalid port
+        "not-a-real-host.invalid.:8080", // Non-existent host
+        "",                              // Empty address
+        "127.0.0.1:0",                   // Port 0 (reserved)
     ];
 
     for (i, invalid_addr) in invalid_addresses.iter().enumerate() {
@@ -56,7 +60,7 @@ async fn test_graceful_connection_establishment_failure_handling() {
 
         let output = timeout(
             Duration::from_secs(15), // Allow extra time for DNS resolution timeouts
-            Command::new(get_mate_binary_path())
+            mate_command(&data_dir)
                 .args(["connect", invalid_addr, "--message", "test"])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -65,7 +69,9 @@ async fn test_graceful_connection_establishment_failure_handling() {
         .await;
 
         let command_output = output
-            .expect("Command should complete within timeout")
+            .unwrap_or_else(|_| {
+                panic!("Command should complete within timeout for address '{invalid_addr}'")
+            })
             .expect("Command should execute");
 
         // Verify graceful failure (non-zero exit code)
@@ -114,6 +120,7 @@ async fn test_graceful_connection_establishment_failure_handling() {
 /// Test appropriate program exit behavior when initial connection fails
 #[tokio::test]
 async fn test_appropriate_program_exit_behavior_on_connection_failure() {
+    let data_dir = tempfile::tempdir().expect("Failed to create test identity directory");
     println!("Testing appropriate program exit behavior when initial connection fails");
 
     // Test both one-shot mode and interactive mode connection failures
@@ -126,7 +133,7 @@ async fn test_appropriate_program_exit_behavior_on_connection_failure() {
 
         let output = timeout(
             Duration::from_secs(10),
-            Command::new(get_mate_binary_path())
+            mate_command(&data_dir)
                 .args(["connect", non_existent_server, "--message", "test message"])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -184,7 +191,7 @@ async fn test_appropriate_program_exit_behavior_on_connection_failure() {
 
         let output = timeout(
             Duration::from_secs(10),
-            Command::new(get_mate_binary_path())
+            mate_command(&data_dir)
                 .args(["connect", non_existent_server])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -236,6 +243,7 @@ async fn test_appropriate_program_exit_behavior_on_connection_failure() {
 /// Test that errors are logged at appropriate levels
 #[tokio::test]
 async fn test_errors_logged_at_appropriate_levels() {
+    let data_dir = tempfile::tempdir().expect("Failed to create test identity directory");
     println!("Testing that errors are logged at appropriate levels");
 
     let non_existent_server = "127.0.0.1:19997";
@@ -248,7 +256,7 @@ async fn test_errors_logged_at_appropriate_levels() {
 
         let output = timeout(
             Duration::from_secs(8),
-            Command::new(get_mate_binary_path())
+            mate_command(&data_dir)
                 .args(["connect", non_existent_server, "--message", "test"])
                 .env("RUST_LOG", log_level)
                 .stdout(Stdio::piped())
@@ -313,6 +321,7 @@ async fn test_errors_logged_at_appropriate_levels() {
 /// Test user-friendly error communication
 #[tokio::test]
 async fn test_user_friendly_error_communication() {
+    let data_dir = tempfile::tempdir().expect("Failed to create test identity directory");
     println!("Testing user-friendly error communication");
 
     // Test various error scenarios for user-friendly messages
@@ -322,7 +331,11 @@ async fn test_user_friendly_error_communication() {
             "connection refused",
             "Server not available",
         ),
-        ("invalid-host-name:8080", "resolve", "Invalid hostname"),
+        (
+            "invalid-host-name.invalid.:8080",
+            "resolve",
+            "Invalid hostname",
+        ),
         ("192.168.999.999:8080", "resolve", "Invalid IP address"),
         ("localhost:99999", "invalid", "Invalid port number"),
     ];
@@ -332,7 +345,7 @@ async fn test_user_friendly_error_communication() {
 
         let output = timeout(
             Duration::from_secs(10),
-            Command::new(get_mate_binary_path())
+            mate_command(&data_dir)
                 .args(["connect", addr, "--message", "test"])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -397,6 +410,7 @@ async fn test_user_friendly_error_communication() {
 /// Test that cleanup failures don't prevent program termination
 #[tokio::test]
 async fn test_cleanup_failures_dont_prevent_termination() {
+    let data_dir = tempfile::tempdir().expect("Failed to create test identity directory");
     println!("Testing that cleanup failures don't prevent program termination");
 
     // Start a server and then kill it mid-session to test cleanup handling
@@ -415,7 +429,7 @@ async fn test_cleanup_failures_dont_prevent_termination() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Start interactive session that will experience cleanup issues
-    let mut child = Command::new(get_mate_binary_path())
+    let mut child = mate_command(&data_dir)
         .args(["connect", server_addr])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -487,6 +501,7 @@ async fn test_cleanup_failures_dont_prevent_termination() {
 /// Test that errors don't cause crashes or undefined behavior
 #[tokio::test]
 async fn test_errors_dont_cause_crashes_or_undefined_behavior() {
+    let data_dir = tempfile::tempdir().expect("Failed to create test identity directory");
     println!("Testing that errors don't cause crashes or undefined behavior");
 
     // Test various error conditions that could potentially cause crashes
@@ -512,7 +527,7 @@ async fn test_errors_dont_cause_crashes_or_undefined_behavior() {
 
         let output = timeout(
             Duration::from_secs(8),
-            Command::new(get_mate_binary_path())
+            mate_command(&data_dir)
                 .args(["connect", addr, "--message", "crash test"])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -585,6 +600,7 @@ async fn test_errors_dont_cause_crashes_or_undefined_behavior() {
 /// Test comprehensive error handling functionality
 #[tokio::test]
 async fn test_comprehensive_error_handling() {
+    let data_dir = tempfile::tempdir().expect("Failed to create test identity directory");
     println!("Testing comprehensive error handling functionality");
 
     // Combined test of multiple error handling aspects
@@ -594,7 +610,7 @@ async fn test_comprehensive_error_handling() {
 
     let output = timeout(
         Duration::from_secs(10),
-        Command::new(get_mate_binary_path())
+        mate_command(&data_dir)
             .args([
                 "connect",
                 non_existent_server,
